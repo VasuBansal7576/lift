@@ -1,5 +1,6 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { Flagsmith } from "@flagsmith/nodejs";
 import barriersCatalog from "../../shared/barriers.json" with { type: "json" };
 import type { Barrier } from "../../shared/types.ts";
 import {
@@ -19,6 +20,13 @@ import {
   type WarehouseRecord,
   listResults,
 } from "./flagsmith-admin.ts";
+import {
+  experimentCreatePayload,
+  featureCreatePayload,
+  metricCreatePayload,
+  warehouseCloudBody,
+  warehouseSelfHostBody,
+} from "./payloads.ts";
 
 export interface BootstrapState {
   organisationId: number | string;
@@ -32,9 +40,13 @@ export interface BootstrapState {
   metricId: number;
   experimentId: number;
   warehouseId?: number;
+  warehouseStatus?: string;
   barrierFlags: { name: string; id: number }[];
   createdAt: string;
 }
+
+export const WAREHOUSE_FIRST_EVENT_HINT =
+  "Cloud: app.flagsmith.com → project Lift → environment Development → Environment Settings → Warehouse → click “Send your first event”. Self-host: Environment Settings → Warehouse → Flagsmith database → Send your first event.";
 
 async function findFeature(
   admin: FlagsmithAdmin,
@@ -47,7 +59,7 @@ async function findFeature(
   return listResults<FeatureRecord>(data).find((f) => f.name === name) ?? null;
 }
 
-async function ensureFeature(
+export async function ensureFeature(
   admin: FlagsmithAdmin,
   projectId: string,
   name: string,
@@ -59,25 +71,12 @@ async function ensureFeature(
 
   const { data } = await admin.post<FeatureRecord>(
     `/projects/${projectId}/features/`,
-    {
-      name,
-      default_enabled: true,
-      initial_value: "control",
-      description,
-      type: "MULTIVARIATE",
-      multivariate_options: [
-        {
-          type: "unicode",
-          string_value: "treatment",
-          default_percentage_allocation: treatmentAllocation,
-        },
-      ],
-    },
+    featureCreatePayload(name, description, treatmentAllocation),
   );
   return data;
 }
 
-async function ensureTreatmentKey(
+export async function ensureTreatmentKey(
   admin: FlagsmithAdmin,
   projectId: string,
   feature: FeatureRecord,
@@ -92,17 +91,29 @@ async function ensureTreatmentKey(
     throw new Error(`Feature ${feature.name} has no multivariate option`);
   }
   if (treatment.key !== "treatment") {
-    try {
-      await admin.patch(
-        `/projects/${projectId}/features/${feature.id}/mv-options/${treatment.id}/`,
-        { key: "treatment" },
+    await admin.put(
+      `/projects/${projectId}/features/${feature.id}/mv-options/${treatment.id}/`,
+      {
+        id: treatment.id,
+        type: treatment.type ?? "unicode",
+        string_value: treatment.string_value ?? "treatment",
+        default_percentage_allocation: treatment.default_percentage_allocation ?? 50,
+        key: "treatment",
+        feature: feature.id,
+      },
+    );
+    const { data: refreshed } = await admin.get<unknown>(
+      `/projects/${projectId}/features/${feature.id}/mv-options/`,
+    );
+    const verified = listResults<FeatureOption>(refreshed).find(
+      (o) => o.id === treatment.id,
+    );
+    if (verified?.key !== "treatment") {
+      throw new Error(
+        `Variant key for ${feature.name} is "${verified?.key ?? treatment.key}", not "treatment". Exposures will not record. PUT the full mv-option with key:"treatment" and retry.`,
       );
-      treatment.key = "treatment";
-    } catch (err) {
-      if (!(err instanceof FlagsmithAdminError && err.status === 400)) {
-        throw err;
-      }
     }
+    treatment.key = "treatment";
   }
   return treatment;
 }
@@ -129,10 +140,56 @@ async function tryCreateWarehouse(
   }
 }
 
-async function ensureWarehouse(
+export function warehouseWarning(status: string | undefined): string {
+  return `Warehouse status is "${status ?? "unknown"}" (need connected). ${WAREHOUSE_FIRST_EVENT_HINT}`;
+}
+
+async function pingWarehouse(
+  admin: FlagsmithAdmin,
+  envKey: string,
+  warehouse: WarehouseRecord,
+  cfg: LiftConfig,
+): Promise<void> {
+  const pingPaths = [
+    `/environments/${envKey}/warehouse-connections/${warehouse.id}/test-warehouse-connection/`,
+    `/environments/${envKey}/warehouse-connections/test-warehouse-connection/`,
+  ];
+  for (const path of pingPaths) {
+    try {
+      await admin.post(path);
+      process.stderr.write("Posted a Flagsmith warehouse test event (Send your first event equivalent).\n");
+      break;
+    } catch (err) {
+      if (err instanceof FlagsmithAdminError) {
+        process.stderr.write(
+          `test-warehouse-connection ${err.status}: ${err.body.slice(0, 200)}\n`,
+        );
+        continue;
+      }
+      throw err;
+    }
+  }
+  const key = cfg.serverKey || cfg.environmentKey;
+  if (!key) return;
+  const flagsmith = new Flagsmith({
+    environmentKey: key,
+    apiUrl: cfg.adminApiUrl || cfg.apiUrl,
+    enableEvents: true,
+    eventProcessorConfig: { eventsApiUrl: cfg.eventsUrl },
+  });
+  flagsmith.trackEvent("lift_warehouse_ping", {
+    identifier: "lift-warehouse-ping",
+    traits: { simulated: true, purpose: "warehouse_connect" },
+  });
+  await flagsmith.flushEvents();
+  await flagsmith.close(5000);
+}
+
+export async function ensureWarehouse(
   admin: FlagsmithAdmin,
   envKey: string,
   apiUrl: string,
+  cfg: LiftConfig,
 ): Promise<WarehouseRecord> {
   const { data } = await admin.get<unknown>(
     `/environments/${envKey}/warehouse-connections/`,
@@ -140,38 +197,43 @@ async function ensureWarehouse(
   const existing = Array.isArray(data)
     ? (data as WarehouseRecord[])
     : listResults<WarehouseRecord>(data);
-  if (existing[0]) return existing[0];
+  let warehouse = existing[0];
 
-  const cloud = /flagsmith\.com/i.test(apiUrl);
-  const attempts: Record<string, unknown>[] = cloud
-    ? [
-        { warehouse_type: "flagsmith", name: "Lift Flagsmith warehouse" },
-        {
-          warehouse_type: "postgres",
-          name: "Lift Flagsmith database",
-          config: { source: "flagsmith_database" },
-        },
-      ]
-    : [
-        {
-          warehouse_type: "postgres",
-          name: "Lift Flagsmith database",
-          config: { source: "flagsmith_database" },
-        },
-        { warehouse_type: "flagsmith", name: "Lift Flagsmith warehouse" },
-      ];
-
-  for (const body of attempts) {
-    const created = await tryCreateWarehouse(admin, envKey, body);
-    if (created) return created;
+  if (!warehouse) {
+    const cloud = /flagsmith\.com/i.test(apiUrl);
+    const attempts = cloud
+      ? [warehouseCloudBody(), warehouseSelfHostBody()]
+      : [warehouseSelfHostBody(), warehouseCloudBody()];
+    for (const body of attempts) {
+      const created = await tryCreateWarehouse(admin, envKey, body);
+      if (created) {
+        warehouse = created;
+        break;
+      }
+    }
   }
 
-  throw new Error(
-    "No warehouse connection. Experiments cannot be created without one. Cloud: Environment Settings → Warehouse → enable Flagsmith. Self-host: enable Flagsmith database (warehouse_type postgres, config.source flagsmith_database). See https://docs.flagsmith.com/experimentation/connect-a-warehouse",
-  );
+  if (!warehouse) {
+    throw new Error(
+      `No warehouse connection. Experiments cannot be created without one. ${WAREHOUSE_FIRST_EVENT_HINT} See https://docs.flagsmith.com/experimentation/connect-a-warehouse`,
+    );
+  }
+
+  if (warehouse.status === "errored") {
+    throw new Error(
+      `Warehouse is Errored (${warehouse.status}). Fix the connection in Environment Settings → Warehouse. ${WAREHOUSE_FIRST_EVENT_HINT}`,
+    );
+  }
+
+  if (warehouse.status !== "connected") {
+    process.stderr.write(`${warehouseWarning(warehouse.status)}\n`);
+    await pingWarehouse(admin, envKey, warehouse, cfg);
+  }
+
+  return warehouse;
 }
 
-async function ensureMetric(
+export async function ensureMetric(
   admin: FlagsmithAdmin,
   envKey: string,
   event: string,
@@ -180,18 +242,12 @@ async function ensureMetric(
     `/environments/${envKey}/experiment-metrics/`,
   );
   const existing = listResults<MetricRecord>(data).find(
-    (m) => m.definition?.event === event || m.name === "Checkout completed",
+    (m) => m.definition?.event === event,
   );
   if (existing) return existing;
   const created = await admin.post<MetricRecord>(
     `/environments/${envKey}/experiment-metrics/`,
-    {
-      name: "Checkout completed",
-      description: "Visitor submitted a completed checkout. Simulated traffic is labelled in identity traits.",
-      aggregation: "occurrence",
-      direction: "up",
-      definition: { version: 1, event },
-    },
+    metricCreatePayload(event),
   );
   return created.data;
 }
@@ -212,24 +268,13 @@ async function ensureExperiment(
   });
   if (existing) return existing;
 
-  const payload = {
-    feature: flag.id,
-    name: "Checkout accessibility lift",
+  const payload = experimentCreatePayload({
+    featureId: flag.id,
+    treatmentId,
+    metricId,
     hypothesis:
-      "Fixing WCAG barriers (hover-only menu, unlabeled icon, non-focusable Place order, missing labels, low-contrast terms) increases checkout completion for keyboard, screen-reader, and low-vision visitors.",
-    metrics: [{ metric: metricId, expected_direction: "increase" }],
-    experiment_rollout: {
-      enabled: true,
-      rollout_percentage: 100,
-      feature_state_value: { type: "string", value: "control" },
-      multivariate_feature_state_values: [
-        {
-          multivariate_feature_option: treatmentId,
-          percentage_allocation: 50,
-        },
-      ],
-    },
-  };
+      "Fixing WCAG barriers (hover-only menu, unlabeled icon, non-focusable Place order, missing labels, unnamed terms checkbox, low-contrast terms) increases checkout completion for keyboard, screen-reader, and low-vision visitors. Traffic is simulated.",
+  });
 
   try {
     const created = await admin.post<ExperimentRecord>(
@@ -265,15 +310,19 @@ async function startExperiment(
   return started.data;
 }
 
-function writeCheckoutConfig(cfg: LiftConfig) {
+export function writeCheckoutConfig(
+  cfg: LiftConfig,
+  extras?: { allowMock?: boolean },
+) {
   const config = {
     flagsmithApiUrl: cfg.apiUrl,
     flagsmithEventsUrl: cfg.eventsUrl,
     flagsmithEnvironmentKey: cfg.environmentKey,
     flagName: cfg.flagName,
     metricEvent: cfg.metricEvent,
-    allowMock: cfg.allowMock,
+    allowMock: extras?.allowMock ?? cfg.allowMock,
     simulatedTrafficLabel: "SIMULATED TRAFFIC",
+    barrierFlags: (barriersCatalog as Barrier[]).map((b) => b.flag),
   };
   writeFileSync(
     resolve(ROOT, "sites/checkout/config.json"),
@@ -310,7 +359,7 @@ export async function bootstrap(cfg = loadConfig()): Promise<BootstrapState> {
     environmentId = String(match.id);
   }
 
-  const warehouse = await ensureWarehouse(admin, envKey, cfg.apiUrl);
+  const warehouse = await ensureWarehouse(admin, envKey, cfg.apiUrl, cfg);
 
   const combined = await ensureFeature(
     admin,
@@ -343,6 +392,9 @@ export async function bootstrap(cfg = loadConfig()): Promise<BootstrapState> {
     metric.id,
   );
   const running = await startExperiment(admin, envKey, experiment);
+  if (running.status !== "running") {
+    throw new Error(`Experiment ${running.id} status is ${running.status}, expected running`);
+  }
 
   const state: BootstrapState = {
     organisationId: cfg.organisationId || "",
@@ -355,7 +407,8 @@ export async function bootstrap(cfg = loadConfig()): Promise<BootstrapState> {
     treatmentOptionId: treatment.id,
     metricId: metric.id,
     experimentId: running.id,
-    warehouseId: warehouse?.id,
+    warehouseId: warehouse.id,
+    warehouseStatus: warehouse.status,
     barrierFlags,
     createdAt: new Date().toISOString(),
   };

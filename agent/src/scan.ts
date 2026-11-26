@@ -45,6 +45,14 @@ export function scanCheckoutSite(htmlPath = resolve(ROOT, "sites/checkout/index.
           evidence.push("Email/card inputs ship without associated labels in control");
         }
         break;
+      case "unlabeled_terms":
+        if (html.includes("data-barrier=\"unlabeled_terms\"")) {
+          evidence.push("Terms checkbox marked data-barrier=unlabeled_terms");
+        }
+        if (!html.includes('for="terms"')) {
+          evidence.push("Terms checkbox ships without an associated label in control");
+        }
+        break;
       case "low_contrast":
         if (html.includes("data-barrier=\"low_contrast\"")) {
           evidence.push("Terms copy marked data-barrier=low_contrast");

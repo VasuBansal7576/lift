@@ -1,10 +1,19 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import barriersCatalog from "../../shared/barriers.json" with { type: "json" };
-import type { Barrier, ExperimentDecision, Persona, VisitRecord } from "../../shared/types.ts";
+import type {
+  Barrier,
+  ExperimentDecision,
+  Persona,
+  PersonaMix,
+  VisitRecord,
+} from "../../shared/types.ts";
+import { DEFAULT_PERSONA_MIX } from "../../shared/types.ts";
+import { mixLabel } from "../../shared/mix.ts";
 import { resultsPath } from "./config.ts";
 import type { FlagsmithResultsEnvelope } from "./decide.ts";
 import { summariseVisits } from "./decide.ts";
+import { clampLift } from "./stats.ts";
 
 function personaBreakdown(visits: VisitRecord[]) {
   const out: Record<
@@ -30,32 +39,48 @@ export function buildResultsDocument(input: {
   flagsmith: FlagsmithResultsEnvelope | null;
   experimentId?: number;
   dashboardUrl?: string;
+  personaMix?: PersonaMix;
 }) {
   const byVariant = summariseVisits(input.visits);
-  const controlRate = input.decision.control.rate;
-  const treatmentRate = input.decision.treatment.rate;
-  const headlineLift =
-    controlRate === 0
-      ? treatmentRate > 0
-        ? Infinity
-        : 0
-      : (treatmentRate - controlRate) / controlRate;
+  const mix = input.personaMix ?? DEFAULT_PERSONA_MIX;
+  const fromFlagsmith = input.decision.source === "flagsmith";
+  const rawLift = fromFlagsmith
+    ? input.decision.lift
+    : (input.decision.treatment.rate === 0 && input.decision.control.rate === 0
+        ? 0
+        : (input.decision.lift ??
+          (input.decision.control.rate === 0
+            ? Infinity
+            : (input.decision.treatment.rate - input.decision.control.rate) /
+              input.decision.control.rate)));
+  const conversionLift = clampLift(rawLift ?? null);
+  const pct =
+    conversionLift === null ? "n/a" : `${(conversionLift * 100).toFixed(1)}%`;
+  const sourceLabel = fromFlagsmith ? "flagsmith" : "local_estimate";
+  const copy = fromFlagsmith
+    ? `Flagsmith lift on 1 checkout site: ${pct}.`
+    : `LOCAL ESTIMATE (not Flagsmith): ${pct} on 1 checkout site.`;
 
   return {
     traffic: "simulated" as const,
-    label: "SIMULATED TRAFFIC — Playwright persona bots, not humans.",
+    label:
+      "SIMULATED TRAFFIC — Playwright persona bots, not humans. Demonstration of the pipeline; outcomes follow the persona model, not evidence about real users.",
     generatedAt: new Date().toISOString(),
     site: "checkout",
     sites: 1,
     flag: input.decision.flag,
     experimentId: input.experimentId ?? null,
     flagsmithDashboard: input.dashboardUrl ?? null,
+    personaMix: mix,
+    personaMixLabel: mixLabel(mix),
+    personaMixNote:
+      "Mix is a modelling assumption (mouse 70% / keyboard 10% / screen-reader 10% / low-vision 10% by default), not measured traffic.",
+    honesty:
+      "Barrier flags are wired on the site; this run used the bundled checkout_a11y native experiment. Sequential per-barrier experiments are the attribution path.",
     headline: {
-      conversionLift: headlineLift,
-      copy:
-        headlineLift === Infinity
-          ? "Treatment converted; control did not (simulated)."
-          : `Simulated conversion lift on 1 checkout site: ${(headlineLift * 100).toFixed(1)}%.`,
+      conversionLift,
+      source: sourceLabel,
+      copy,
     },
     decision: input.decision,
     flags: [
@@ -74,7 +99,7 @@ export function buildResultsDocument(input: {
         title: barrier.title,
         wcag: barrier.wcag,
         blocks: barrier.blocks,
-        note: "Created at 0% treatment. The first experiment ships all five fixes behind checkout_a11y to stay inside the free-plan API budget. Sequential per-barrier experiments are the scale-up path.",
+        note: "Wired on the checkout page. Bundled experiment checkout_a11y is the native-Experiments path; per-barrier flags stay at 0% treatment until a sequential run.",
       })),
     ],
     personas: personaBreakdown(input.visits),

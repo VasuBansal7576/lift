@@ -76,8 +76,10 @@ input:not([type="checkbox"]) {
   border: 1px solid var(--line);
   background: #fff;
 }
-.visible-hint { color: var(--muted); font-size: 0.9rem; }
+.visible-hint,
+.field-grid label { color: var(--muted); font-size: 0.9rem; }
 body.fix-labels .visible-hint { display: none; }
+#terms-copy { color: inherit; }
 .terms {
   display: flex;
   gap: 0.5rem;

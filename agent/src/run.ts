@@ -1,12 +1,14 @@
 import { createServer } from "node:http";
 import { extname, resolve } from "node:path";
 import { readFile } from "node:fs/promises";
+import { isInsideRoot } from "../../shared/fs-path.ts";
 import { ROOT, loadConfig, readJson, statePath } from "./config.ts";
 import { bootstrap, type BootstrapState } from "./bootstrap.ts";
 import {
   applyDecision,
   decideExperiment,
-  fetchFlagsmithResults,
+  shouldApplyDecision,
+  waitForFlagsmithResults,
   loadVisits,
 } from "./decide.ts";
 import { buildResultsDocument, writeDashboard } from "./dashboard.ts";
@@ -21,7 +23,9 @@ const MIME: Record<string, string> = {
   ".svg": "image/svg+xml",
 };
 
-function serveCheckout(port: number): Promise<{ close: () => Promise<void> }> {
+function serveCheckout(
+  port: number,
+): Promise<{ close: () => Promise<void>; reused: boolean }> {
   const root = resolve(ROOT, "sites/checkout");
   const server = createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", `http://127.0.0.1:${port}`);
@@ -29,7 +33,7 @@ function serveCheckout(port: number): Promise<{ close: () => Promise<void> }> {
       root,
       url.pathname === "/" ? "index.html" : url.pathname.slice(1),
     );
-    if (!filePath.startsWith(root)) {
+    if (!isInsideRoot(root, filePath)) {
       res.writeHead(403);
       res.end("forbidden");
       return;
@@ -46,13 +50,23 @@ function serveCheckout(port: number): Promise<{ close: () => Promise<void> }> {
   return new Promise((resolveServer, reject) => {
     server.listen(port, "127.0.0.1", () => {
       resolveServer({
+        reused: false,
         close: () =>
           new Promise((resClose, rejClose) => {
             server.close((err) => (err ? rejClose(err) : resClose()));
           }),
       });
     });
-    server.on("error", reject);
+    server.on("error", (err: NodeJS.ErrnoException) => {
+      if (err.code === "EADDRINUSE") {
+        process.stderr.write(
+          `Port ${port} already in use; reusing the existing checkout server.\n`,
+        );
+        resolveServer({ reused: true, close: async () => undefined });
+        return;
+      }
+      reject(err);
+    });
   });
 }
 
@@ -60,7 +74,7 @@ export async function runExperiment() {
   const cfg = loadConfig();
   const scan = scanCheckoutSite();
   process.stdout.write(
-    `Scan: ${scan.findings.length} barriers on checkout (${scan.findings.map((f) => f.barrier.id).join(", ")})\n`,
+    `Fixture scan: ${scan.findings.length} data-barrier markers (${scan.findings.map((f) => f.barrier.id).join(", ")}). Not a production crawler.\n`,
   );
 
   const state: BootstrapState = readJson<BootstrapState>(statePath()) ?? (await bootstrap(cfg));
@@ -73,19 +87,25 @@ export async function runExperiment() {
   try {
     await runTraffic();
   } finally {
-    await server.close();
+    if (!server.reused) await server.close();
   }
 
   const visits = loadVisits();
-  const flagsmith = await fetchFlagsmithResults(state.experimentId);
+  const flagsmith = await waitForFlagsmithResults({
+    experimentId: state.experimentId,
+    visits,
+    waitMs: cfg.resultsWaitMs,
+  });
   const decision = decideExperiment({
     flag: cfg.flagName,
     visits,
     flagsmith,
     threshold: cfg.winThreshold,
+    allowLocalDecision: cfg.allowLocalDecision,
+    statsSeed: cfg.trafficSeed,
   });
 
-  if (decision.decision !== "keep_running") {
+  if (shouldApplyDecision(decision, cfg.allowLocalDecision)) {
     await applyDecision(decision);
   }
 
@@ -95,6 +115,7 @@ export async function runExperiment() {
     flagsmith,
     experimentId: state.experimentId,
     dashboardUrl: `${cfg.dashboardUrl}/project/${state.projectId}/environment/${state.environmentKey}/experiments/${state.experimentId}`,
+    personaMix: cfg.personaMix,
   });
   const path = writeDashboard(doc);
   process.stdout.write(

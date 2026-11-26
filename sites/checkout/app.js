@@ -1,4 +1,14 @@
 const FLAG_NAME = "checkout_a11y";
+const SDK_URL = "https://cdn.jsdelivr.net/npm/@flagsmith/flagsmith@12.4.0/+esm";
+
+const BARRIER_FLAGS = {
+  hover_menu: "a11y_hover_menu",
+  unlabeled_icon: "a11y_unlabeled_icon",
+  div_button: "a11y_div_button",
+  missing_labels: "a11y_missing_labels",
+  unlabeled_terms: "a11y_unlabeled_terms",
+  low_contrast: "a11y_low_contrast",
+};
 
 /** @typedef {"control" | "treatment"} Variant */
 
@@ -23,18 +33,28 @@ function setStatus(text, isError = false) {
   el.classList.toggle("flagsmith-error", isError);
 }
 
-function applyVariant(variant) {
-  const treatment = variant === "treatment";
-  document.body.classList.toggle("fix-hover", treatment);
-  document.body.classList.toggle("fix-labels", treatment);
-  document.body.classList.toggle("fix-contrast", treatment);
-  document.body.dataset.variant = variant;
-  document.getElementById("flag-status").textContent =
-    `Flagsmith ${FLAG_NAME}=${variant}`;
+function allFixes(on) {
+  return {
+    hover_menu: on,
+    unlabeled_icon: on,
+    div_button: on,
+    missing_labels: on,
+    unlabeled_terms: on,
+    low_contrast: on,
+  };
+}
+
+function applyFixes(fixes, sourceLabel) {
+  document.body.classList.toggle("fix-hover", Boolean(fixes.hover_menu));
+  document.body.classList.toggle("fix-labels", Boolean(fixes.missing_labels));
+  document.body.classList.toggle("fix-contrast", Boolean(fixes.low_contrast));
+  const bundledOn = Object.values(fixes).every(Boolean);
+  document.body.dataset.variant = bundledOn ? "treatment" : "control";
+  setStatus(sourceLabel);
 
   const trigger = document.getElementById("shop-trigger");
   const menu = document.getElementById("shop-menu");
-  if (treatment) {
+  if (fixes.hover_menu && trigger && trigger.tagName !== "BUTTON") {
     const button = document.createElement("button");
     button.type = "button";
     button.id = "shop-trigger";
@@ -52,7 +72,7 @@ function applyVariant(variant) {
   }
 
   const cart = document.getElementById("cart-icon");
-  if (treatment) {
+  if (fixes.unlabeled_icon && cart && cart.tagName !== "BUTTON") {
     const button = document.createElement("button");
     button.type = "button";
     button.id = "cart-icon";
@@ -61,11 +81,12 @@ function applyVariant(variant) {
     button.textContent = "👜";
     cart.replaceWith(button);
     button.addEventListener("click", openCheckout);
-  } else {
+  } else if (cart && !cart.dataset.bound) {
+    cart.dataset.bound = "1";
     cart.addEventListener("click", openCheckout);
   }
 
-  if (treatment) {
+  if (fixes.missing_labels) {
     for (const [id, label] of [
       ["email", "Email"],
       ["card-name", "Name on card"],
@@ -74,16 +95,30 @@ function applyVariant(variant) {
       ["card-cvc", "CVC"],
     ]) {
       const input = document.getElementById(id);
+      if (!input || input.hasAttribute("data-labelled")) continue;
       const tag = document.createElement("label");
       tag.setAttribute("for", id);
       tag.textContent = label;
       input.removeAttribute("data-unlabeled");
+      input.setAttribute("data-labelled", "1");
       input.parentElement.querySelector(".visible-hint")?.replaceWith(tag);
     }
   }
 
+  if (fixes.unlabeled_terms) {
+    const terms = document.getElementById("terms");
+    const copy = document.getElementById("terms-copy");
+    if (terms && copy && copy.tagName !== "LABEL") {
+      const label = document.createElement("label");
+      label.setAttribute("for", "terms");
+      label.id = "terms-copy";
+      label.textContent = copy.textContent ?? "";
+      copy.replaceWith(label);
+    }
+  }
+
   const pay = document.getElementById("place-order");
-  if (treatment) {
+  if (fixes.div_button && pay && pay.tagName !== "BUTTON") {
     const button = document.createElement("button");
     button.type = "button";
     button.id = "place-order";
@@ -91,7 +126,8 @@ function applyVariant(variant) {
     button.textContent = "Place order";
     pay.replaceWith(button);
     button.addEventListener("click", submitOrder);
-  } else {
+  } else if (pay && !pay.dataset.bound) {
+    pay.dataset.bound = "1";
     pay.addEventListener("click", submitOrder);
   }
 }
@@ -141,6 +177,24 @@ document.getElementById("checkout-link")?.addEventListener("click", (event) => {
   openCheckout();
 });
 
+function flagIsTreatment(flagsmith, name) {
+  try {
+    const value = flagsmith.getValue(name);
+    return value === "treatment";
+  } catch {
+    return false;
+  }
+}
+
+function fixesFromFlagsmith(flagsmith, bundledVariant) {
+  const bundled = bundledVariant === "treatment";
+  const fixes = {};
+  for (const [id, flag] of Object.entries(BARRIER_FLAGS)) {
+    fixes[id] = bundled || flagIsTreatment(flagsmith, flag);
+  }
+  return fixes;
+}
+
 async function initFromFlagsmith(config) {
   if (!config?.flagsmithEnvironmentKey) {
     throw new Error("Missing FLAGSMITH_ENVIRONMENT_KEY");
@@ -148,9 +202,7 @@ async function initFromFlagsmith(config) {
   const identity =
     params().get("lift_identity") ||
     crypto.randomUUID();
-  const { default: flagsmith } = await import(
-    "https://cdn.jsdelivr.net/npm/flagsmith@12.4.0/+esm"
-  );
+  const { default: flagsmith } = await import(SDK_URL);
   await flagsmith.init({
     environmentID: config.flagsmithEnvironmentKey,
     api: config.flagsmithApiUrl,
@@ -169,7 +221,10 @@ async function initFromFlagsmith(config) {
     flag?.variant === "treatment" || flag?.value === "treatment"
       ? "treatment"
       : "control";
-  applyVariant(variant);
+  applyFixes(
+    fixesFromFlagsmith(flagsmith, variant),
+    `Flagsmith ${config.flagName || FLAG_NAME}=${variant}`,
+  );
   window.addEventListener("lift:converted", async () => {
     flagsmith.trackEvent(config.metricEvent || "checkout_completed", {
       traits: { converted: true, simulated: false, site: "checkout" },
@@ -185,8 +240,9 @@ async function initFromFlagsmith(config) {
 async function main() {
   const mock = params().get("lift_variant");
   const config = await loadConfig();
-  if (mock === "control" || mock === "treatment") {
-    applyVariant(mock);
+  const allowMock = Boolean(config?.allowMock);
+  if (allowMock && (mock === "control" || mock === "treatment")) {
+    applyFixes(allFixes(mock === "treatment"), "URL override (no Flagsmith)");
     return;
   }
   try {

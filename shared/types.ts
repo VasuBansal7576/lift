@@ -22,6 +22,7 @@ export type BarrierId =
   | "unlabeled_icon"
   | "div_button"
   | "missing_labels"
+  | "unlabeled_terms"
   | "low_contrast";
 
 export interface Barrier {
@@ -61,6 +62,15 @@ export interface ExperimentDecision {
   threshold: number;
   notes: string[];
 }
+
+export type PersonaMix = Record<Persona, number>;
+
+export const DEFAULT_PERSONA_MIX: PersonaMix = {
+  mouse: 0.7,
+  keyboard: 0.1,
+  "screen-reader": 0.1,
+  "low-vision": 0.1,
+};
 
 export function assertNever(value: never, message: string): never {
   throw new Error(`${message}: ${String(value)}`);

@@ -2,6 +2,8 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { config as loadEnv } from "dotenv";
+import { DEFAULT_PERSONA_MIX, type PersonaMix } from "../../shared/types.ts";
+import { parsePersonaMix } from "../../shared/mix.ts";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 loadEnv({ path: resolve(root, ".env") });
@@ -20,15 +22,22 @@ function envNumber(name: string, fallback: number): number {
 }
 
 export function loadConfig() {
+  const apiUrl = env("FLAGSMITH_API_URL", "http://localhost:8000/api/v1/").replace(
+    /\/?$/,
+    "/",
+  );
+  const adminApiUrl = (
+    env("FLAGSMITH_ADMIN_API_URL") || apiUrl
+  ).replace(/\/?$/, "/");
+  const cloud = /flagsmith\.com/i.test(apiUrl) || /flagsmith\.com/i.test(adminApiUrl);
+  const eventsUrl = env(
+    "FLAGSMITH_EVENTS_URL",
+    cloud ? "https://events.api.flagsmith.com/" : "http://localhost:8000/api/",
+  ).replace(/\/?$/, "/");
   return {
-    apiUrl: env("FLAGSMITH_API_URL", "http://localhost:8000/api/v1/").replace(
-      /\/?$/,
-      "/",
-    ),
-    eventsUrl: env("FLAGSMITH_EVENTS_URL", "http://localhost:8000/api/").replace(
-      /\/?$/,
-      "/",
-    ),
+    apiUrl,
+    adminApiUrl,
+    eventsUrl,
     dashboardUrl: env("FLAGSMITH_DASHBOARD_URL", "http://localhost:8000").replace(
       /\/$/,
       "",
@@ -49,6 +58,12 @@ export function loadConfig() {
     trafficSeed: envNumber("LIFT_TRAFFIC_SEED", 20261126),
     winThreshold: envNumber("LIFT_WIN_THRESHOLD", 0.95),
     allowMock: env("LIFT_ALLOW_MOCK", "false") === "true",
+    allowLocalDecision: env("LIFT_ALLOW_LOCAL_DECISION", "false") === "true",
+    resultsWaitMs: Math.max(0, envNumber("LIFT_RESULTS_WAIT_MS", 420_000)),
+    personaMix: parsePersonaMix(
+      env("LIFT_PERSONA_MIX"),
+      DEFAULT_PERSONA_MIX,
+    ) as PersonaMix,
   };
 }
 

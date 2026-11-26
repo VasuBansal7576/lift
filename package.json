@@ -17,6 +17,7 @@
     "test": "vitest run",
     "test:unit": "vitest run tests/unit",
     "test:e2e": "playwright test",
+    "typecheck": "tsc --noEmit",
     "test:all": "vitest run tests/unit && playwright test"
   },
   "engines": {
@@ -27,6 +28,7 @@
     "dotenv": "^16.4.7"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.14.1",
     "@playwright/test": "^1.51.0",
     "@types/node": "^22.13.10",
     "tsx": "^4.19.3",

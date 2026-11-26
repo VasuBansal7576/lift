@@ -1,6 +1,6 @@
 import type { Page } from "@playwright/test";
 import type { BarrierId, Persona, Variant } from "../../shared/types.ts";
-import { contrastRatio, parseRgb } from "./contrast.ts";
+import { contrastRatio, parseCssColor } from "./contrast.ts";
 
 export interface AttemptResult {
   converted: boolean;
@@ -9,6 +9,7 @@ export interface AttemptResult {
 }
 
 const CHECKOUT_TIMEOUT = 2500;
+export const CONTRAST_FLOOR = 4.5;
 
 async function waitForConversion(page: Page): Promise<boolean> {
   try {
@@ -25,6 +26,21 @@ async function fillKnownFields(page: Page) {
   await page.locator("#card-number").fill("4242424242424242");
   await page.locator("#card-exp").fill("12/28");
   await page.locator("#card-cvc").fill("123");
+}
+
+/** Contrast-threshold persona: 200% zoom that affects layout, then WCAG 4.5:1 on computed colours. */
+export async function applyLowVisionZoom(page: Page) {
+  const session = await page.context().newCDPSession(page);
+  const viewport = page.viewportSize() ?? { width: 1280, height: 720 };
+  await session.send("Emulation.setDeviceMetricsOverride", {
+    width: viewport.width,
+    height: viewport.height,
+    deviceScaleFactor: 2,
+    mobile: false,
+  });
+  await page.evaluate(() => {
+    document.documentElement.style.zoom = "2";
+  });
 }
 
 export async function runMouse(page: Page): Promise<AttemptResult> {
@@ -185,16 +201,19 @@ export async function runScreenReader(page: Page): Promise<AttemptResult> {
   await page.getByRole("textbox", { name: "Expiry" }).fill("12/28");
   await page.getByRole("textbox", { name: "CVC" }).fill("123");
   const terms = page.getByRole("checkbox", { name: /terms of sale/i });
-  if (await terms.count()) {
-    await terms.check();
-  } else {
-    await page.locator("#terms").check();
+  if (!(await terms.count())) {
+    return {
+      converted: false,
+      blockedBy: ["unlabeled_terms"],
+      reason: "Terms checkbox has no accessible name",
+    };
   }
+  await terms.check();
   const place = page.getByRole("button", { name: "Place order" });
   if (!(await place.count())) {
     return {
       converted: false,
-      blockedBy: ["div_button", "unlabeled_icon"],
+      blockedBy: ["div_button"],
       reason: "No button named Place order",
     };
   }
@@ -210,9 +229,7 @@ export async function runScreenReader(page: Page): Promise<AttemptResult> {
 }
 
 export async function runLowVision(page: Page): Promise<AttemptResult> {
-  await page.evaluate(() => {
-    document.documentElement.style.zoom = "2";
-  });
+  await applyLowVisionZoom(page);
   const nav = page.locator(".hover-nav");
   await nav.hover();
   const checkout = page.locator("#checkout-link");
@@ -236,13 +253,14 @@ export async function runLowVision(page: Page): Promise<AttemptResult> {
     const parent = el.parentElement ? getComputedStyle(el.parentElement) : style;
     return { color: style.color, background: parent.backgroundColor };
   });
-  const fg = parseRgb(contrast.color);
-  const bg = parseRgb(contrast.background);
-  if (fg && bg && contrastRatio(fg, bg) < 4.5) {
+  const fg = parseCssColor(contrast.color);
+  const bg = parseCssColor(contrast.background);
+  const ratio = contrastRatio(fg, bg);
+  if (ratio < CONTRAST_FLOOR) {
     return {
       converted: false,
       blockedBy: ["low_contrast"],
-      reason: `Terms copy contrast ${contrastRatio(fg, bg).toFixed(2)}:1 is below 4.5:1`,
+      reason: `Terms copy contrast ${ratio.toFixed(2)}:1 is below ${CONTRAST_FLOOR}:1 (contrast-threshold persona)`,
     };
   }
 
@@ -254,7 +272,7 @@ export async function runLowVision(page: Page): Promise<AttemptResult> {
     converted,
     blockedBy: converted ? [] : ["low_contrast"],
     reason: converted
-      ? "Low-vision persona could read terms and complete checkout"
+      ? "Contrast-threshold persona could read terms and complete checkout"
       : "Order did not confirm after readable terms",
   };
 }
@@ -279,6 +297,7 @@ export async function runPersona(
   }
 }
 
+/** Exact blockedBy the bot returns on the control/treatment fixtures. */
 export function expectedBlocked(persona: Persona, variant: Variant): BarrierId[] {
   if (variant === "treatment") return [];
   switch (persona) {
@@ -287,7 +306,7 @@ export function expectedBlocked(persona: Persona, variant: Variant): BarrierId[]
     case "keyboard":
       return ["hover_menu"];
     case "screen-reader":
-      return ["hover_menu", "unlabeled_icon", "missing_labels", "div_button"];
+      return ["hover_menu", "unlabeled_icon"];
     case "low-vision":
       return ["low_contrast"];
     default: {

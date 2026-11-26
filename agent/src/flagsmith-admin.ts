@@ -26,7 +26,7 @@ export class FlagsmithAdmin {
   }
 
   private url(path: string): string {
-    const base = this.cfg.apiUrl.replace(/\/+$/, "");
+    const base = (this.cfg.adminApiUrl || this.cfg.apiUrl).replace(/\/+$/, "");
     const suffix = path.startsWith("/") ? path : `/${path}`;
     return `${base}${suffix}`;
   }
@@ -72,6 +72,10 @@ export class FlagsmithAdmin {
     return this.request<T>("PATCH", path, body);
   }
 
+  put<T>(path: string, body?: unknown) {
+    return this.request<T>("PUT", path, body);
+  }
+
   async envKey(): Promise<string> {
     if (!this.cfg.environmentKey) {
       throw new Error("FLAGSMITH_ENVIRONMENT_KEY is required");
@@ -85,6 +89,8 @@ export interface FeatureOption {
   string_value?: string | null;
   default_percentage_allocation?: number;
   key?: string | null;
+  type?: string | null;
+  feature?: number;
 }
 
 export interface FeatureRecord {

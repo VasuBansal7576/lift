@@ -36,11 +36,20 @@
     "blocks": ["screen-reader"]
   },
   {
+    "id": "unlabeled_terms",
+    "flag": "a11y_unlabeled_terms",
+    "wcag": "4.1.2 Name, Role, Value / 1.3.1 Info and Relationships",
+    "title": "Terms checkbox with no accessible name",
+    "control": "The terms checkbox is an unlabeled input; the adjacent span is not associated via label/for or aria-labelledby.",
+    "treatment": "A <label for=\"terms\"> wraps the terms copy.",
+    "blocks": ["screen-reader"]
+  },
+  {
     "id": "low_contrast",
     "flag": "a11y_low_contrast",
     "wcag": "1.4.3 Contrast (Minimum)",
     "title": "Low-contrast terms copy",
-    "control": "Terms checkbox label is grey-on-grey (~1.4:1). Low-vision persona will not agree to unread terms.",
+    "control": "Terms checkbox label is grey-on-grey (~1.4:1). The contrast-threshold persona will not agree to unread terms.",
     "treatment": "Near-black on white (~19:1).",
     "blocks": ["low-vision"]
   }

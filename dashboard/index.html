@@ -21,7 +21,9 @@
   <p class="note">Hypothesis: fixing accessibility barriers raises conversions. Flagsmith assigns arms, records exposures/conversions, and rolls out the winner.</p>
   <h1>Lift</h1>
   <p id="headline" class="headline">Loading results…</p>
+  <p id="mix" class="note"></p>
   <p id="meta" class="note"></p>
+  <p id="dashboard-link" class="note"></p>
   <h2>Experiment flag</h2>
   <table id="flag-table"><thead><tr><th>Flag</th><th>Control</th><th>Treatment</th><th>Win P(treatment)</th><th>Decision</th></tr></thead><tbody></tbody></table>
   <h2>Personas</h2>
@@ -39,8 +41,18 @@
       .then((r) => r.json())
       .then((data) => {
         document.getElementById("headline").textContent = data.headline.copy;
+        document.getElementById("mix").textContent =
+          `Persona mix (assumption, not data): ${data.personaMixLabel || ""}. ${data.personaMixNote || ""}`;
         document.getElementById("meta").textContent =
-          `${data.label} Generated ${data.generatedAt}. Flag ${data.flag}.`;
+          `${data.label} Generated ${data.generatedAt}. Flag ${data.flag}. Headline source: ${data.headline?.source || "unknown"}. ${data.honesty || ""}`;
+        const dash = document.getElementById("dashboard-link");
+        if (data.flagsmithDashboard) {
+          dash.innerHTML = "";
+          const a = document.createElement("a");
+          a.href = data.flagsmithDashboard;
+          a.textContent = "Flagsmith experiment dashboard";
+          dash.appendChild(a);
+        }
         const experiment = (data.flags || []).filter((f) => f.role === "experiment");
         const body = document.querySelector("#flag-table tbody");
         for (const flag of experiment) {

@@ -1,11 +1,15 @@
 import { readFileSync } from "node:fs";
+import { Flagsmith } from "@flagsmith/nodejs";
 import type { ExperimentDecision, Variant, VisitRecord } from "../../shared/types.ts";
 import { eventsPath, loadConfig, readJson, statePath } from "./config.ts";
 import {
   FlagsmithAdmin,
+  FlagsmithAdminError,
   type ExperimentRecord,
+  listResults,
 } from "./flagsmith-admin.ts";
 import type { BootstrapState } from "./bootstrap.ts";
+import { completeBody } from "./payloads.ts";
 import {
   armStats,
   bayesianWinProbability,
@@ -41,6 +45,10 @@ export interface FlagsmithResultsEnvelope {
     is_final?: boolean;
   } | null;
 }
+
+const IDENTITY_FLOOR = 50;
+const CONVERSION_FLOOR = 5;
+const REFRESH_THROTTLE_MS = 5 * 60 * 1000;
 
 export function loadVisits(path = eventsPath()): VisitRecord[] {
   try {
@@ -83,11 +91,38 @@ export function parseFlagsmithWin(
   };
 }
 
+export function floorsMet(
+  visits: VisitRecord[],
+  envelope?: FlagsmithResultsEnvelope | null,
+): boolean {
+  const byVariant = summariseVisits(visits);
+  const localOk =
+    byVariant.control.visitors >= IDENTITY_FLOOR &&
+    byVariant.treatment.visitors >= IDENTITY_FLOOR &&
+    byVariant.control.conversions >= CONVERSION_FLOOR &&
+    byVariant.treatment.conversions >= CONVERSION_FLOOR;
+  const variants = envelope?.results?.payload?.metrics?.[0]?.variants;
+  if (!variants) return localOk;
+  const control = variants.control;
+  const treatment =
+    variants.treatment ??
+    Object.entries(variants).find(([key]) => key !== "control")?.[1];
+  if (!control || !treatment) return localOk;
+  const flagsmithOk =
+    (control.n ?? 0) >= IDENTITY_FLOOR &&
+    (treatment.n ?? 0) >= IDENTITY_FLOOR &&
+    (control.sum ?? 0) >= CONVERSION_FLOOR &&
+    (treatment.sum ?? 0) >= CONVERSION_FLOOR;
+  return localOk || flagsmithOk;
+}
+
 export function decideExperiment(input: {
   flag: string;
   visits: VisitRecord[];
   flagsmith?: FlagsmithResultsEnvelope | null;
   threshold: number;
+  allowLocalDecision?: boolean;
+  statsSeed?: number;
 }): ExperimentDecision {
   const byVariant = summariseVisits(input.visits);
   const control = armStats(
@@ -99,24 +134,25 @@ export function decideExperiment(input: {
     byVariant.treatment.visitors,
   );
   const notes: string[] = [
-    "All traffic is SIMULATED (Playwright persona bots, not humans).",
+    "All traffic is SIMULATED (Playwright persona bots, not humans). Outcomes follow the persona model, not evidence about real users.",
   ];
 
-  const parsed = parseFlagsmithWin(input.flagsmith);
-  const collecting =
-    control.visitors < 50 ||
-    treatment.visitors < 50 ||
-    control.conversions < 5 ||
-    treatment.conversions < 5;
+  const parsed = parseFlagsmithWin(input.flagsmith ?? null);
+  const collecting = !floorsMet(input.visits, input.flagsmith);
 
   let source: ExperimentDecision["source"] = "local_bayesian";
-  let winProbabilityTreatment = bayesianWinProbability(treatment, control);
-  let lift = relativeLift(treatment.rate, control.rate);
+  let winProbabilityTreatment = bayesianWinProbability(
+    treatment,
+    control,
+    20_000,
+    input.statsSeed ?? 20261126,
+  );
+  let lift: number | null = relativeLift(treatment.rate, control.rate) ?? null;
 
   if (parsed && !collecting) {
     source = "flagsmith";
     winProbabilityTreatment = parsed.chanceToWin;
-    lift = parsed.lift;
+    lift = parsed.lift ?? null;
     notes.push(
       "Win probability from Flagsmith Experimentation (chance_to_win on the results payload).",
     );
@@ -127,7 +163,7 @@ export function decideExperiment(input: {
     );
   } else {
     notes.push(
-      "Flagsmith native results were not available (warehouse still connecting, self-host without events, or refresh pending). Win probability is a local Beta-Binomial Monte Carlo, same decision rule as Flagsmith's 95% chance-to-be-best.",
+      "Flagsmith native results were not available (warehouse still connecting, self-host without events, or refresh pending). Win probability is a local Beta-Binomial Monte Carlo.",
     );
   }
 
@@ -138,10 +174,10 @@ export function decideExperiment(input: {
 
   switch (decision) {
     case "rollout_treatment":
-      notes.push("Treatment wins: complete the experiment rolling out the treatment variant.");
+      notes.push("Treatment wins under the 95% chance-to-be-best rule.");
       break;
     case "pull_to_control":
-      notes.push("Treatment loses: complete the experiment returning to control.");
+      notes.push("Treatment loses under the 95% chance-to-be-best rule.");
       break;
     case "keep_running":
       notes.push("Inconclusive: leave the experiment running.");
@@ -149,6 +185,18 @@ export function decideExperiment(input: {
     default: {
       const _exhaustive: never = decision;
       throw new Error(`Unhandled decision ${_exhaustive}`);
+    }
+  }
+
+  if (source === "local_bayesian" && decision !== "keep_running") {
+    if (input.allowLocalDecision) {
+      notes.push(
+        "LIFT_ALLOW_LOCAL_DECISION=true: completing the Flagsmith experiment from local math, not chance_to_win. Labelled as local_bayesian everywhere.",
+      );
+    } else {
+      notes.push(
+        "Not completing the Flagsmith experiment: source is local_bayesian. Poll results until chance_to_win exists, or set LIFT_ALLOW_LOCAL_DECISION=true.",
+      );
     }
   }
 
@@ -165,18 +213,36 @@ export function decideExperiment(input: {
   };
 }
 
+export function shouldApplyDecision(
+  decision: ExperimentDecision,
+  allowLocalDecision: boolean,
+): boolean {
+  if (decision.decision === "keep_running") return false;
+  if (decision.source === "flagsmith") return true;
+  return allowLocalDecision;
+}
+
 export async function fetchFlagsmithResults(
   experimentId: number,
+  opts?: { refresh?: boolean },
 ): Promise<FlagsmithResultsEnvelope | null> {
   const cfg = loadConfig();
   if (!cfg.adminToken || !cfg.environmentKey) return null;
   const admin = new FlagsmithAdmin(cfg);
-  try {
-    await admin.post(
-      `/environments/${cfg.environmentKey}/experiments/${experimentId}/results/refresh/`,
-    );
-  } catch {
-    // 429 if refreshed in the last 5 minutes, or 400 if not started — keep going.
+  if (opts?.refresh !== false) {
+    try {
+      await admin.post(
+        `/environments/${cfg.environmentKey}/experiments/${experimentId}/results/refresh/`,
+      );
+    } catch (err) {
+      if (err instanceof FlagsmithAdminError) {
+        process.stderr.write(
+          `results/refresh ${err.status}: ${err.body.slice(0, 240)}\n`,
+        );
+      } else {
+        process.stderr.write(`results/refresh error: ${err}\n`);
+      }
+    }
   }
   const { data } = await admin.get<FlagsmithResultsEnvelope>(
     `/environments/${cfg.environmentKey}/experiments/${experimentId}/results/`,
@@ -184,7 +250,117 @@ export async function fetchFlagsmithResults(
   return data;
 }
 
-export async function applyDecision(decision: ExperimentDecision): Promise<void> {
+export async function waitForFlagsmithResults(input: {
+  experimentId: number;
+  visits: VisitRecord[];
+  waitMs: number;
+  sleep?: (ms: number) => Promise<void>;
+  now?: () => number;
+}): Promise<FlagsmithResultsEnvelope | null> {
+  const sleep = input.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));
+  const now = input.now ?? Date.now;
+  const deadline = now() + input.waitMs;
+  let lastRefresh = 0;
+  let delay = 10_000;
+  let latest: FlagsmithResultsEnvelope | null = null;
+
+  while (true) {
+    const t = now();
+    const refresh = lastRefresh === 0 || t - lastRefresh >= REFRESH_THROTTLE_MS;
+    latest = await fetchFlagsmithResults(input.experimentId, { refresh });
+    if (refresh) lastRefresh = t;
+    const parsed = parseFlagsmithWin(latest);
+    if (parsed && floorsMet(input.visits, latest)) return latest;
+    if (t >= deadline) return latest;
+    const wait = Math.min(delay, Math.max(0, deadline - t));
+    if (wait <= 0) return latest;
+    await sleep(wait);
+    delay = Math.min(Math.floor(delay * 1.5), 60_000);
+  }
+}
+
+export interface FeatureStateRecord {
+  id: number;
+  enabled?: boolean;
+  feature_state_value?: unknown;
+  multivariate_feature_state_values?: Array<{
+    id?: number;
+    multivariate_feature_option: number | { id: number };
+    percentage_allocation: number;
+  }>;
+}
+
+export async function setEnvironmentDefault(
+  admin: FlagsmithAdmin,
+  envKey: string,
+  flagId: number,
+  treatmentOptionId: number,
+  variant: Variant,
+): Promise<void> {
+  const { data } = await admin.get<unknown>(
+    `/environments/${envKey}/featurestates/?feature=${flagId}`,
+  );
+  const states = listResults<FeatureStateRecord>(data);
+  const state = states[0];
+  if (!state) {
+    throw new Error(`No environment feature state for feature ${flagId}`);
+  }
+  const allocation = variant === "treatment" ? 100 : 0;
+  const mv = (state.multivariate_feature_state_values ?? []).map((row) => {
+    const optionId =
+      typeof row.multivariate_feature_option === "number"
+        ? row.multivariate_feature_option
+        : row.multivariate_feature_option.id;
+    return {
+      id: row.id,
+      multivariate_feature_option: optionId,
+      percentage_allocation: optionId === treatmentOptionId ? allocation : 0,
+    };
+  });
+  await admin.patch(`/features/featurestates/${state.id}/`, {
+    enabled: true,
+    feature_state_value: variant === "treatment" ? "treatment" : "control",
+    multivariate_feature_state_values: mv,
+  });
+}
+
+export async function evaluateIdentityVariant(
+  flagName: string,
+  identity: string,
+): Promise<{ variant: string | undefined; value: unknown }> {
+  const cfg = loadConfig();
+  const key = cfg.serverKey || cfg.environmentKey;
+  if (!key) throw new Error("FLAGSMITH_SERVER_KEY or FLAGSMITH_ENVIRONMENT_KEY required to verify rollout");
+  const flagsmith = new Flagsmith({
+    environmentKey: key,
+    apiUrl: cfg.adminApiUrl || cfg.apiUrl,
+    enableLocalEvaluation: Boolean(cfg.serverKey),
+  });
+  try {
+    const flags = await flagsmith.getIdentityFlags(identity, {
+      simulated: true,
+      purpose: "rollout_verify",
+    });
+    const flag = flags.getFlag(flagName);
+    const variant =
+      "variant" in flag && typeof flag.variant === "string" ? flag.variant : undefined;
+    return { variant, value: flag.value };
+  } finally {
+    await flagsmith.close(2000);
+  }
+}
+
+function variantMatches(got: { variant?: string; value?: unknown }, expected: Variant): boolean {
+  return got.variant === expected || got.value === expected;
+}
+
+export async function applyDecision(
+  decision: ExperimentDecision,
+  deps?: {
+    evaluateIdentity?: typeof evaluateIdentityVariant;
+    setDefault?: typeof setEnvironmentDefault;
+  },
+): Promise<void> {
   const cfg = loadConfig();
   const state = readJson<BootstrapState>(statePath());
   if (!state || !cfg.adminToken || !cfg.environmentKey) {
@@ -196,20 +372,59 @@ export async function applyDecision(decision: ExperimentDecision): Promise<void>
   );
 
   if (decision.decision === "keep_running") return;
-  if (experiment.status === "completed") return;
+  if (experiment.status !== "running") {
+    throw new Error(
+      `Refusing to complete experiment ${state.experimentId}: status is ${experiment.status}, expected running`,
+    );
+  }
 
-  const body =
-    decision.decision === "rollout_treatment"
-      ? {
-          rollout_decision: "variant",
-          rollout_variant: state.treatmentOptionId,
-        }
-      : { rollout_decision: "control" };
-
+  const body = completeBody(decision.decision, state.treatmentOptionId);
   await admin.post(
     `/environments/${cfg.environmentKey}/experiments/${state.experimentId}/complete/`,
     body,
   );
+
+  const { data: completed } = await admin.get<ExperimentRecord>(
+    `/environments/${cfg.environmentKey}/experiments/${state.experimentId}/`,
+  );
+  if (completed.rollout_decision !== body.rollout_decision) {
+    throw new Error(
+      `complete/ did not stick: rollout_decision=${completed.rollout_decision} expected ${body.rollout_decision}`,
+    );
+  }
+  if (
+    body.rollout_decision === "variant" &&
+    completed.rollout_variant !== state.treatmentOptionId &&
+    Number(completed.rollout_variant) !== state.treatmentOptionId
+  ) {
+    throw new Error(
+      `complete/ rollout_variant=${completed.rollout_variant} expected ${state.treatmentOptionId}`,
+    );
+  }
+
+  const expected: Variant =
+    decision.decision === "rollout_treatment" ? "treatment" : "control";
+  const evaluate = deps?.evaluateIdentity ?? evaluateIdentityVariant;
+  let got = await evaluate(state.flagName, `lift-verify-${Date.now()}`);
+  if (variantMatches(got, expected)) return;
+
+  process.stderr.write(
+    `Fresh identity evaluated to variant=${got.variant} value=${String(got.value)}, expected ${expected}. Falling back to environment default PATCH.\n`,
+  );
+  const setDefault = deps?.setDefault ?? setEnvironmentDefault;
+  await setDefault(
+    admin,
+    cfg.environmentKey,
+    state.flagId,
+    state.treatmentOptionId,
+    expected,
+  );
+  got = await evaluate(state.flagName, `lift-verify-fallback-${Date.now()}`);
+  if (!variantMatches(got, expected)) {
+    throw new Error(
+      `Environment default fallback failed: identity still sees variant=${got.variant} value=${String(got.value)}, expected ${expected}`,
+    );
+  }
 }
 
 async function main() {
@@ -217,15 +432,21 @@ async function main() {
   const state = readJson<BootstrapState>(statePath());
   const visits = loadVisits();
   const flagsmith = state
-    ? await fetchFlagsmithResults(state.experimentId)
+    ? await waitForFlagsmithResults({
+        experimentId: state.experimentId,
+        visits,
+        waitMs: cfg.resultsWaitMs,
+      })
     : null;
   const decision = decideExperiment({
     flag: cfg.flagName,
     visits,
     flagsmith,
     threshold: cfg.winThreshold,
+    allowLocalDecision: cfg.allowLocalDecision,
+    statsSeed: cfg.trafficSeed,
   });
-  if (decision.decision !== "keep_running") {
+  if (shouldApplyDecision(decision, cfg.allowLocalDecision)) {
     await applyDecision(decision);
   }
   process.stdout.write(`${JSON.stringify({ decision, flagsmith }, null, 2)}\n`);

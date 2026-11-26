@@ -464,6 +464,26 @@ export async function setEnvironmentDefault(
   treatmentOptionId: number,
   variant: Variant,
 ): Promise<void> {
+  const allocation = variant === "treatment" ? 100 : 0;
+  const value = variant === "treatment" ? "treatment" : "control";
+  for (const type of ["unicode", "string"] as const) {
+    try {
+      await admin.patchFutureFeature(envKey, flagId, {
+        environment_default: {
+          enabled: true,
+          value: { type, value },
+          variants: [{ id: treatmentOptionId, weight: allocation }],
+        },
+      });
+      return;
+    } catch (err) {
+      const retry =
+        err instanceof FlagsmithAdminError &&
+        (err.status === 400 || err.status === 404 || err.status === 422);
+      if (!retry) throw err;
+    }
+  }
+
   const { data } = await admin.get<unknown>(
     `/environments/${envKey}/featurestates/?feature=${flagId}`,
   );
@@ -472,7 +492,6 @@ export async function setEnvironmentDefault(
   if (!state) {
     throw new Error(`No environment feature state for feature ${flagId}`);
   }
-  const allocation = variant === "treatment" ? 100 : 0;
   const mv = (state.multivariate_feature_state_values ?? []).map((row) => {
     const optionId =
       typeof row.multivariate_feature_option === "number"

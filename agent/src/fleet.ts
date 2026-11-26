@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { SITES } from "../../shared/catalog.ts";
 import {
@@ -13,7 +13,7 @@ import {
   type FleetCallEstimate,
 } from "../../shared/estimate.ts";
 import { DEFAULT_PERSONA_MIX } from "../../shared/types.ts";
-import { fleetResultsPath, loadConfig } from "./config.ts";
+import { fleetResultsPath, loadConfig, readJson, resultsPath } from "./config.ts";
 import { runExperiment } from "./run.ts";
 import { serveSites } from "./serve.ts";
 
@@ -79,6 +79,17 @@ export async function runFleet() {
   try {
     for (const site of SITES) {
       process.stdout.write(`\n=== ${site.id} (${site.flagName}) ===\n`);
+      const existingPath = resultsPath(site.id);
+      if (existsSync(existingPath) && process.env.LIFT_FLEET_FORCE !== "true") {
+        const existing = readJson<Parameters<typeof siteRowFromDocument>[0]>(existingPath);
+        if (existing?.decision) {
+          const row = siteRowFromDocument(existing);
+          row.name = site.name;
+          rows.push(row);
+          process.stdout.write(`Reusing ${existingPath}\n`);
+          continue;
+        }
+      }
       process.env.LIFT_SITE = site.id;
       process.env.LIFT_FLAG_NAME = site.flagName;
       process.env.LIFT_METRIC_EVENT = site.metricEvent;

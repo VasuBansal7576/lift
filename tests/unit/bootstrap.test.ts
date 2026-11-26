@@ -188,6 +188,15 @@ describe("ensureMetric", () => {
   });
 });
 
+describe("v2 feature versioning URL", () => {
+  it("points at /api/__future__/environments/{key}/features/{id}/", () => {
+    const admin = new FlagsmithAdmin(cfg());
+    expect(admin.futureFeatureUrl("env-key", 305189)).toBe(
+      "https://api.flagsmith.com/api/__future__/environments/env-key/features/305189/",
+    );
+  });
+});
+
 describe("clampWinThreshold", () => {
   it("clamps to exclusive (0.5, 1)", () => {
     expect(clampWinThreshold(0.5)).toBe(0.501);

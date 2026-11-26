@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Lift — simulated conversion results</title>
+  <style>
+    :root { font-family: "Iowan Old Style", Palatino, serif; background: #f4efe6; color: #16181d; }
+    body { max-width: 52rem; margin: 0 auto; padding: 2rem 1.25rem 4rem; }
+    .banner { background: #111; color: #fff; padding: 0.6rem 0.8rem; letter-spacing: 0.08em; text-transform: uppercase; font-size: 0.8rem; }
+    h1 { font-size: 2.4rem; margin-bottom: 0.2rem; }
+    .headline { font-size: 1.6rem; }
+    table { width: 100%; border-collapse: collapse; margin: 1rem 0 2rem; background: #fff; }
+    th, td { text-align: left; padding: 0.55rem 0.7rem; border-bottom: 1px solid #ddd; vertical-align: top; }
+    .note { color: #5c6370; }
+    .pill { display: inline-block; background: #1f4d3a; color: #fff; padding: 0.15rem 0.5rem; font-size: 0.8rem; }
+  </style>
+</head>
+<body>
+  <p class="banner">Simulated traffic — Playwright persona bots, not humans</p>
+  <p class="note">Hypothesis: fixing accessibility barriers raises conversions. Flagsmith assigns arms, records exposures/conversions, and rolls out the winner.</p>
+  <h1>Lift</h1>
+  <p id="headline" class="headline">Loading results…</p>
+  <p id="meta" class="note"></p>
+  <h2>Experiment flag</h2>
+  <table id="flag-table"><thead><tr><th>Flag</th><th>Control</th><th>Treatment</th><th>Win P(treatment)</th><th>Decision</th></tr></thead><tbody></tbody></table>
+  <h2>Personas</h2>
+  <table id="persona-table"><thead><tr><th>Persona</th><th>Control</th><th>Treatment</th></tr></thead><tbody></tbody></table>
+  <h2>Barriers shipped behind Flagsmith</h2>
+  <ul id="barriers"></ul>
+  <p class="note" id="source"></p>
+  <script>
+    function pct(n) { return `${(n * 100).toFixed(1)}%`; }
+    function rate(arm) {
+      if (!arm || !arm.visitors) return "0/0";
+      return `${arm.conversions}/${arm.visitors} (${pct(arm.conversions / arm.visitors)})`;
+    }
+    fetch("./results.json")
+      .then((r) => r.json())
+      .then((data) => {
+        document.getElementById("headline").textContent = data.headline.copy;
+        document.getElementById("meta").textContent =
+          `${data.label} Generated ${data.generatedAt}. Flag ${data.flag}.`;
+        const experiment = (data.flags || []).filter((f) => f.role === "experiment");
+        const body = document.querySelector("#flag-table tbody");
+        for (const flag of experiment) {
+          const tr = document.createElement("tr");
+          tr.innerHTML = `<td>${flag.name} <span class="pill">${flag.decision}</span></td>
+            <td>${rate(flag.control)}</td>
+            <td>${rate(flag.treatment)}</td>
+            <td>${pct(flag.winProbabilityTreatment)} (${flag.source})</td>
+            <td>${flag.decision}</td>`;
+          body.appendChild(tr);
+        }
+        const personas = document.querySelector("#persona-table tbody");
+        for (const [name, arms] of Object.entries(data.personas || {})) {
+          const tr = document.createElement("tr");
+          tr.innerHTML = `<td>${name}</td><td>${rate(arms.control)}</td><td>${rate(arms.treatment)}</td>`;
+          personas.appendChild(tr);
+        }
+        const list = document.getElementById("barriers");
+        for (const barrier of data.barriers || []) {
+          const li = document.createElement("li");
+          li.innerHTML = `<strong>${barrier.flag}</strong> — ${barrier.title} (${barrier.wcag}). Blocks ${barrier.blocks.join(", ")}.`;
+          list.appendChild(li);
+        }
+        document.getElementById("source").textContent = (data.decision?.notes || []).join(" ");
+      })
+      .catch(() => {
+        document.getElementById("headline").textContent =
+          "No results.json yet. Run npm run experiment after Flagsmith bootstrap.";
+      });
+  </script>
+</body>
+</html>

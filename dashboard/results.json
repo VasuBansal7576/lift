@@ -1,0 +1,18 @@
+{
+  "traffic": "simulated",
+  "label": "SIMULATED TRAFFIC — Playwright persona bots, not humans.",
+  "generatedAt": null,
+  "site": "checkout",
+  "sites": 1,
+  "flag": "checkout_a11y",
+  "headline": {
+    "conversionLift": null,
+    "copy": "No experiment has been run yet."
+  },
+  "decision": null,
+  "flags": [],
+  "personas": {},
+  "barriers": [],
+  "visits": 0,
+  "flagsmithResults": null
+}

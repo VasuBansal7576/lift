@@ -17,7 +17,7 @@ flowchart LR
   Barriers --> Site[Demo site]
   Exp --> Site
   Site --> Traffic[Persona traffic]
-  Traffic --> Events[trackEvent / flushEvents]
+  Traffic --> Events["trackEvent / flushEvents"]
   Events --> WH[Flagsmith warehouse]
   WH --> Results["Experiments results / chance_to_win"]
   Results --> Complete["POST complete / rollout_decision"]
@@ -35,7 +35,7 @@ Designed against [Flagsmith Experimentation](https://docs.flagsmith.com/experime
 | Feature | What Lift calls | Why it matters |
 |---------|-----------------|----------------|
 | **Multivariate flags** | `POST /projects/{id}/features/` with `type: MULTIVARIATE`; keyed variant `treatment` via `mv-options` | Each site’s bundled experiment is `<site>_a11y` (`control` vs `treatment`). Per-barrier flags (`hover_menu`, `unlabeled_icon`, …) are separate multivariate flags the page also reads. |
-| **Identities + traits** | Node SDK `getIdentityFlags(identity, traits)`; JS SDK `identity` + traits `simulated`, `persona`, `converted`, `site` | Every visitor is a Flagsmith identity. Traits mark simulated traffic so warehouse rows are honest. **Segments are not used for targeting**; the experiment rollout is 50/50 on the multivariate flag. |
+| **Identities + traits** | Node SDK traffic runner: `getIdentityFlags` / `trackEvent` with `simulated`, `persona`, `converted` (on success), and `site`. Browser JS SDK: init traits `simulated: false` and `site`; `converted` on success. | Every visitor is a Flagsmith identity. Bot traits mark simulated traffic so warehouse rows are honest; live browsers set `simulated: false`. **Segments are not used for targeting**; the experiment rollout is 50/50 on the multivariate flag. |
 | **JS SDK (live humans)** | `@flagsmith/flagsmith@12.4.0` from jsDelivr; `getExperimentFlag`, `trackEvent`, `flushEvents` | A real browser loads the environment document and buckets on the experiment flag. `?lift_variant=` is ignored unless the server overlays `allowMock: true` in memory. |
 | **Node SDK local evaluation** | `@flagsmith/nodejs` `enableLocalEvaluation: true` | Playwright bots do **not** hit the Flags API per visitor. One environment document (~1–2 GETs/site) assigns variants locally. That keeps the 50k/month free budget (fleet estimate ~264 HTTP calls). |
 | **Events** | `trackEvent` + `flushEvents` to `https://events.api.flagsmith.com/` | Conversions are Flagsmith metric events (`checkout_completed`, …), not a side-channel. Enrollment probe uses `enableEvents: false` so visitor #0 does not fake an exposure. |
@@ -100,7 +100,7 @@ CI runs typecheck, unit, and Playwright on `main` and `lift/**`. E2E uses `tsx s
 
 ## Methodology
 
-Eight fixture sites (checkout, signup, pricing, newsletter, donate, booking, login, search). Each has 3–5 real WCAG barriers in control (`data-barrier` markers; axe-core on checkout control). Treatment is the same page with those barriers fixed. Mouse users still convert in control; the lift is accessibility, not a new offer.
+Eight fixture sites (checkout, signup, pricing, newsletter, donate, booking, login, search). Each has 3–6 real WCAG barriers in control (`data-barrier` markers; axe-core on checkout control). Treatment is the same page with those barriers fixed. Mouse users still convert in control; the lift is accessibility, not a new offer.
 
 **Personas (assumption, not data):** mouse 70%, keyboard 10%, screen-reader 10%, low-vision 10% (`LIFT_PERSONA_MIX`). Blocked personas convert 0% in control; mouse users are never blocked. Expected lift by construction is about `1/(1 − blocked share) − 1` (**+42.9% at 30% blocked**, **+25% at 20%**). Each dashboard row shows observed lift next to that expected value. The size of the lift is set by the assumed mix and which personas each barrier blocks.
 

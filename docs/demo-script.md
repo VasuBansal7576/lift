@@ -1,4 +1,4 @@
-# Demo script (about 2 minutes 40 seconds)
+# Demo script (about 2 minutes 45 seconds)
 
 Record in 1080p. Speak slower than feels natural. Every number on screen is **SIMULATED** traffic: Playwright persona bots, not humans. Do not say “users converted” or “we improved the web.”
 
@@ -14,7 +14,7 @@ Record in 1080p. Speak slower than feels natural. Every number on screen is **SI
 | **0:55–1:18** | Flagsmith UI: Development → Features → `checkout_a11y` multivariate flag (control vs keyed `treatment`). Then Experiments → experiment **632**. Hypothesis visible. | “This is a native Flagsmith Experiment, not a wrapper. Multivariate flag, 50/50 rollout, conversion metric. Lift created it with the Admin API. Identities and events go to Flagsmith. Lift does not pick the winner in application code.” |
 | **1:18–1:38** | Terminal: a short slice of `npm run traffic` or a recorded fleet log. Lines like `lift-sim-… keyboard treatment converted` / `keyboard control blocked`. Optional: Node SDK snippet `getIdentityFlags` + `trackEvent`. | “Playwright bots walk the flow as mouse, keyboard, screen-reader, and low-vision personas. The Node SDK evaluates the experiment locally. Conversions are `trackEvent` into the Flagsmith warehouse. The mix is assumed — 70/10/10/10 — not measured traffic.” |
 | **1:38–1:58** | Flagsmith experiment **632** results: control vs treatment n/sum, `chance_to_win`, lift CI. Then Lift dashboard row for checkout: rolled out, P(win) >99.9%, observed lift next to expected lift. | “Flagsmith’s `chance_to_win` is the decision. Lift waits until each arm’s n matches the local visit log, then completes the experiment. Checkout rolled out. The lift is about what you would expect from the persona mix: blocked people convert at zero in control.” |
-| **1:58–2:18** | Split: checkout row “rolled out” vs Lumen Cloud pricing row **637** tagged **designed to lose (pipeline check)**, pulled to control, lift about −50%. Flagsmith complete payload: `rollout_decision: control`. | “Pricing is the other half. We injected a treatment-only extra step and dropped 60 percent of treatment conversions on purpose. Flagsmith pulled to control. The decision is not hard-coded. The loss is. That is a pipeline check of `pull_to_control`.” |
+| **1:58–2:18** | Split: checkout row “rolled out” vs Lumen Cloud pricing row **637** tagged **designed to lose (pipeline check)**, pulled to control, observed lift **−50.2%**. Flagsmith complete payload: `rollout_decision: control`. | “Pricing is the other half. We injected a treatment-only extra step and dropped 60 percent of treatment conversions on purpose. Observed lift is minus 50.2 percent. Flagsmith pulled to control. The decision is not hard-coded. The loss is. That is a pipeline check of `pull_to_control`.” |
 | **2:18–2:32** | Live dashboard https://vasubansal7576.github.io/lift/ (or local `:4173`). Black **SIMULATED TRAFFIC** banner. Headline: conversion lift across 7 sites, **32.2% median**. Pricing footnote visible. | “Seven real fixes. Median lift 32.2 percent, simulated traffic, assumed mix. Pricing sits outside the headline. This is Flagsmith running the experiment, not a claim about real users.” |
 | **2:32–2:45** | Hold the dashboard. Fade. | “Accessibility work usually stops at a lint report. Lift puts the fix behind a flag and lets Flagsmith keep or kill it on a conversion metric. The traffic is fake so the pipeline can be shown end to end. The mechanism is real.” |
 
@@ -31,7 +31,7 @@ npm run site -- --allow-mock          # http://127.0.0.1:4174
 npm run dashboard                     # http://127.0.0.1:4173
 ```
 
-Do **not** run `npm run fleet` or `npm run experiment` for this recording. Experiments **632–651** are already completed on Flagsmith Development.
+Do **not** run `npm run fleet` or `npm run experiment` for this recording. The eight current completed experiments are **632, 635, 637, 640, 642, 644, 647 and 651**.
 
 ### URLs to open
 
@@ -48,9 +48,9 @@ Do **not** run `npm run fleet` or `npm run experiment` for this recording. Exper
 
 | What | URL |
 |------|-----|
-| Feature `checkout_a11y` | https://app.flagsmith.com/project/56470/environment/120798 |
-| Experiment 632 (checkout, rolled out) | https://app.flagsmith.com/project/56470/environment/120798/experiments/632 |
-| Experiment 637 (pricing, pulled) | https://app.flagsmith.com/project/56470/environment/120798/experiments/637 |
+| Feature `checkout_a11y` | https://app.flagsmith.com/project/56470/environment/120798/ |
+| Experiment 632 (checkout, rolled out) | https://app.flagsmith.com/project/56470/environment/120798/experiments/632/ |
+| Experiment 637 (pricing, pulled) | https://app.flagsmith.com/project/56470/environment/120798/experiments/637/ |
 | Warehouse | Environment Settings → Warehouse (must show **Connected**) |
 
 Sign in before recording. Zoom the results table so `chance_to_win` and n/sum are readable. Keep the SIMULATED banner in frame on every site and dashboard shot.

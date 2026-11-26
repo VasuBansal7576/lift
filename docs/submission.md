@@ -6,7 +6,7 @@ Track: **Test Something Real**. Product: Flagsmith.
 
 Lift ships WCAG accessibility fixes behind Flagsmith flags, runs them as native Flagsmith Experiments on simulated conversion traffic, and lets Flagsmith’s `chance_to_win` roll a fix out or pull it. An agent creates the flags, metric, warehouse connection, and experiment; Playwright personas send `trackEvent` conversions; Lift completes the experiment through the Admin API (`rollout_decision`) and verifies new identities see the winning arm.
 
-**Live fleet (SIMULATED):** 32.2% median conversion lift across 7 real fixes (IQR 31.0%–50.5%). An eighth site, pricing, is a designed-to-lose check of `pull_to_control` (~−50%). Traffic is Playwright bots with an assumed 70/10/10/10 persona mix, not humans.
+**Live fleet (SIMULATED):** 32.2% median conversion lift across 7 real fixes (IQR 31.0%–50.5%). An eighth site, pricing, is a designed-to-lose check of `pull_to_control` (observed −50.2%; 60% of treatment conversions dropped by construction, expected −50%). Traffic is Playwright bots with an assumed 70/10/10/10 persona mix, not humans.
 
 ## How Flagsmith is used
 

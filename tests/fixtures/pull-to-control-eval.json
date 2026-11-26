@@ -1,0 +1,16 @@
+{
+  "capturedAt": "2026-11-26T09:53:51.104Z",
+  "experimentId": 600,
+  "experimentStatus": "completed",
+  "rolloutDecision": "control",
+  "rolloutVariant": null,
+  "flag": "lift_pull_probe",
+  "evaluation": {
+    "identity": "lift-pull-probe-1795686830937",
+    "flagName": "lift_pull_probe",
+    "variant": "control",
+    "value": "control",
+    "enabled": true,
+    "experiment": null
+  }
+}

@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Lift — simulated conversion results</title>
+  <style>
+    :root { font-family: "Iowan Old Style", Palatino, serif; background: #f4efe6; color: #16181d; }
+    body { max-width: 52rem; margin: 0 auto; padding: 2rem 1.25rem 4rem; }
+    .banner { background: #111; color: #fff; padding: 0.6rem 0.8rem; letter-spacing: 0.08em; text-transform: uppercase; font-size: 0.8rem; }
+    h1 { font-size: 2.4rem; margin-bottom: 0.2rem; }
+    .headline { font-size: 1.6rem; }
+    table { width: 100%; border-collapse: collapse; margin: 1rem 0 2rem; background: #fff; }
+    th, td { text-align: left; padding: 0.55rem 0.7rem; border-bottom: 1px solid #ddd; vertical-align: top; }
+    .note { color: #5c6370; }
+    .pill { display: inline-block; background: #1f4d3a; color: #fff; padding: 0.15rem 0.5rem; font-size: 0.8rem; }
+  </style>
+</head>
+<body>
+  <p class="banner">Simulated traffic — Playwright persona bots, not humans</p>
+  <p class="note" id="intro">Hypothesis: fixing accessibility barriers raises conversions. Flagsmith assigns arms, records exposures/conversions, and reports whether treatment rolled out, was pulled, or is still running.</p>
+  <h1>Lift</h1>
+  <p id="headline" class="headline">Loading results…</p>
+  <p id="mix" class="note"></p>
+  <p id="meta" class="note"></p>
+  <p id="dashboard-link" class="note"></p>
+  <h2>Experiment flag</h2>
+  <table id="flag-table"><thead><tr><th>Flag</th><th>Control</th><th>Treatment</th><th>Win P(treatment)</th><th>95% CI</th><th>Decision</th></tr></thead><tbody></tbody></table>
+  <h2>Personas</h2>
+  <p id="personas-note" class="note"></p>
+  <table id="persona-table"><thead><tr><th>Persona</th><th>Control</th><th>Treatment</th></tr></thead><tbody></tbody></table>
+  <h2>Barriers shipped behind Flagsmith</h2>
+  <ul id="barriers"></ul>
+  <p class="note" id="source"></p>
+  <script>
+    function pct(n) { return `${(n * 100).toFixed(1)}%`; }
+    function rate(arm) {
+      if (!arm || !arm.visitors) return "0/0";
+      return `${arm.conversions}/${arm.visitors} (${pct(arm.conversions / arm.visitors)})`;
+    }
+    function td(text) {
+      const cell = document.createElement("td");
+      cell.textContent = text;
+      return cell;
+    }
+    function clear(node) {
+      while (node.firstChild) node.removeChild(node.firstChild);
+    }
+    fetch("./results.json")
+      .then((r) => r.json())
+      .then((data) => {
+        document.getElementById("headline").textContent = data.headline.copy;
+        const intro = document.getElementById("intro");
+        if (intro) {
+          intro.textContent =
+            `Hypothesis: fixing accessibility barriers raises conversions. ${data.outcome || "The experiment outcome is in the headline."}`;
+        }
+        document.getElementById("mix").textContent =
+          `Assumed mix: ${data.personaMixLabel || ""}. Realised this run: ${data.realisedMixLabel || ""}. ${data.personaMixNote || ""}`;
+        document.getElementById("meta").textContent =
+          `${data.label} Generated ${data.generatedAt}. Flag ${data.flag}. Headline source: ${data.headline?.source || "unknown"}. ${data.honesty || ""}`;
+        const dash = document.getElementById("dashboard-link");
+        clear(dash);
+        if (data.flagsmithDashboard) {
+          const a = document.createElement("a");
+          a.href = data.flagsmithDashboard;
+          a.textContent = "Flagsmith experiment dashboard";
+          dash.appendChild(a);
+        }
+        const experiment = (data.flags || []).filter((f) => f.role === "experiment");
+        const body = document.querySelector("#flag-table tbody");
+        for (const flag of experiment) {
+          const tr = document.createElement("tr");
+          const name = document.createElement("td");
+          name.appendChild(document.createTextNode(flag.name + " "));
+          const pill = document.createElement("span");
+          pill.className = "pill";
+          pill.textContent = flag.decision;
+          name.appendChild(pill);
+          tr.appendChild(name);
+          tr.appendChild(td(rate(flag.control)));
+          tr.appendChild(td(rate(flag.treatment)));
+          tr.appendChild(td(`${pct(flag.winProbabilityTreatment)} (${flag.source})`));
+          const ciLow = flag.ciLow;
+          const ciHigh = flag.ciHigh;
+          const ci =
+            typeof ciLow === "number" && typeof ciHigh === "number"
+              ? `${ciLow < 0 ? "−" : "+"}${Math.abs(ciLow * 100).toFixed(1)}% to ${ciHigh < 0 ? "−" : "+"}${Math.abs(ciHigh * 100).toFixed(1)}%`
+              : "n/a";
+          tr.appendChild(td(ci));
+          tr.appendChild(td(flag.decision));
+          body.appendChild(tr);
+        }
+        const personasNote = document.getElementById("personas-note");
+        if (personasNote) personasNote.textContent = data.personasNote || "";
+        const personas = document.querySelector("#persona-table tbody");
+        for (const [name, arms] of Object.entries(data.personas || {})) {
+          const tr = document.createElement("tr");
+          tr.appendChild(td(name));
+          tr.appendChild(td(rate(arms.control)));
+          tr.appendChild(td(rate(arms.treatment)));
+          personas.appendChild(tr);
+        }
+        const list = document.getElementById("barriers");
+        for (const barrier of data.barriers || []) {
+          const li = document.createElement("li");
+          const strong = document.createElement("strong");
+          strong.textContent = barrier.flag;
+          li.appendChild(strong);
+          li.appendChild(
+            document.createTextNode(
+              ` — ${barrier.title} (${barrier.wcag}). Blocks ${barrier.blocks.join(", ")}.`,
+            ),
+          );
+          list.appendChild(li);
+        }
+        document.getElementById("source").textContent = (data.decision?.notes || []).join(" ");
+      })
+      .catch(() => {
+        document.getElementById("headline").textContent =
+          "No results.json yet. Run npm run experiment after Flagsmith bootstrap.";
+      });
+  </script>
+</body>
+</html>

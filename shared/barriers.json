@@ -1,0 +1,56 @@
+[
+  {
+    "id": "hover_menu",
+    "flag": "a11y_hover_menu",
+    "wcag": "2.1.1 Keyboard",
+    "title": "Hover-only checkout menu",
+    "control": "Checkout lives in a CSS :hover mega-menu. It is display:none until pointer hover, so it is not focusable and not in the accessibility tree.",
+    "treatment": "Menu opens on focus and keyboard activation; Checkout is a real link.",
+    "blocks": ["keyboard", "screen-reader"]
+  },
+  {
+    "id": "unlabeled_icon",
+    "flag": "a11y_unlabeled_icon",
+    "wcag": "4.1.2 Name, Role, Value",
+    "title": "Unlabeled icon button",
+    "control": "Cart / continue control is a glyph with no accessible name.",
+    "treatment": "Button has aria-label=\"View cart and check out\".",
+    "blocks": ["screen-reader"]
+  },
+  {
+    "id": "div_button",
+    "flag": "a11y_div_button",
+    "wcag": "2.1.1 Keyboard / 4.1.2 Name, Role, Value",
+    "title": "Non-focusable div used as Place order",
+    "control": "Place order is a clickable div with no role, tabindex, or name.",
+    "treatment": "Native <button type=\"submit\">Place order</button>.",
+    "blocks": ["keyboard", "screen-reader"]
+  },
+  {
+    "id": "missing_labels",
+    "flag": "a11y_missing_labels",
+    "wcag": "1.3.1 Info and Relationships / 3.3.2 Labels or Instructions",
+    "title": "Form fields without labels",
+    "control": "Email and card fields have placeholders only, no <label> or aria-label.",
+    "treatment": "Every input has a visible associated label.",
+    "blocks": ["screen-reader"]
+  },
+  {
+    "id": "unlabeled_terms",
+    "flag": "a11y_unlabeled_terms",
+    "wcag": "4.1.2 Name, Role, Value / 1.3.1 Info and Relationships",
+    "title": "Terms checkbox with no accessible name",
+    "control": "The terms checkbox is an unlabeled input; the adjacent span is not associated via label/for or aria-labelledby.",
+    "treatment": "A <label for=\"terms\"> wraps the terms copy.",
+    "blocks": ["screen-reader"]
+  },
+  {
+    "id": "low_contrast",
+    "flag": "a11y_low_contrast",
+    "wcag": "1.4.3 Contrast (Minimum)",
+    "title": "Low-contrast terms copy",
+    "control": "Terms checkbox label is grey-on-grey (~1.4:1). The contrast-threshold persona will not agree to unread terms.",
+    "treatment": "Near-black on white (~19:1).",
+    "blocks": ["low-vision"]
+  }
+]

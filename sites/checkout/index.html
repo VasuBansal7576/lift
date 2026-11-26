@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Northline Market — Checkout</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <p class="sim-banner" role="note">Demo store. Experiment traffic is simulated.</p>
+  <header class="masthead">
+    <a class="wordmark" href="./">Northline Market</a>
+    <nav aria-label="Primary">
+      <div class="hover-nav" data-barrier="hover_menu">
+        <span class="hover-trigger" id="shop-trigger">Shop</span>
+        <div class="hover-menu" id="shop-menu">
+          <a href="#checkout" id="checkout-link">Checkout</a>
+        </div>
+      </div>
+    </nav>
+    <button type="button" id="cart-icon" class="icon-btn" data-barrier="unlabeled_icon"></button>
+  </header>
+
+  <main>
+    <section class="product">
+      <p class="eyebrow">Field kit</p>
+      <h1>Ridge canvas jacket</h1>
+      <p class="lede">Waxed cotton, taped seams, one jacket for wet commutes.</p>
+      <p class="price">$148.00</p>
+    </section>
+
+    <section id="checkout" class="checkout" hidden>
+      <h2>Checkout</h2>
+      <form id="checkout-form" novalidate>
+        <div class="field-grid" data-barrier="missing_labels">
+          <p>
+            <span class="visible-hint" id="email-hint">Email</span>
+            <input id="email" name="email" type="email" autocomplete="email" data-unlabeled>
+          </p>
+          <p>
+            <span class="visible-hint" id="name-hint">Name on card</span>
+            <input id="card-name" name="card-name" autocomplete="cc-name" data-unlabeled>
+          </p>
+          <p>
+            <span class="visible-hint" id="card-hint">Card number</span>
+            <input id="card-number" name="card-number" inputmode="numeric" autocomplete="cc-number" data-unlabeled>
+          </p>
+          <p>
+            <span class="visible-hint" id="exp-hint">Expiry</span>
+            <input id="card-exp" name="card-exp" autocomplete="cc-exp" placeholder="MM/YY" data-unlabeled>
+          </p>
+          <p>
+            <span class="visible-hint" id="cvc-hint">CVC</span>
+            <input id="card-cvc" name="card-cvc" autocomplete="cc-csc" data-unlabeled>
+          </p>
+        </div>
+        <p class="terms contrast-fail" data-barrier="low_contrast">
+          <input id="terms" name="terms" type="checkbox" data-barrier="unlabeled_terms">
+          <span id="terms-copy">I agree to the terms of sale and understand this order is final.</span>
+        </p>
+        <div id="place-order" class="div-pay" data-barrier="div_button">💳</div>
+        <p id="form-error" role="alert" hidden></p>
+      </form>
+      <p id="confirmation" hidden>Order confirmed. Jacket is on its way.</p>
+    </section>
+  </main>
+
+  <footer>
+    <p>Northline Market — accessibility experiment fixture.</p>
+    <p id="flag-status">Waiting for Flagsmith…</p>
+  </footer>
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

@@ -1,0 +1,16 @@
+node_modules/
+dist/
+coverage/
+playwright-report/
+test-results/
+.env
+.env.local
+flagsmith.env
+data/*.jsonl
+data/*.json
+!data/.gitkeep
+sites/checkout/config.json
+*.log
+.DS_Store
+.vite/
+blob-report/

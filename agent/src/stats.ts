@@ -1,0 +1,103 @@
+import { mulberry32 } from "../../shared/rng.ts";
+import type { ArmStats } from "../../shared/types.ts";
+
+function gammaSample(shape: number, rand: () => number): number {
+  if (shape < 1) {
+    return gammaSample(shape + 1, rand) * Math.pow(rand(), 1 / shape);
+  }
+  const d = shape - 1 / 3;
+  const c = 1 / Math.sqrt(9 * d);
+  for (;;) {
+    let x: number;
+    let v: number;
+    do {
+      x = normalSample(rand);
+      v = 1 + c * x;
+    } while (v <= 0);
+    v = v * v * v;
+    const u = rand();
+    if (u < 1 - 0.0331 * (x * x) * (x * x)) return d * v;
+    if (Math.log(u) < 0.5 * x * x + d * (1 - v + Math.log(v))) return d * v;
+  }
+}
+
+function normalSample(rand: () => number): number {
+  const u = 1 - rand();
+  const v = 1 - rand();
+  return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+}
+
+function betaSample(alpha: number, beta: number, rand: () => number): number {
+  const x = gammaSample(alpha, rand);
+  const y = gammaSample(beta, rand);
+  return x / (x + y);
+}
+
+export function conversionRate(conversions: number, visitors: number): number {
+  if (visitors <= 0) return 0;
+  return conversions / visitors;
+}
+
+export function armStats(conversions: number, visitors: number): ArmStats {
+  return {
+    visitors,
+    conversions,
+    rate: conversionRate(conversions, visitors),
+  };
+}
+
+/**
+ * P(p_treatment > p_control) with independent Beta(1+s, 1+n-s) posteriors.
+ * Seeded Monte Carlo. Used only when Flagsmith chance_to_win is unavailable.
+ */
+export function bayesianWinProbability(
+  treatment: { conversions: number; visitors: number },
+  control: { conversions: number; visitors: number },
+  draws = 20_000,
+  seed = 20261126,
+): number {
+  const rand = mulberry32(seed);
+  const aT = 1 + treatment.conversions;
+  const bT = 1 + Math.max(0, treatment.visitors - treatment.conversions);
+  const aC = 1 + control.conversions;
+  const bC = 1 + Math.max(0, control.visitors - control.conversions);
+  let wins = 0;
+  for (let i = 0; i < draws; i += 1) {
+    if (betaSample(aT, bT, rand) > betaSample(aC, bC, rand)) wins += 1;
+  }
+  return wins / draws;
+}
+
+export function relativeLift(treatmentRate: number, controlRate: number): number | null {
+  if (controlRate <= 0) {
+    return treatmentRate > 0 ? Infinity : 0;
+  }
+  return (treatmentRate - controlRate) / controlRate;
+}
+
+/** Finite lift for display. Infinity (control rate 0) clamps to 10 (1000%). */
+export function clampLift(lift: number | null): number | null {
+  if (lift === null) return null;
+  if (!Number.isFinite(lift)) return lift > 0 ? 10 : -10;
+  return Math.max(-10, Math.min(10, lift));
+}
+
+/** JSON-safe lift: Infinity must not become null. */
+export function serialiseLift(
+  lift: number | null,
+): number | "Infinity" | "-Infinity" | null {
+  if (lift === null) return null;
+  if (lift === Infinity) return "Infinity";
+  if (lift === -Infinity) return "-Infinity";
+  if (!Number.isFinite(lift)) return lift > 0 ? "Infinity" : "-Infinity";
+  return lift;
+}
+
+export function decideFromWinProbability(
+  winProbabilityTreatment: number,
+  threshold: number,
+): "rollout_treatment" | "pull_to_control" | "keep_running" {
+  if (winProbabilityTreatment >= threshold) return "rollout_treatment";
+  if (1 - winProbabilityTreatment >= threshold) return "pull_to_control";
+  return "keep_running";
+}

@@ -212,6 +212,27 @@ export const FLEET_F1_EXPERIMENTS: HistoricExperiment[] = [
   },
 ];
 
+/** ID gaps from the F1-fix re-run bootstrap (unicode/string create retries). */
+export const F1_RERUN_ABANDONED_IDS = [
+  626, 627, 628, 629, 630, 631, 633, 634, 636, 638, 639, 641, 643, 645, 646, 648,
+  649, 650,
+] as const;
+
+export const F1_RERUN_ABANDONED: HistoricExperiment[] = F1_RERUN_ABANDONED_IDS.map(
+  (id) => ({
+    id,
+    kind: "abandoned" as const,
+    flag: null,
+    site: null,
+    name: null,
+    status: "not_found",
+    exposures: null,
+    rolloutDecision: null,
+    reason:
+      "Looked up on Development after the F1-fix re-run: GET returned 404 (No Experiment matches). ID gap while bootstrapping a new site experiment — likely a unicode/string create retry that allocated an id then discarded it. Exposures unknown because the object is gone.",
+  }),
+);
+
 export function historicLists(currentExperimentIds: number[] = []): {
   abandonedExperiments: HistoricExperiment[];
   supersededExperiments: HistoricExperiment[];
@@ -221,7 +242,7 @@ export function historicLists(currentExperimentIds: number[] = []): {
     (row) => !current.has(row.id),
   );
   return {
-    abandonedExperiments: ABANDONED_EXPERIMENTS,
+    abandonedExperiments: [...ABANDONED_EXPERIMENTS, ...F1_RERUN_ABANDONED],
     supersededExperiments: superseded,
   };
 }

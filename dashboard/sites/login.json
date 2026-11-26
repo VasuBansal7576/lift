@@ -1,12 +1,15 @@
 {
   "traffic": "simulated",
   "label": "SIMULATED TRAFFIC — Playwright persona bots, not humans. Demonstration of the pipeline; outcomes follow the persona model, not evidence about real users. Lift is a function of the assumed share of keyboard, screen-reader and low-vision users.",
-  "generatedAt": "2026-11-26T11:39:25.560Z",
+  "generatedAt": "2026-11-26T13:08:13.755Z",
+  "producedBy": "fleet",
+  "commitSha": "837d329b0d117b1fa522bd633f9fff29d0b71030",
   "site": "login",
   "sites": 1,
   "flag": "login_a11y",
-  "experimentId": 624,
-  "flagsmithDashboard": "https://app.flagsmith.com/project/56470/environment/120798/experiments/624",
+  "frictionDisclosure": null,
+  "experimentId": 647,
+  "flagsmithDashboard": "https://app.flagsmith.com/project/56470/environment/120798/experiments/647",
   "personaMix": {
     "mouse": 0.7,
     "keyboard": 0.1,
@@ -15,59 +18,58 @@
   },
   "personaMixLabel": "mouse 70%, keyboard 10%, screen-reader 10%, low-vision 10%",
   "realisedMix": {
-    "mouse": 0.71,
-    "keyboard": 0.0875,
-    "screen-reader": 0.115,
-    "low-vision": 0.0875
+    "mouse": 0.715,
+    "keyboard": 0.0775,
+    "screen-reader": 0.1,
+    "low-vision": 0.1075
   },
-  "realisedMixLabel": "mouse 71%, keyboard 9%, screen-reader 12%, low-vision 9%",
+  "realisedMixLabel": "mouse 72%, keyboard 8%, screen-reader 10%, low-vision 11%",
   "personaMixNote": "Assumed mix is a modelling choice (mouse 70%, keyboard 10%, screen-reader 10%, low-vision 10%), not measured traffic. realisedMix is this run's actual draws. Win threshold is 95%.",
   "localArms": {
     "control": {
-      "conversions": 114,
+      "conversions": 116,
       "visitors": 197
     },
     "treatment": {
-      "conversions": 147,
+      "conversions": 157,
       "visitors": 203
     }
   },
-  "personasNote": "local visit log, n=400; Flagsmith counted n=401",
+  "personasNote": "local visit log, n=400; Flagsmith counted n=400",
   "outcome": "Flagsmith completed the experiment and rolled out treatment.",
   "honesty": "Barrier flags are wired on the site; this run used the bundled login_a11y native experiment. Sequential per-barrier experiments are the attribution path.",
   "headline": {
-    "conversionLift": 0.2452270381836946,
-    "displayLift": 0.2452270381836946,
+    "conversionLift": 0.3134448785459488,
+    "displayLift": 0.3134448785459488,
     "source": "flagsmith",
-    "copy": "Flagsmith lift (SIMULATED traffic, assumed mix 70/10/10/10): 24.5%, P(win) 99.6%, 95% CI +6.2% to +42.8%, rolled out",
-    "ciLow": 0.06218581160010811,
-    "ciHigh": 0.4282682647672811
+    "copy": "Flagsmith lift (SIMULATED traffic, assumed mix 70/10/10/10): 31.3%, P(win) >99.9%, 95% CI +13.1% to +49.6%, rolled out",
+    "ciLow": 0.1311758285299114,
+    "ciHigh": 0.49571392856198626
   },
   "decision": {
     "flag": "login_a11y",
     "decision": "rollout_treatment",
     "source": "flagsmith",
-    "winProbabilityTreatment": 0.9956781718827219,
-    "lift": 0.2452270381836946,
-    "ciLow": 0.06218581160010811,
-    "ciHigh": 0.4282682647672811,
+    "winProbabilityTreatment": 0.9996248616855035,
+    "lift": 0.3134448785459488,
+    "ciLow": 0.1311758285299114,
+    "ciHigh": 0.49571392856198626,
     "control": {
       "visitors": 197,
-      "conversions": 114,
-      "rate": 0.5786802030456852
+      "conversions": 116,
+      "rate": 0.5888324873096447
     },
     "treatment": {
-      "visitors": 204,
-      "conversions": 147,
-      "rate": 0.7205882352941176
+      "visitors": 203,
+      "conversions": 157,
+      "rate": 0.7733990147783252
     },
     "threshold": 0.95,
     "notes": [
       "All traffic is SIMULATED (Playwright persona bots, not humans). Outcomes follow the persona model, not evidence about real users.",
       "Win probability from Flagsmith Experimentation (chance_to_win on the results payload).",
-      "Flagsmith results as of 2026-11-26T11:39:19.272304Z.",
+      "Flagsmith results as of 2026-11-26T13:08:07.318325Z.",
       "Treatment wins under the 95% chance-to-be-best rule.",
-      "Local visit counts differ from Flagsmith n/sum (local control 114/197, treatment 147/203; Flagsmith control 114/197, treatment 147/204). Using Flagsmith n/sum.",
       "Embedded Flagsmith snapshot was taken before completion (results.is_final is false)."
     ]
   },
@@ -77,16 +79,16 @@
       "role": "experiment",
       "control": {
         "visitors": 197,
-        "conversions": 114
+        "conversions": 116
       },
       "treatment": {
-        "visitors": 204,
-        "conversions": 147
+        "visitors": 203,
+        "conversions": 157
       },
       "armSource": "flagsmith",
-      "winProbabilityTreatment": 0.9956781718827219,
-      "ciLow": 0.06218581160010811,
-      "ciHigh": 0.4282682647672811,
+      "winProbabilityTreatment": 0.9996248616855035,
+      "ciLow": 0.1311758285299114,
+      "ciHigh": 0.49571392856198626,
       "source": "flagsmith",
       "decision": "rollout_treatment"
     },
@@ -132,42 +134,42 @@
   "personas": {
     "mouse": {
       "control": {
-        "visitors": 142,
-        "conversions": 105
+        "visitors": 135,
+        "conversions": 101
       },
       "treatment": {
-        "visitors": 142,
-        "conversions": 106
+        "visitors": 151,
+        "conversions": 114
       }
     },
     "keyboard": {
       "control": {
-        "visitors": 12,
-        "conversions": 9
+        "visitors": 19,
+        "conversions": 15
       },
       "treatment": {
-        "visitors": 23,
-        "conversions": 17
+        "visitors": 12,
+        "conversions": 9
       }
     },
     "screen-reader": {
       "control": {
-        "visitors": 25,
+        "visitors": 22,
         "conversions": 0
       },
       "treatment": {
-        "visitors": 21,
+        "visitors": 18,
         "conversions": 16
       }
     },
     "low-vision": {
       "control": {
-        "visitors": 18,
+        "visitors": 21,
         "conversions": 0
       },
       "treatment": {
-        "visitors": 17,
-        "conversions": 8
+        "visitors": 22,
+        "conversions": 18
       }
     }
   },
@@ -222,40 +224,40 @@
   "visits": 400,
   "flagsmithResults": {
     "results": {
-      "as_of": "2026-11-26T11:39:19.272304Z",
+      "as_of": "2026-11-26T13:08:07.318325Z",
       "last_error_at": null,
-      "refresh_requested_at": "2026-11-26T11:39:19.210465Z",
+      "refresh_requested_at": "2026-11-26T13:08:07.273086Z",
       "payload": {
         "metrics": [
           {
             "variants": {
               "control": {
                 "n": 197,
-                "sum": 114,
-                "sum_squares": 114
+                "sum": 116,
+                "sum_squares": 116
               },
               "treatment": {
-                "n": 204,
-                "sum": 147,
-                "sum_squares": 147
+                "n": 203,
+                "sum": 157,
+                "sum_squares": 157
               }
             },
             "inference": {
               "treatment": {
-                "lift": 0.2452270381836946,
-                "ci_low": 0.06218581160010811,
-                "ci_high": 0.4282682647672811,
-                "chance_to_win": 0.9956781718827219
+                "lift": 0.3134448785459488,
+                "ci_low": 0.1311758285299114,
+                "ci_high": 0.49571392856198626,
+                "chance_to_win": 0.9996248616855035
               }
             },
             "metric_id": 617,
             "conversions_timeseries": {
               "points": [
                 {
-                  "bucket": "2026-11-26T11:00:00+00:00",
+                  "bucket": "2026-11-26T13:00:00+00:00",
                   "converted_identities": {
-                    "control": 114,
-                    "treatment": 147
+                    "control": 116,
+                    "treatment": 157
                   }
                 }
               ],
@@ -267,10 +269,10 @@
         "exposures_timeseries": {
           "points": [
             {
-              "bucket": "2026-11-26T11:00:00+00:00",
+              "bucket": "2026-11-26T13:00:00+00:00",
               "new_identities": {
                 "control": 197,
-                "treatment": 204
+                "treatment": 203
               }
             }
           ],
@@ -285,8 +287,7 @@
     "n": 20,
     "matched": 20,
     "expected": "treatment",
-    "usedFallback": false
-  },
-  "producedBy": "fleet",
-  "commitSha": "451a4e0f9f8c11b305885846ead484d3303c6070"
+    "usedFallback": false,
+    "environmentDefaultPath": null
+  }
 }

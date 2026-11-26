@@ -1,12 +1,15 @@
 {
   "traffic": "simulated",
   "label": "SIMULATED TRAFFIC — Playwright persona bots, not humans. Demonstration of the pipeline; outcomes follow the persona model, not evidence about real users. Lift is a function of the assumed share of keyboard, screen-reader and low-vision users.",
-  "generatedAt": "2026-11-26T11:08:50.945Z",
+  "generatedAt": "2026-11-26T12:37:44.062Z",
+  "producedBy": "fleet",
+  "commitSha": "837d329b0d117b1fa522bd633f9fff29d0b71030",
   "site": "pricing",
   "sites": 1,
   "flag": "pricing_a11y",
-  "experimentId": 616,
-  "flagsmithDashboard": "https://app.flagsmith.com/project/56470/environment/120798/experiments/616",
+  "frictionDisclosure": "60% of treatment conversions are dropped by construction (bots click through the modal; the friction is an injected drop-off). With the assumed mix, treatment cannot beat control, expected −50%. The decision isn't hard-coded, but the loss is.",
+  "experimentId": 637,
+  "flagsmithDashboard": "https://app.flagsmith.com/project/56470/environment/120798/experiments/637",
   "personaMix": {
     "mouse": 0.7,
     "keyboard": 0.1,
@@ -15,59 +18,58 @@
   },
   "personaMixLabel": "mouse 70%, keyboard 10%, screen-reader 10%, low-vision 10%",
   "realisedMix": {
-    "mouse": 0.7075,
-    "keyboard": 0.095,
-    "screen-reader": 0.1025,
-    "low-vision": 0.095
+    "mouse": 0.71,
+    "keyboard": 0.08,
+    "screen-reader": 0.0875,
+    "low-vision": 0.1225
   },
-  "realisedMixLabel": "mouse 71%, keyboard 10%, screen-reader 10%, low-vision 10%",
+  "realisedMixLabel": "mouse 71%, keyboard 8%, screen-reader 9%, low-vision 12%",
   "personaMixNote": "Assumed mix is a modelling choice (mouse 70%, keyboard 10%, screen-reader 10%, low-vision 10%), not measured traffic. realisedMix is this run's actual draws. Win threshold is 95%.",
   "localArms": {
     "control": {
-      "conversions": 126,
-      "visitors": 205
+      "conversions": 129,
+      "visitors": 202
     },
     "treatment": {
-      "conversions": 72,
-      "visitors": 195
+      "conversions": 63,
+      "visitors": 198
     }
   },
-  "personasNote": "local visit log, n=400; Flagsmith counted n=401",
+  "personasNote": "local visit log, n=400; Flagsmith counted n=400",
   "outcome": "Flagsmith completed the experiment and pulled to control.",
   "honesty": "Barrier flags are wired on the site; this run used the bundled pricing_a11y native experiment. Sequential per-barrier experiments are the attribution path.",
   "headline": {
-    "conversionLift": -0.40233236151603496,
-    "displayLift": -0.40233236151603496,
+    "conversionLift": -0.5017618040873855,
+    "displayLift": -0.5017618040873855,
     "source": "flagsmith",
-    "copy": "Flagsmith lift (SIMULATED traffic, assumed mix 70/10/10/10): -40.2%, P(win) <0.1%, 95% CI −53.0% to −27.5%, pulled to control",
-    "ciLow": -0.5301465615311477,
-    "ciHigh": -0.27451816150092223
+    "copy": "Flagsmith lift (SIMULATED traffic, assumed mix 70/10/10/10): -50.2%, P(win) <0.1%, 95% CI −61.6% to −38.7%, pulled to control",
+    "ciLow": -0.6160316611198863,
+    "ciHigh": -0.38749194705488466
   },
   "decision": {
     "flag": "pricing_a11y",
     "decision": "pull_to_control",
     "source": "flagsmith",
-    "winProbabilityTreatment": 3.424088235171041e-10,
-    "lift": -0.40233236151603496,
-    "ciLow": -0.5301465615311477,
-    "ciHigh": -0.27451816150092223,
+    "winProbabilityTreatment": 0,
+    "lift": -0.5017618040873855,
+    "ciLow": -0.6160316611198863,
+    "ciHigh": -0.38749194705488466,
     "control": {
-      "visitors": 205,
-      "conversions": 126,
-      "rate": 0.6146341463414634
+      "visitors": 202,
+      "conversions": 129,
+      "rate": 0.6386138613861386
     },
     "treatment": {
-      "visitors": 196,
-      "conversions": 72,
-      "rate": 0.3673469387755102
+      "visitors": 198,
+      "conversions": 63,
+      "rate": 0.3181818181818182
     },
     "threshold": 0.95,
     "notes": [
       "All traffic is SIMULATED (Playwright persona bots, not humans). Outcomes follow the persona model, not evidence about real users.",
       "Win probability from Flagsmith Experimentation (chance_to_win on the results payload).",
-      "Flagsmith results as of 2026-11-26T11:08:45.877167Z.",
+      "Flagsmith results as of 2026-11-26T12:37:36.058686Z.",
       "Treatment loses under the 95% chance-to-be-best rule.",
-      "Local visit counts differ from Flagsmith n/sum (local control 126/205, treatment 72/195; Flagsmith control 126/205, treatment 72/196). Using Flagsmith n/sum.",
       "Embedded Flagsmith snapshot was taken before completion (results.is_final is false).",
       "60% of treatment conversions are dropped by construction (bots click through the modal; the friction is an injected drop-off). With the assumed mix, treatment cannot beat control, expected −50%. The decision isn't hard-coded, but the loss is."
     ]
@@ -77,17 +79,17 @@
       "name": "pricing_a11y",
       "role": "experiment",
       "control": {
-        "visitors": 205,
-        "conversions": 126
+        "visitors": 202,
+        "conversions": 129
       },
       "treatment": {
-        "visitors": 196,
-        "conversions": 72
+        "visitors": 198,
+        "conversions": 63
       },
       "armSource": "flagsmith",
-      "winProbabilityTreatment": 3.424088235171041e-10,
-      "ciLow": -0.5301465615311477,
-      "ciHigh": -0.27451816150092223,
+      "winProbabilityTreatment": 0,
+      "ciLow": -0.6160316611198863,
+      "ciHigh": -0.38749194705488466,
       "source": "flagsmith",
       "decision": "pull_to_control"
     },
@@ -135,22 +137,22 @@
   "personas": {
     "mouse": {
       "control": {
-        "visitors": 141,
-        "conversions": 112
+        "visitors": 147,
+        "conversions": 113
       },
       "treatment": {
-        "visitors": 142,
-        "conversions": 56
+        "visitors": 137,
+        "conversions": 41
       }
     },
     "keyboard": {
       "control": {
-        "visitors": 24,
+        "visitors": 13,
         "conversions": 0
       },
       "treatment": {
-        "visitors": 14,
-        "conversions": 4
+        "visitors": 19,
+        "conversions": 5
       }
     },
     "screen-reader": {
@@ -159,18 +161,18 @@
         "conversions": 0
       },
       "treatment": {
-        "visitors": 22,
-        "conversions": 8
+        "visitors": 16,
+        "conversions": 5
       }
     },
     "low-vision": {
       "control": {
-        "visitors": 21,
-        "conversions": 14
+        "visitors": 23,
+        "conversions": 16
       },
       "treatment": {
-        "visitors": 17,
-        "conversions": 4
+        "visitors": 26,
+        "conversions": 12
       }
     }
   },
@@ -227,40 +229,40 @@
   "visits": 400,
   "flagsmithResults": {
     "results": {
-      "as_of": "2026-11-26T11:08:45.877167Z",
+      "as_of": "2026-11-26T12:37:36.058686Z",
       "last_error_at": null,
-      "refresh_requested_at": "2026-11-26T11:08:45.809451Z",
+      "refresh_requested_at": "2026-11-26T12:37:35.974005Z",
       "payload": {
         "metrics": [
           {
             "variants": {
               "control": {
-                "n": 205,
-                "sum": 126,
-                "sum_squares": 126
+                "n": 202,
+                "sum": 129,
+                "sum_squares": 129
               },
               "treatment": {
-                "n": 196,
-                "sum": 72,
-                "sum_squares": 72
+                "n": 198,
+                "sum": 63,
+                "sum_squares": 63
               }
             },
             "inference": {
               "treatment": {
-                "lift": -0.40233236151603496,
-                "ci_low": -0.5301465615311477,
-                "ci_high": -0.27451816150092223,
-                "chance_to_win": 3.424088235171041e-10
+                "lift": -0.5017618040873855,
+                "ci_low": -0.6160316611198863,
+                "ci_high": -0.38749194705488466,
+                "chance_to_win": 0
               }
             },
             "metric_id": 608,
             "conversions_timeseries": {
               "points": [
                 {
-                  "bucket": "2026-11-26T11:00:00+00:00",
+                  "bucket": "2026-11-26T12:00:00+00:00",
                   "converted_identities": {
-                    "control": 126,
-                    "treatment": 72
+                    "control": 129,
+                    "treatment": 63
                   }
                 }
               ],
@@ -272,10 +274,10 @@
         "exposures_timeseries": {
           "points": [
             {
-              "bucket": "2026-11-26T11:00:00+00:00",
+              "bucket": "2026-11-26T12:00:00+00:00",
               "new_identities": {
-                "control": 205,
-                "treatment": 196
+                "control": 202,
+                "treatment": 198
               }
             }
           ],
@@ -290,9 +292,7 @@
     "n": 20,
     "matched": 20,
     "expected": "control",
-    "usedFallback": false
-  },
-  "producedBy": "fleet",
-  "commitSha": "451a4e0f9f8c11b305885846ead484d3303c6070",
-  "frictionDisclosure": "60% of treatment conversions are dropped by construction (bots click through the modal; the friction is an injected drop-off). With the assumed mix, treatment cannot beat control, expected −50%. The decision isn't hard-coded, but the loss is."
+    "usedFallback": false,
+    "environmentDefaultPath": null
+  }
 }

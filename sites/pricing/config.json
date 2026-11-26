@@ -1,5 +1,8 @@
 {
   "site": "pricing",
+  "flagsmithApiUrl": "https://edge.api.flagsmith.com/api/v1/",
+  "flagsmithEventsUrl": "https://events.api.flagsmith.com/",
+  "flagsmithEnvironmentKey": "LA6mpev9Bggh3nyPCZVsUg",
   "flagName": "pricing_a11y",
   "metricEvent": "trial_started",
   "allowMock": false,

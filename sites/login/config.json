@@ -1,5 +1,8 @@
 {
   "site": "login",
+  "flagsmithApiUrl": "https://edge.api.flagsmith.com/api/v1/",
+  "flagsmithEventsUrl": "https://events.api.flagsmith.com/",
+  "flagsmithEnvironmentKey": "LA6mpev9Bggh3nyPCZVsUg",
   "flagName": "login_a11y",
   "metricEvent": "login_completed",
   "allowMock": false,

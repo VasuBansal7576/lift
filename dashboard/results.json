@@ -1,9 +1,9 @@
 {
   "traffic": "simulated",
   "label": "SIMULATED TRAFFIC — Playwright persona bots, not humans. Demonstration of the pipeline; outcomes follow the persona model, not evidence about real users.",
-  "generatedAt": "2026-11-26T12:12:41.039Z",
+  "generatedAt": "2026-11-26T13:20:28.189Z",
   "producedBy": "fleet",
-  "commitSha": "451a4e0f9f8c11b305885846ead484d3303c6070",
+  "commitSha": "837d329b0d117b1fa522bd633f9fff29d0b71030",
   "sites": 8,
   "site": "fleet",
   "personaMix": {
@@ -34,247 +34,247 @@
     "method": "median_of_site_lifts",
     "explanation": "Headline is the unweighted median of per-site relative lifts (treatment vs control conversion rate). Sites are not a sample of the web; each row is its own experiment with an assumed persona mix. Pooled lift (visitors summed across sites) is shown as a sensitivity check — it weights larger n more, and it is not the headline because sites have different flows and are not exchangeable.",
     "siteCount": 8,
-    "medianLift": 0.29042073387335077,
-    "iqrLow": 0.1737824111989852,
-    "iqrHigh": 0.39261098414243284,
-    "liftMin": -0.40233236151603496,
-    "liftMax": 0.4626708223447616,
-    "pooledLift": 0.21628928692125723,
+    "medianLift": 0.3176278240190251,
+    "iqrLow": 0.30304344336041367,
+    "iqrHigh": 0.4986116039567573,
+    "liftMin": -0.5017618040873855,
+    "liftMax": 0.5614207221350078,
+    "pooledLift": 0.26970113636757204,
     "pooledControl": {
-      "visitors": 1593,
-      "conversions": 891,
-      "rate": 0.559322033898305
+      "visitors": 1587,
+      "conversions": 895,
+      "rate": 0.5639571518588532
     },
     "pooledTreatment": {
-      "visitors": 1614,
-      "conversions": 1098,
-      "rate": 0.6802973977695167
+      "visitors": 1613,
+      "conversions": 1155,
+      "rate": 0.7160570365778053
     },
-    "pooledCopy": "Pooled sensitivity (summed n, not the headline): 21.6% (control 891/1593 vs treatment 1098/1614).",
-    "multipleTestingNote": "8 separate tests were run at 95% with no multiple-testing correction; newsletter and booking are borderline.",
-    "headline": "conversion lift across 8 sites (SIMULATED traffic, assumed mix 70/10/10/10): 29.0% median (IQR 17.4% to 39.3%; range −40.2% to 46.3%)"
+    "pooledCopy": "Pooled sensitivity (summed n, not the headline): 27.0% (control 895/1587 vs treatment 1155/1613).",
+    "multipleTestingNote": "8 separate tests were run at 95% with no multiple-testing correction.",
+    "headline": "conversion lift across 8 sites (SIMULATED traffic, assumed mix 70/10/10/10): 31.8% median (IQR 30.3% to 49.9%; range −50.2% to 56.1%)"
   },
   "headline": {
-    "conversionLift": 0.29042073387335077,
-    "displayLift": 0.29042073387335077,
+    "conversionLift": 0.3176278240190251,
+    "displayLift": 0.3176278240190251,
     "source": "lift_median_of_flagsmith_lifts",
-    "copy": "conversion lift across 8 sites (SIMULATED traffic, assumed mix 70/10/10/10): 29.0% median (IQR 17.4% to 39.3%; range −40.2% to 46.3%)",
+    "copy": "conversion lift across 8 sites (SIMULATED traffic, assumed mix 70/10/10/10): 31.8% median (IQR 30.3% to 49.9%; range −50.2% to 56.1%)",
     "method": "median_of_site_lifts",
-    "iqrLow": 0.1737824111989852,
-    "iqrHigh": 0.39261098414243284,
-    "pooledLift": 0.21628928692125723,
-    "pooledCopy": "Pooled sensitivity (summed n, not the headline): 21.6% (control 891/1593 vs treatment 1098/1614).",
-    "multipleTestingNote": "8 separate tests were run at 95% with no multiple-testing correction; newsletter and booking are borderline."
+    "iqrLow": 0.30304344336041367,
+    "iqrHigh": 0.4986116039567573,
+    "pooledLift": 0.26970113636757204,
+    "pooledCopy": "Pooled sensitivity (summed n, not the headline): 27.0% (control 895/1587 vs treatment 1155/1613).",
+    "multipleTestingNote": "8 separate tests were run at 95% with no multiple-testing correction."
   },
-  "outcome": "Headline is the unweighted median of per-site relative lifts (treatment vs control conversion rate). Sites are not a sample of the web; each row is its own experiment with an assumed persona mix. Pooled lift (visitors summed across sites) is shown as a sensitivity check — it weights larger n more, and it is not the headline because sites have different flows and are not exchangeable. Pooled sensitivity (summed n, not the headline): 21.6% (control 891/1593 vs treatment 1098/1614). 8 separate tests were run at 95% with no multiple-testing correction; newsletter and booking are borderline.",
+  "outcome": "Headline is the unweighted median of per-site relative lifts (treatment vs control conversion rate). Sites are not a sample of the web; each row is its own experiment with an assumed persona mix. Pooled lift (visitors summed across sites) is shown as a sensitivity check — it weights larger n more, and it is not the headline because sites have different flows and are not exchangeable. Pooled sensitivity (summed n, not the headline): 27.0% (control 895/1587 vs treatment 1155/1613). 8 separate tests were run at 95% with no multiple-testing correction.",
   "honesty": "Headline is the unweighted median of per-site relative lifts (treatment vs control conversion rate). Sites are not a sample of the web; each row is its own experiment with an assumed persona mix. Pooled lift (visitors summed across sites) is shown as a sensitivity check — it weights larger n more, and it is not the headline because sites have different flows and are not exchangeable.",
   "rows": [
     {
       "site": "checkout",
       "name": "Northline Market checkout",
       "flag": "checkout_a11y",
-      "experimentId": 613,
-      "flagsmithDashboard": "https://app.flagsmith.com/project/56470/environment/120798/experiments/613",
+      "experimentId": 632,
+      "flagsmithDashboard": "https://app.flagsmith.com/project/56470/environment/120798/experiments/632",
       "control": {
-        "visitors": 207,
-        "conversions": 106,
-        "rate": 0.5120772946859904
+        "visitors": 195,
+        "conversions": 102,
+        "rate": 0.5230769230769231
       },
       "treatment": {
-        "visitors": 193,
-        "conversions": 132,
-        "rate": 0.6839378238341969
+        "visitors": 205,
+        "conversions": 160,
+        "rate": 0.7804878048780488
       },
-      "lift": 0.33561442956300697,
-      "ciLow": 0.11609297094901011,
-      "ciHigh": 0.5551358881770039,
-      "winProbabilityTreatment": 0.9986344301369484,
+      "lift": 0.49210903873744616,
+      "ciLow": 0.2641028328783708,
+      "ciHigh": 0.7201152445965215,
+      "winProbabilityTreatment": 0.9999883267607292,
       "decision": "rollout_treatment",
       "source": "flagsmith",
       "producedBy": "fleet",
-      "commitSha": "451a4e0f9f8c11b305885846ead484d3303c6070",
+      "commitSha": "837d329b0d117b1fa522bd633f9fff29d0b71030",
       "decisionLabel": "rolled out"
     },
     {
       "site": "signup",
       "name": "Harbor Notes signup",
       "flag": "signup_a11y",
-      "experimentId": 614,
-      "flagsmithDashboard": "https://app.flagsmith.com/project/56470/environment/120798/experiments/614",
+      "experimentId": 635,
+      "flagsmithDashboard": "https://app.flagsmith.com/project/56470/environment/120798/experiments/635",
       "control": {
-        "visitors": 186,
-        "conversions": 97,
-        "rate": 0.521505376344086
+        "visitors": 218,
+        "conversions": 112,
+        "rate": 0.5137614678899083
       },
       "treatment": {
-        "visitors": 215,
-        "conversions": 164,
-        "rate": 0.7627906976744186
+        "visitors": 182,
+        "conversions": 146,
+        "rate": 0.8021978021978022
       },
-      "lift": 0.4626708223447616,
-      "ciLow": 0.23309981432888274,
-      "ciHigh": 0.6922418303606405,
-      "winProbabilityTreatment": 0.9999609334102709,
+      "lift": 0.5614207221350078,
+      "ciLow": 0.3298908165845226,
+      "ciHigh": 0.7929506276854931,
+      "winProbabilityTreatment": 0.9999989958136211,
       "decision": "rollout_treatment",
       "source": "flagsmith",
       "producedBy": "fleet",
-      "commitSha": "451a4e0f9f8c11b305885846ead484d3303c6070",
+      "commitSha": "837d329b0d117b1fa522bd633f9fff29d0b71030",
       "decisionLabel": "rolled out"
     },
     {
       "site": "pricing",
       "name": "Lumen Cloud pricing",
       "flag": "pricing_a11y",
-      "experimentId": 616,
-      "flagsmithDashboard": "https://app.flagsmith.com/project/56470/environment/120798/experiments/616",
+      "experimentId": 637,
+      "flagsmithDashboard": "https://app.flagsmith.com/project/56470/environment/120798/experiments/637",
       "control": {
-        "visitors": 205,
-        "conversions": 126,
-        "rate": 0.6146341463414634
+        "visitors": 202,
+        "conversions": 129,
+        "rate": 0.6386138613861386
       },
       "treatment": {
-        "visitors": 196,
-        "conversions": 72,
-        "rate": 0.3673469387755102
+        "visitors": 198,
+        "conversions": 63,
+        "rate": 0.3181818181818182
       },
-      "lift": -0.40233236151603496,
-      "ciLow": -0.5301465615311477,
-      "ciHigh": -0.27451816150092223,
-      "winProbabilityTreatment": 3.424088235171041e-10,
+      "lift": -0.5017618040873855,
+      "ciLow": -0.6160316611198863,
+      "ciHigh": -0.38749194705488466,
+      "winProbabilityTreatment": 0,
       "decision": "pull_to_control",
       "source": "flagsmith",
       "producedBy": "fleet",
-      "commitSha": "451a4e0f9f8c11b305885846ead484d3303c6070",
+      "commitSha": "837d329b0d117b1fa522bd633f9fff29d0b71030",
       "decisionLabel": "pulled"
     },
     {
       "site": "newsletter",
       "name": "Field Post newsletter",
       "flag": "newsletter_a11y",
-      "experimentId": 618,
-      "flagsmithDashboard": "https://app.flagsmith.com/project/56470/environment/120798/experiments/618",
+      "experimentId": 640,
+      "flagsmithDashboard": "https://app.flagsmith.com/project/56470/environment/120798/experiments/640",
       "control": {
-        "visitors": 184,
-        "conversions": 117,
-        "rate": 0.6358695652173914
+        "visitors": 189,
+        "conversions": 109,
+        "rate": 0.5767195767195767
       },
       "treatment": {
-        "visitors": 217,
-        "conversions": 161,
-        "rate": 0.7419354838709677
+        "visitors": 211,
+        "conversions": 159,
+        "rate": 0.7535545023696683
       },
-      "lift": 0.16680452164323126,
-      "ciLow": 0.009364831420068331,
-      "ciHigh": 0.3242442118663942,
-      "winProbabilityTreatment": 0.9810782874837998,
+      "lift": 0.3066220270446541,
+      "ciLow": 0.11736732406864359,
+      "ciHigh": 0.49587673002066457,
+      "winProbabilityTreatment": 0.9992519687309611,
       "decision": "rollout_treatment",
       "source": "flagsmith",
       "producedBy": "fleet",
-      "commitSha": "451a4e0f9f8c11b305885846ead484d3303c6070",
+      "commitSha": "837d329b0d117b1fa522bd633f9fff29d0b71030",
       "decisionLabel": "rolled out"
     },
     {
       "site": "donate",
       "name": "River Keep donation",
       "flag": "donate_a11y",
-      "experimentId": 619,
-      "flagsmithDashboard": "https://app.flagsmith.com/project/56470/environment/120798/experiments/619",
+      "experimentId": 642,
+      "flagsmithDashboard": "https://app.flagsmith.com/project/56470/environment/120798/experiments/642",
       "control": {
-        "visitors": 205,
-        "conversions": 105,
-        "rate": 0.5121951219512195
+        "visitors": 197,
+        "conversions": 101,
+        "rate": 0.5126903553299492
       },
       "treatment": {
-        "visitors": 196,
-        "conversions": 145,
-        "rate": 0.7397959183673469
+        "visitors": 203,
+        "conversions": 158,
+        "rate": 0.7783251231527094
       },
-      "lift": 0.4443634596695821,
-      "ciLow": 0.216616731945211,
-      "ciHigh": 0.6721101873939531,
-      "winProbabilityTreatment": 0.999934386507852,
+      "lift": 0.5181192996146907,
+      "ciLow": 0.28271147802829744,
+      "ciHigh": 0.753527121201084,
+      "winProbabilityTreatment": 0.9999919752992416,
       "decision": "rollout_treatment",
       "source": "flagsmith",
       "producedBy": "fleet",
-      "commitSha": "451a4e0f9f8c11b305885846ead484d3303c6070",
+      "commitSha": "837d329b0d117b1fa522bd633f9fff29d0b71030",
       "decisionLabel": "rolled out"
     },
     {
       "site": "booking",
       "name": "North Clinic booking",
       "flag": "booking_a11y",
-      "experimentId": 621,
-      "flagsmithDashboard": "https://app.flagsmith.com/project/56470/environment/120798/experiments/621",
+      "experimentId": 644,
+      "flagsmithDashboard": "https://app.flagsmith.com/project/56470/environment/120798/experiments/644",
       "control": {
-        "visitors": 191,
+        "visitors": 197,
         "conversions": 116,
-        "rate": 0.6073298429319371
+        "rate": 0.5888324873096447
       },
       "treatment": {
-        "visitors": 210,
-        "conversions": 150,
-        "rate": 0.7142857142857143
+        "visitors": 203,
+        "conversions": 158,
+        "rate": 0.7783251231527094
       },
-      "lift": 0.17610837438423652,
-      "ciLow": 0.008026936614983354,
-      "ciHigh": 0.34418981215348965,
-      "winProbabilityTreatment": 0.9799910687571942,
+      "lift": 0.32181076949210136,
+      "ciLow": 0.13912345128015918,
+      "ciHigh": 0.5044980877040435,
+      "winProbabilityTreatment": 0.9997223450777948,
       "decision": "rollout_treatment",
       "source": "flagsmith",
       "producedBy": "fleet",
-      "commitSha": "451a4e0f9f8c11b305885846ead484d3303c6070",
+      "commitSha": "837d329b0d117b1fa522bd633f9fff29d0b71030",
       "decisionLabel": "rolled out"
     },
     {
       "site": "login",
       "name": "Atlas Board login",
       "flag": "login_a11y",
-      "experimentId": 624,
-      "flagsmithDashboard": "https://app.flagsmith.com/project/56470/environment/120798/experiments/624",
+      "experimentId": 647,
+      "flagsmithDashboard": "https://app.flagsmith.com/project/56470/environment/120798/experiments/647",
       "control": {
         "visitors": 197,
-        "conversions": 114,
-        "rate": 0.5786802030456852
+        "conversions": 116,
+        "rate": 0.5888324873096447
       },
       "treatment": {
-        "visitors": 204,
-        "conversions": 147,
-        "rate": 0.7205882352941176
+        "visitors": 203,
+        "conversions": 157,
+        "rate": 0.7733990147783252
       },
-      "lift": 0.2452270381836946,
-      "ciLow": 0.06218581160010811,
-      "ciHigh": 0.4282682647672811,
-      "winProbabilityTreatment": 0.9956781718827219,
+      "lift": 0.3134448785459488,
+      "ciLow": 0.1311758285299114,
+      "ciHigh": 0.49571392856198626,
+      "winProbabilityTreatment": 0.9996248616855035,
       "decision": "rollout_treatment",
       "source": "flagsmith",
       "producedBy": "fleet",
-      "commitSha": "451a4e0f9f8c11b305885846ead484d3303c6070",
+      "commitSha": "837d329b0d117b1fa522bd633f9fff29d0b71030",
       "decisionLabel": "rolled out"
     },
     {
       "site": "search",
       "name": "Northline search and cart",
       "flag": "search_a11y",
-      "experimentId": 625,
-      "flagsmithDashboard": "https://app.flagsmith.com/project/56470/environment/120798/experiments/625",
+      "experimentId": 651,
+      "flagsmithDashboard": "https://app.flagsmith.com/project/56470/environment/120798/experiments/651",
       "control": {
-        "visitors": 218,
+        "visitors": 192,
         "conversions": 110,
-        "rate": 0.5045871559633027
+        "rate": 0.5729166666666666
       },
       "treatment": {
-        "visitors": 183,
-        "conversions": 127,
-        "rate": 0.6939890710382514
+        "visitors": 208,
+        "conversions": 154,
+        "rate": 0.7403846153846154
       },
-      "lift": 0.37536015896671643,
-      "ciLow": 0.15067624056356546,
-      "ciHigh": 0.6000440773698674,
-      "winProbabilityTreatment": 0.999470461617796,
+      "lift": 0.29230769230769243,
+      "ciLow": 0.1028176886716563,
+      "ciHigh": 0.48179769594372857,
+      "winProbabilityTreatment": 0.9987504265482114,
       "decision": "rollout_treatment",
       "source": "flagsmith",
       "producedBy": "fleet",
-      "commitSha": "451a4e0f9f8c11b305885846ead484d3303c6070",
+      "commitSha": "837d329b0d117b1fa522bd633f9fff29d0b71030",
       "decisionLabel": "rolled out"
     }
   ],
@@ -284,138 +284,138 @@
       "role": "experiment",
       "site": "checkout",
       "control": {
-        "visitors": 207,
-        "conversions": 106,
-        "rate": 0.5120772946859904
+        "visitors": 195,
+        "conversions": 102,
+        "rate": 0.5230769230769231
       },
       "treatment": {
-        "visitors": 193,
-        "conversions": 132,
-        "rate": 0.6839378238341969
+        "visitors": 205,
+        "conversions": 160,
+        "rate": 0.7804878048780488
       },
-      "winProbabilityTreatment": 0.9986344301369484,
-      "ciLow": 0.11609297094901011,
-      "ciHigh": 0.5551358881770039,
+      "winProbabilityTreatment": 0.9999883267607292,
+      "ciLow": 0.2641028328783708,
+      "ciHigh": 0.7201152445965215,
       "source": "flagsmith",
       "decision": "rollout_treatment",
-      "flagsmithDashboard": "https://app.flagsmith.com/project/56470/environment/120798/experiments/613",
+      "flagsmithDashboard": "https://app.flagsmith.com/project/56470/environment/120798/experiments/632",
       "producedBy": "fleet",
-      "commitSha": "451a4e0f9f8c11b305885846ead484d3303c6070"
+      "commitSha": "837d329b0d117b1fa522bd633f9fff29d0b71030"
     },
     {
       "name": "signup_a11y",
       "role": "experiment",
       "site": "signup",
       "control": {
-        "visitors": 186,
-        "conversions": 97,
-        "rate": 0.521505376344086
+        "visitors": 218,
+        "conversions": 112,
+        "rate": 0.5137614678899083
       },
       "treatment": {
-        "visitors": 215,
-        "conversions": 164,
-        "rate": 0.7627906976744186
+        "visitors": 182,
+        "conversions": 146,
+        "rate": 0.8021978021978022
       },
-      "winProbabilityTreatment": 0.9999609334102709,
-      "ciLow": 0.23309981432888274,
-      "ciHigh": 0.6922418303606405,
+      "winProbabilityTreatment": 0.9999989958136211,
+      "ciLow": 0.3298908165845226,
+      "ciHigh": 0.7929506276854931,
       "source": "flagsmith",
       "decision": "rollout_treatment",
-      "flagsmithDashboard": "https://app.flagsmith.com/project/56470/environment/120798/experiments/614",
+      "flagsmithDashboard": "https://app.flagsmith.com/project/56470/environment/120798/experiments/635",
       "producedBy": "fleet",
-      "commitSha": "451a4e0f9f8c11b305885846ead484d3303c6070"
+      "commitSha": "837d329b0d117b1fa522bd633f9fff29d0b71030"
     },
     {
       "name": "pricing_a11y",
       "role": "experiment",
       "site": "pricing",
       "control": {
-        "visitors": 205,
-        "conversions": 126,
-        "rate": 0.6146341463414634
+        "visitors": 202,
+        "conversions": 129,
+        "rate": 0.6386138613861386
       },
       "treatment": {
-        "visitors": 196,
-        "conversions": 72,
-        "rate": 0.3673469387755102
+        "visitors": 198,
+        "conversions": 63,
+        "rate": 0.3181818181818182
       },
-      "winProbabilityTreatment": 3.424088235171041e-10,
-      "ciLow": -0.5301465615311477,
-      "ciHigh": -0.27451816150092223,
+      "winProbabilityTreatment": 0,
+      "ciLow": -0.6160316611198863,
+      "ciHigh": -0.38749194705488466,
       "source": "flagsmith",
       "decision": "pull_to_control",
-      "flagsmithDashboard": "https://app.flagsmith.com/project/56470/environment/120798/experiments/616",
+      "flagsmithDashboard": "https://app.flagsmith.com/project/56470/environment/120798/experiments/637",
       "producedBy": "fleet",
-      "commitSha": "451a4e0f9f8c11b305885846ead484d3303c6070"
+      "commitSha": "837d329b0d117b1fa522bd633f9fff29d0b71030"
     },
     {
       "name": "newsletter_a11y",
       "role": "experiment",
       "site": "newsletter",
       "control": {
-        "visitors": 184,
-        "conversions": 117,
-        "rate": 0.6358695652173914
+        "visitors": 189,
+        "conversions": 109,
+        "rate": 0.5767195767195767
       },
       "treatment": {
-        "visitors": 217,
-        "conversions": 161,
-        "rate": 0.7419354838709677
+        "visitors": 211,
+        "conversions": 159,
+        "rate": 0.7535545023696683
       },
-      "winProbabilityTreatment": 0.9810782874837998,
-      "ciLow": 0.009364831420068331,
-      "ciHigh": 0.3242442118663942,
+      "winProbabilityTreatment": 0.9992519687309611,
+      "ciLow": 0.11736732406864359,
+      "ciHigh": 0.49587673002066457,
       "source": "flagsmith",
       "decision": "rollout_treatment",
-      "flagsmithDashboard": "https://app.flagsmith.com/project/56470/environment/120798/experiments/618",
+      "flagsmithDashboard": "https://app.flagsmith.com/project/56470/environment/120798/experiments/640",
       "producedBy": "fleet",
-      "commitSha": "451a4e0f9f8c11b305885846ead484d3303c6070"
+      "commitSha": "837d329b0d117b1fa522bd633f9fff29d0b71030"
     },
     {
       "name": "donate_a11y",
       "role": "experiment",
       "site": "donate",
       "control": {
-        "visitors": 205,
-        "conversions": 105,
-        "rate": 0.5121951219512195
+        "visitors": 197,
+        "conversions": 101,
+        "rate": 0.5126903553299492
       },
       "treatment": {
-        "visitors": 196,
-        "conversions": 145,
-        "rate": 0.7397959183673469
+        "visitors": 203,
+        "conversions": 158,
+        "rate": 0.7783251231527094
       },
-      "winProbabilityTreatment": 0.999934386507852,
-      "ciLow": 0.216616731945211,
-      "ciHigh": 0.6721101873939531,
+      "winProbabilityTreatment": 0.9999919752992416,
+      "ciLow": 0.28271147802829744,
+      "ciHigh": 0.753527121201084,
       "source": "flagsmith",
       "decision": "rollout_treatment",
-      "flagsmithDashboard": "https://app.flagsmith.com/project/56470/environment/120798/experiments/619",
+      "flagsmithDashboard": "https://app.flagsmith.com/project/56470/environment/120798/experiments/642",
       "producedBy": "fleet",
-      "commitSha": "451a4e0f9f8c11b305885846ead484d3303c6070"
+      "commitSha": "837d329b0d117b1fa522bd633f9fff29d0b71030"
     },
     {
       "name": "booking_a11y",
       "role": "experiment",
       "site": "booking",
       "control": {
-        "visitors": 191,
+        "visitors": 197,
         "conversions": 116,
-        "rate": 0.6073298429319371
+        "rate": 0.5888324873096447
       },
       "treatment": {
-        "visitors": 210,
-        "conversions": 150,
-        "rate": 0.7142857142857143
+        "visitors": 203,
+        "conversions": 158,
+        "rate": 0.7783251231527094
       },
-      "winProbabilityTreatment": 0.9799910687571942,
-      "ciLow": 0.008026936614983354,
-      "ciHigh": 0.34418981215348965,
+      "winProbabilityTreatment": 0.9997223450777948,
+      "ciLow": 0.13912345128015918,
+      "ciHigh": 0.5044980877040435,
       "source": "flagsmith",
       "decision": "rollout_treatment",
-      "flagsmithDashboard": "https://app.flagsmith.com/project/56470/environment/120798/experiments/621",
+      "flagsmithDashboard": "https://app.flagsmith.com/project/56470/environment/120798/experiments/644",
       "producedBy": "fleet",
-      "commitSha": "451a4e0f9f8c11b305885846ead484d3303c6070"
+      "commitSha": "837d329b0d117b1fa522bd633f9fff29d0b71030"
     },
     {
       "name": "login_a11y",
@@ -423,45 +423,45 @@
       "site": "login",
       "control": {
         "visitors": 197,
-        "conversions": 114,
-        "rate": 0.5786802030456852
+        "conversions": 116,
+        "rate": 0.5888324873096447
       },
       "treatment": {
-        "visitors": 204,
-        "conversions": 147,
-        "rate": 0.7205882352941176
+        "visitors": 203,
+        "conversions": 157,
+        "rate": 0.7733990147783252
       },
-      "winProbabilityTreatment": 0.9956781718827219,
-      "ciLow": 0.06218581160010811,
-      "ciHigh": 0.4282682647672811,
+      "winProbabilityTreatment": 0.9996248616855035,
+      "ciLow": 0.1311758285299114,
+      "ciHigh": 0.49571392856198626,
       "source": "flagsmith",
       "decision": "rollout_treatment",
-      "flagsmithDashboard": "https://app.flagsmith.com/project/56470/environment/120798/experiments/624",
+      "flagsmithDashboard": "https://app.flagsmith.com/project/56470/environment/120798/experiments/647",
       "producedBy": "fleet",
-      "commitSha": "451a4e0f9f8c11b305885846ead484d3303c6070"
+      "commitSha": "837d329b0d117b1fa522bd633f9fff29d0b71030"
     },
     {
       "name": "search_a11y",
       "role": "experiment",
       "site": "search",
       "control": {
-        "visitors": 218,
+        "visitors": 192,
         "conversions": 110,
-        "rate": 0.5045871559633027
+        "rate": 0.5729166666666666
       },
       "treatment": {
-        "visitors": 183,
-        "conversions": 127,
-        "rate": 0.6939890710382514
+        "visitors": 208,
+        "conversions": 154,
+        "rate": 0.7403846153846154
       },
-      "winProbabilityTreatment": 0.999470461617796,
-      "ciLow": 0.15067624056356546,
-      "ciHigh": 0.6000440773698674,
+      "winProbabilityTreatment": 0.9987504265482114,
+      "ciLow": 0.1028176886716563,
+      "ciHigh": 0.48179769594372857,
       "source": "flagsmith",
       "decision": "rollout_treatment",
-      "flagsmithDashboard": "https://app.flagsmith.com/project/56470/environment/120798/experiments/625",
+      "flagsmithDashboard": "https://app.flagsmith.com/project/56470/environment/120798/experiments/651",
       "producedBy": "fleet",
-      "commitSha": "451a4e0f9f8c11b305885846ead484d3303c6070"
+      "commitSha": "837d329b0d117b1fa522bd633f9fff29d0b71030"
     }
   ],
   "abandonedExperiments": [
@@ -519,6 +519,204 @@
       "exposures": null,
       "rolloutDecision": null,
       "reason": "Looked up on Development: GET /experiments/623/ returned 404. ID gap between booking 621 and login 624 (with 622). Likely a deleted or never-persisted bootstrap attempt. Exposures unknown because the object is gone."
+    },
+    {
+      "id": 626,
+      "kind": "abandoned",
+      "flag": null,
+      "site": null,
+      "name": null,
+      "status": "not_found",
+      "exposures": null,
+      "rolloutDecision": null,
+      "reason": "Looked up on Development after the F1-fix re-run: GET returned 404 (No Experiment matches). ID gap while bootstrapping a new site experiment — likely a unicode/string create retry that allocated an id then discarded it. Exposures unknown because the object is gone."
+    },
+    {
+      "id": 627,
+      "kind": "abandoned",
+      "flag": null,
+      "site": null,
+      "name": null,
+      "status": "not_found",
+      "exposures": null,
+      "rolloutDecision": null,
+      "reason": "Looked up on Development after the F1-fix re-run: GET returned 404 (No Experiment matches). ID gap while bootstrapping a new site experiment — likely a unicode/string create retry that allocated an id then discarded it. Exposures unknown because the object is gone."
+    },
+    {
+      "id": 628,
+      "kind": "abandoned",
+      "flag": null,
+      "site": null,
+      "name": null,
+      "status": "not_found",
+      "exposures": null,
+      "rolloutDecision": null,
+      "reason": "Looked up on Development after the F1-fix re-run: GET returned 404 (No Experiment matches). ID gap while bootstrapping a new site experiment — likely a unicode/string create retry that allocated an id then discarded it. Exposures unknown because the object is gone."
+    },
+    {
+      "id": 629,
+      "kind": "abandoned",
+      "flag": null,
+      "site": null,
+      "name": null,
+      "status": "not_found",
+      "exposures": null,
+      "rolloutDecision": null,
+      "reason": "Looked up on Development after the F1-fix re-run: GET returned 404 (No Experiment matches). ID gap while bootstrapping a new site experiment — likely a unicode/string create retry that allocated an id then discarded it. Exposures unknown because the object is gone."
+    },
+    {
+      "id": 630,
+      "kind": "abandoned",
+      "flag": null,
+      "site": null,
+      "name": null,
+      "status": "not_found",
+      "exposures": null,
+      "rolloutDecision": null,
+      "reason": "Looked up on Development after the F1-fix re-run: GET returned 404 (No Experiment matches). ID gap while bootstrapping a new site experiment — likely a unicode/string create retry that allocated an id then discarded it. Exposures unknown because the object is gone."
+    },
+    {
+      "id": 631,
+      "kind": "abandoned",
+      "flag": null,
+      "site": null,
+      "name": null,
+      "status": "not_found",
+      "exposures": null,
+      "rolloutDecision": null,
+      "reason": "Looked up on Development after the F1-fix re-run: GET returned 404 (No Experiment matches). ID gap while bootstrapping a new site experiment — likely a unicode/string create retry that allocated an id then discarded it. Exposures unknown because the object is gone."
+    },
+    {
+      "id": 633,
+      "kind": "abandoned",
+      "flag": null,
+      "site": null,
+      "name": null,
+      "status": "not_found",
+      "exposures": null,
+      "rolloutDecision": null,
+      "reason": "Looked up on Development after the F1-fix re-run: GET returned 404 (No Experiment matches). ID gap while bootstrapping a new site experiment — likely a unicode/string create retry that allocated an id then discarded it. Exposures unknown because the object is gone."
+    },
+    {
+      "id": 634,
+      "kind": "abandoned",
+      "flag": null,
+      "site": null,
+      "name": null,
+      "status": "not_found",
+      "exposures": null,
+      "rolloutDecision": null,
+      "reason": "Looked up on Development after the F1-fix re-run: GET returned 404 (No Experiment matches). ID gap while bootstrapping a new site experiment — likely a unicode/string create retry that allocated an id then discarded it. Exposures unknown because the object is gone."
+    },
+    {
+      "id": 636,
+      "kind": "abandoned",
+      "flag": null,
+      "site": null,
+      "name": null,
+      "status": "not_found",
+      "exposures": null,
+      "rolloutDecision": null,
+      "reason": "Looked up on Development after the F1-fix re-run: GET returned 404 (No Experiment matches). ID gap while bootstrapping a new site experiment — likely a unicode/string create retry that allocated an id then discarded it. Exposures unknown because the object is gone."
+    },
+    {
+      "id": 638,
+      "kind": "abandoned",
+      "flag": null,
+      "site": null,
+      "name": null,
+      "status": "not_found",
+      "exposures": null,
+      "rolloutDecision": null,
+      "reason": "Looked up on Development after the F1-fix re-run: GET returned 404 (No Experiment matches). ID gap while bootstrapping a new site experiment — likely a unicode/string create retry that allocated an id then discarded it. Exposures unknown because the object is gone."
+    },
+    {
+      "id": 639,
+      "kind": "abandoned",
+      "flag": null,
+      "site": null,
+      "name": null,
+      "status": "not_found",
+      "exposures": null,
+      "rolloutDecision": null,
+      "reason": "Looked up on Development after the F1-fix re-run: GET returned 404 (No Experiment matches). ID gap while bootstrapping a new site experiment — likely a unicode/string create retry that allocated an id then discarded it. Exposures unknown because the object is gone."
+    },
+    {
+      "id": 641,
+      "kind": "abandoned",
+      "flag": null,
+      "site": null,
+      "name": null,
+      "status": "not_found",
+      "exposures": null,
+      "rolloutDecision": null,
+      "reason": "Looked up on Development after the F1-fix re-run: GET returned 404 (No Experiment matches). ID gap while bootstrapping a new site experiment — likely a unicode/string create retry that allocated an id then discarded it. Exposures unknown because the object is gone."
+    },
+    {
+      "id": 643,
+      "kind": "abandoned",
+      "flag": null,
+      "site": null,
+      "name": null,
+      "status": "not_found",
+      "exposures": null,
+      "rolloutDecision": null,
+      "reason": "Looked up on Development after the F1-fix re-run: GET returned 404 (No Experiment matches). ID gap while bootstrapping a new site experiment — likely a unicode/string create retry that allocated an id then discarded it. Exposures unknown because the object is gone."
+    },
+    {
+      "id": 645,
+      "kind": "abandoned",
+      "flag": null,
+      "site": null,
+      "name": null,
+      "status": "not_found",
+      "exposures": null,
+      "rolloutDecision": null,
+      "reason": "Looked up on Development after the F1-fix re-run: GET returned 404 (No Experiment matches). ID gap while bootstrapping a new site experiment — likely a unicode/string create retry that allocated an id then discarded it. Exposures unknown because the object is gone."
+    },
+    {
+      "id": 646,
+      "kind": "abandoned",
+      "flag": null,
+      "site": null,
+      "name": null,
+      "status": "not_found",
+      "exposures": null,
+      "rolloutDecision": null,
+      "reason": "Looked up on Development after the F1-fix re-run: GET returned 404 (No Experiment matches). ID gap while bootstrapping a new site experiment — likely a unicode/string create retry that allocated an id then discarded it. Exposures unknown because the object is gone."
+    },
+    {
+      "id": 648,
+      "kind": "abandoned",
+      "flag": null,
+      "site": null,
+      "name": null,
+      "status": "not_found",
+      "exposures": null,
+      "rolloutDecision": null,
+      "reason": "Looked up on Development after the F1-fix re-run: GET returned 404 (No Experiment matches). ID gap while bootstrapping a new site experiment — likely a unicode/string create retry that allocated an id then discarded it. Exposures unknown because the object is gone."
+    },
+    {
+      "id": 649,
+      "kind": "abandoned",
+      "flag": null,
+      "site": null,
+      "name": null,
+      "status": "not_found",
+      "exposures": null,
+      "rolloutDecision": null,
+      "reason": "Looked up on Development after the F1-fix re-run: GET returned 404 (No Experiment matches). ID gap while bootstrapping a new site experiment — likely a unicode/string create retry that allocated an id then discarded it. Exposures unknown because the object is gone."
+    },
+    {
+      "id": 650,
+      "kind": "abandoned",
+      "flag": null,
+      "site": null,
+      "name": null,
+      "status": "not_found",
+      "exposures": null,
+      "rolloutDecision": null,
+      "reason": "Looked up on Development after the F1-fix re-run: GET returned 404 (No Experiment matches). ID gap while bootstrapping a new site experiment — likely a unicode/string create retry that allocated an id then discarded it. Exposures unknown because the object is gone."
     }
   ],
   "supersededExperiments": [
@@ -566,6 +764,126 @@
       },
       "rolloutDecision": "variant",
       "reason": "Site-1 fixed-horizon Development run. Rolled out treatment. Superseded by the fleet checkout experiment."
+    },
+    {
+      "id": 613,
+      "kind": "superseded",
+      "flag": "checkout_a11y",
+      "site": "checkout",
+      "name": "Northline Market checkout accessibility lift (20261126103649)",
+      "status": "completed",
+      "exposures": {
+        "control": 207,
+        "treatment": 193,
+        "total": 400
+      },
+      "rolloutDecision": "variant",
+      "reason": "First fleet live run. Superseded by the F1-fix re-run (LIFT_FLEET_FORCE=true)."
+    },
+    {
+      "id": 614,
+      "kind": "superseded",
+      "flag": "signup_a11y",
+      "site": "signup",
+      "name": "Harbor Notes signup accessibility lift (20261126104916)",
+      "status": "completed",
+      "exposures": {
+        "control": 186,
+        "treatment": 215,
+        "total": 401
+      },
+      "rolloutDecision": "variant",
+      "reason": "First fleet live run. Superseded by the F1-fix re-run (LIFT_FLEET_FORCE=true)."
+    },
+    {
+      "id": 616,
+      "kind": "superseded",
+      "flag": "pricing_a11y",
+      "site": "pricing",
+      "name": "Lumen Cloud pricing accessibility lift (20261126110011)",
+      "status": "completed",
+      "exposures": {
+        "control": 205,
+        "treatment": 196,
+        "total": 401
+      },
+      "rolloutDecision": "control",
+      "reason": "First fleet live run (pulled to control). Superseded by the F1-fix re-run (LIFT_FLEET_FORCE=true)."
+    },
+    {
+      "id": 618,
+      "kind": "superseded",
+      "flag": "newsletter_a11y",
+      "site": "newsletter",
+      "name": "Field Post newsletter accessibility lift (20261126110850)",
+      "status": "completed",
+      "exposures": {
+        "control": 184,
+        "treatment": 217,
+        "total": 401
+      },
+      "rolloutDecision": "variant",
+      "reason": "First fleet live run. Superseded by the F1-fix re-run (LIFT_FLEET_FORCE=true)."
+    },
+    {
+      "id": 619,
+      "kind": "superseded",
+      "flag": "donate_a11y",
+      "site": "donate",
+      "name": "River Keep donation accessibility lift (20261126111554)",
+      "status": "completed",
+      "exposures": {
+        "control": 205,
+        "treatment": 196,
+        "total": 401
+      },
+      "rolloutDecision": "variant",
+      "reason": "First fleet live run. Superseded by the F1-fix re-run (LIFT_FLEET_FORCE=true)."
+    },
+    {
+      "id": 621,
+      "kind": "superseded",
+      "flag": "booking_a11y",
+      "site": "booking",
+      "name": "North Clinic booking accessibility lift (20261126112334)",
+      "status": "completed",
+      "exposures": {
+        "control": 191,
+        "treatment": 210,
+        "total": 401
+      },
+      "rolloutDecision": "variant",
+      "reason": "First fleet live run. Superseded by the F1-fix re-run (LIFT_FLEET_FORCE=true)."
+    },
+    {
+      "id": 624,
+      "kind": "superseded",
+      "flag": "login_a11y",
+      "site": "login",
+      "name": "Atlas Board login accessibility lift (20261126113224)",
+      "status": "completed",
+      "exposures": {
+        "control": 197,
+        "treatment": 204,
+        "total": 401
+      },
+      "rolloutDecision": "variant",
+      "reason": "First fleet live run. Superseded by the F1-fix re-run (LIFT_FLEET_FORCE=true)."
+    },
+    {
+      "id": 625,
+      "kind": "superseded",
+      "flag": "search_a11y",
+      "site": "search",
+      "name": "Northline search and cart accessibility lift (20261126113925)",
+      "status": "completed",
+      "exposures": {
+        "control": 218,
+        "treatment": 183,
+        "total": 401
+      },
+      "rolloutDecision": "variant",
+      "reason": "First fleet live run. Superseded by the F1-fix re-run (LIFT_FLEET_FORCE=true)."
     }
   ]
 }

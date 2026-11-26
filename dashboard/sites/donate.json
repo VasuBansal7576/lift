@@ -1,0 +1,296 @@
+{
+  "traffic": "simulated",
+  "label": "SIMULATED TRAFFIC — Playwright persona bots, not humans. Demonstration of the pipeline; outcomes follow the persona model, not evidence about real users. Lift is a function of the assumed share of keyboard, screen-reader and low-vision users.",
+  "generatedAt": "2026-11-26T11:23:34.559Z",
+  "site": "donate",
+  "sites": 1,
+  "flag": "donate_a11y",
+  "experimentId": 619,
+  "flagsmithDashboard": "https://app.flagsmith.com/project/56470/environment/120798/experiments/619",
+  "personaMix": {
+    "mouse": 0.7,
+    "keyboard": 0.1,
+    "screen-reader": 0.1,
+    "low-vision": 0.1
+  },
+  "personaMixLabel": "mouse 70%, keyboard 10%, screen-reader 10%, low-vision 10%",
+  "realisedMix": {
+    "mouse": 0.685,
+    "keyboard": 0.0975,
+    "screen-reader": 0.09,
+    "low-vision": 0.1275
+  },
+  "realisedMixLabel": "mouse 69%, keyboard 10%, screen-reader 9%, low-vision 13%",
+  "personaMixNote": "Assumed mix is a modelling choice (mouse 70%, keyboard 10%, screen-reader 10%, low-vision 10%), not measured traffic. realisedMix is this run's actual draws. Win threshold is 95%.",
+  "localArms": {
+    "control": {
+      "conversions": 105,
+      "visitors": 204
+    },
+    "treatment": {
+      "conversions": 145,
+      "visitors": 196
+    }
+  },
+  "personasNote": "local visit log, n=400; Flagsmith counted n=401",
+  "outcome": "Flagsmith completed the experiment and rolled out treatment.",
+  "honesty": "Barrier flags are wired on the site; this run used the bundled donate_a11y native experiment. Sequential per-barrier experiments are the attribution path.",
+  "headline": {
+    "conversionLift": 0.4443634596695821,
+    "displayLift": 0.4443634596695821,
+    "source": "flagsmith",
+    "copy": "Flagsmith lift (SIMULATED traffic, assumed mix 70/10/10/10): 44.4%, P(win) >99.9%, 95% CI +21.7% to +67.2%, rolled out",
+    "ciLow": 0.216616731945211,
+    "ciHigh": 0.6721101873939531
+  },
+  "decision": {
+    "flag": "donate_a11y",
+    "decision": "rollout_treatment",
+    "source": "flagsmith",
+    "winProbabilityTreatment": 0.999934386507852,
+    "lift": 0.4443634596695821,
+    "ciLow": 0.216616731945211,
+    "ciHigh": 0.6721101873939531,
+    "control": {
+      "visitors": 205,
+      "conversions": 105,
+      "rate": 0.5121951219512195
+    },
+    "treatment": {
+      "visitors": 196,
+      "conversions": 145,
+      "rate": 0.7397959183673469
+    },
+    "threshold": 0.95,
+    "notes": [
+      "All traffic is SIMULATED (Playwright persona bots, not humans). Outcomes follow the persona model, not evidence about real users.",
+      "Win probability from Flagsmith Experimentation (chance_to_win on the results payload).",
+      "Flagsmith results as of 2026-11-26T11:23:29.008927Z.",
+      "Treatment wins under the 95% chance-to-be-best rule.",
+      "Local visit counts differ from Flagsmith n/sum (local control 105/204, treatment 145/196; Flagsmith control 105/205, treatment 145/196). Using Flagsmith n/sum.",
+      "Embedded Flagsmith snapshot was taken before completion (results.is_final is false)."
+    ]
+  },
+  "flags": [
+    {
+      "name": "donate_a11y",
+      "role": "experiment",
+      "control": {
+        "visitors": 205,
+        "conversions": 105
+      },
+      "treatment": {
+        "visitors": 196,
+        "conversions": 145
+      },
+      "armSource": "flagsmith",
+      "winProbabilityTreatment": 0.999934386507852,
+      "ciLow": 0.216616731945211,
+      "ciHigh": 0.6721101873939531,
+      "source": "flagsmith",
+      "decision": "rollout_treatment"
+    },
+    {
+      "name": "donate_unlabeled_icon",
+      "role": "barrier",
+      "title": "Unlabeled heart control",
+      "wcag": "4.1.2",
+      "blocks": [
+        "screen-reader"
+      ],
+      "note": "Wired on the donate page. Bundled experiment donate_a11y is the native-Experiments path; per-barrier flags stay at 0% treatment until a sequential run."
+    },
+    {
+      "name": "donate_missing_labels",
+      "role": "barrier",
+      "title": "Amount and email without labels",
+      "wcag": "1.3.1 / 3.3.2",
+      "blocks": [
+        "screen-reader"
+      ],
+      "note": "Wired on the donate page. Bundled experiment donate_a11y is the native-Experiments path; per-barrier flags stay at 0% treatment until a sequential run."
+    },
+    {
+      "name": "donate_div_button",
+      "role": "barrier",
+      "title": "Non-focusable Give",
+      "wcag": "2.1.1 / 4.1.2",
+      "blocks": [
+        "keyboard",
+        "screen-reader"
+      ],
+      "note": "Wired on the donate page. Bundled experiment donate_a11y is the native-Experiments path; per-barrier flags stay at 0% treatment until a sequential run."
+    },
+    {
+      "name": "donate_low_contrast",
+      "role": "barrier",
+      "title": "Low-contrast receipt note",
+      "wcag": "1.4.3",
+      "blocks": [
+        "low-vision"
+      ],
+      "note": "Wired on the donate page. Bundled experiment donate_a11y is the native-Experiments path; per-barrier flags stay at 0% treatment until a sequential run."
+    }
+  ],
+  "personas": {
+    "mouse": {
+      "control": {
+        "visitors": 144,
+        "conversions": 105
+      },
+      "treatment": {
+        "visitors": 130,
+        "conversions": 105
+      }
+    },
+    "keyboard": {
+      "control": {
+        "visitors": 16,
+        "conversions": 0
+      },
+      "treatment": {
+        "visitors": 23,
+        "conversions": 14
+      }
+    },
+    "screen-reader": {
+      "control": {
+        "visitors": 17,
+        "conversions": 0
+      },
+      "treatment": {
+        "visitors": 19,
+        "conversions": 12
+      }
+    },
+    "low-vision": {
+      "control": {
+        "visitors": 27,
+        "conversions": 0
+      },
+      "treatment": {
+        "visitors": 24,
+        "conversions": 14
+      }
+    }
+  },
+  "barriers": [
+    {
+      "id": "unlabeled_icon",
+      "flag": "donate_unlabeled_icon",
+      "siteFlag": "donate_unlabeled_icon",
+      "wcag": "4.1.2",
+      "title": "Unlabeled heart control",
+      "control": "Donate glyph has no name.",
+      "treatment": "aria-label=\"Give to River Keep\".",
+      "blocks": [
+        "screen-reader"
+      ]
+    },
+    {
+      "id": "missing_labels",
+      "flag": "donate_missing_labels",
+      "siteFlag": "donate_missing_labels",
+      "wcag": "1.3.1 / 3.3.2",
+      "title": "Amount and email without labels",
+      "control": "Placeholders only.",
+      "treatment": "Visible associated labels.",
+      "blocks": [
+        "screen-reader"
+      ]
+    },
+    {
+      "id": "div_button",
+      "flag": "donate_div_button",
+      "siteFlag": "donate_div_button",
+      "wcag": "2.1.1 / 4.1.2",
+      "title": "Non-focusable Give",
+      "control": "Give is a clickable div.",
+      "treatment": "Native button.",
+      "blocks": [
+        "keyboard",
+        "screen-reader"
+      ]
+    },
+    {
+      "id": "low_contrast",
+      "flag": "donate_low_contrast",
+      "siteFlag": "donate_low_contrast",
+      "wcag": "1.4.3",
+      "title": "Low-contrast receipt note",
+      "control": "Grey-on-grey (~1.4:1).",
+      "treatment": "Near-black on white.",
+      "blocks": [
+        "low-vision"
+      ]
+    }
+  ],
+  "visits": 400,
+  "flagsmithResults": {
+    "results": {
+      "as_of": "2026-11-26T11:23:29.008927Z",
+      "last_error_at": null,
+      "refresh_requested_at": "2026-11-26T11:23:28.942262Z",
+      "payload": {
+        "metrics": [
+          {
+            "variants": {
+              "control": {
+                "n": 205,
+                "sum": 105,
+                "sum_squares": 105
+              },
+              "treatment": {
+                "n": 196,
+                "sum": 145,
+                "sum_squares": 145
+              }
+            },
+            "inference": {
+              "treatment": {
+                "lift": 0.4443634596695821,
+                "ci_low": 0.216616731945211,
+                "ci_high": 0.6721101873939531,
+                "chance_to_win": 0.999934386507852
+              }
+            },
+            "metric_id": 610,
+            "conversions_timeseries": {
+              "points": [
+                {
+                  "bucket": "2026-11-26T11:00:00+00:00",
+                  "converted_identities": {
+                    "control": 105,
+                    "treatment": 145
+                  }
+                }
+              ],
+              "granularity": "hour"
+            }
+          }
+        ],
+        "srm_p_value": null,
+        "exposures_timeseries": {
+          "points": [
+            {
+              "bucket": "2026-11-26T11:00:00+00:00",
+              "new_identities": {
+                "control": 205,
+                "treatment": 196
+              }
+            }
+          ],
+          "granularity": "hour"
+        }
+      },
+      "is_final": false
+    }
+  },
+  "rolloutVerification": {
+    "applied": true,
+    "n": 20,
+    "matched": 20,
+    "expected": "treatment",
+    "usedFallback": false
+  }
+}

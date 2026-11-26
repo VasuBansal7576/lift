@@ -1,0 +1,314 @@
+{
+  "traffic": "simulated",
+  "label": "SIMULATED TRAFFIC — Playwright persona bots, not humans. Demonstration of the pipeline; outcomes follow the persona model, not evidence about real users. Lift is a function of the assumed share of keyboard, screen-reader and low-vision users.",
+  "generatedAt": "2026-11-26T11:00:11.381Z",
+  "site": "signup",
+  "sites": 1,
+  "flag": "signup_a11y",
+  "experimentId": 614,
+  "flagsmithDashboard": "https://app.flagsmith.com/project/56470/environment/120798/experiments/614",
+  "personaMix": {
+    "mouse": 0.7,
+    "keyboard": 0.1,
+    "screen-reader": 0.1,
+    "low-vision": 0.1
+  },
+  "personaMixLabel": "mouse 70%, keyboard 10%, screen-reader 10%, low-vision 10%",
+  "realisedMix": {
+    "mouse": 0.7275,
+    "keyboard": 0.0725,
+    "screen-reader": 0.115,
+    "low-vision": 0.085
+  },
+  "realisedMixLabel": "mouse 73%, keyboard 7%, screen-reader 12%, low-vision 9%",
+  "personaMixNote": "Assumed mix is a modelling choice (mouse 70%, keyboard 10%, screen-reader 10%, low-vision 10%), not measured traffic. realisedMix is this run's actual draws. Win threshold is 95%.",
+  "localArms": {
+    "control": {
+      "conversions": 97,
+      "visitors": 185
+    },
+    "treatment": {
+      "conversions": 164,
+      "visitors": 215
+    }
+  },
+  "personasNote": "local visit log, n=400; Flagsmith counted n=401",
+  "outcome": "Flagsmith completed the experiment and rolled out treatment.",
+  "honesty": "Barrier flags are wired on the site; this run used the bundled signup_a11y native experiment. Sequential per-barrier experiments are the attribution path.",
+  "headline": {
+    "conversionLift": 0.4626708223447616,
+    "displayLift": 0.4626708223447616,
+    "source": "flagsmith",
+    "copy": "Flagsmith lift (SIMULATED traffic, assumed mix 70/10/10/10): 46.3%, P(win) >99.9%, 95% CI +23.3% to +69.2%, rolled out",
+    "ciLow": 0.23309981432888274,
+    "ciHigh": 0.6922418303606405
+  },
+  "decision": {
+    "flag": "signup_a11y",
+    "decision": "rollout_treatment",
+    "source": "flagsmith",
+    "winProbabilityTreatment": 0.9999609334102709,
+    "lift": 0.4626708223447616,
+    "ciLow": 0.23309981432888274,
+    "ciHigh": 0.6922418303606405,
+    "control": {
+      "visitors": 186,
+      "conversions": 97,
+      "rate": 0.521505376344086
+    },
+    "treatment": {
+      "visitors": 215,
+      "conversions": 164,
+      "rate": 0.7627906976744186
+    },
+    "threshold": 0.95,
+    "notes": [
+      "All traffic is SIMULATED (Playwright persona bots, not humans). Outcomes follow the persona model, not evidence about real users.",
+      "Win probability from Flagsmith Experimentation (chance_to_win on the results payload).",
+      "Flagsmith results as of 2026-11-26T10:59:58.923916Z.",
+      "Treatment wins under the 95% chance-to-be-best rule.",
+      "Local visit counts differ from Flagsmith n/sum (local control 97/185, treatment 164/215; Flagsmith control 97/186, treatment 164/215). Using Flagsmith n/sum.",
+      "Embedded Flagsmith snapshot was taken before completion (results.is_final is false)."
+    ]
+  },
+  "flags": [
+    {
+      "name": "signup_a11y",
+      "role": "experiment",
+      "control": {
+        "visitors": 186,
+        "conversions": 97
+      },
+      "treatment": {
+        "visitors": 215,
+        "conversions": 164
+      },
+      "armSource": "flagsmith",
+      "winProbabilityTreatment": 0.9999609334102709,
+      "ciLow": 0.23309981432888274,
+      "ciHigh": 0.6922418303606405,
+      "source": "flagsmith",
+      "decision": "rollout_treatment"
+    },
+    {
+      "name": "signup_missing_labels",
+      "role": "barrier",
+      "title": "Signup fields without labels",
+      "wcag": "1.3.1 / 3.3.2",
+      "blocks": [
+        "screen-reader"
+      ],
+      "note": "Wired on the signup page. Bundled experiment signup_a11y is the native-Experiments path; per-barrier flags stay at 0% treatment until a sequential run."
+    },
+    {
+      "name": "signup_unlabeled_terms",
+      "role": "barrier",
+      "title": "Unlabeled marketing checkbox",
+      "wcag": "4.1.2 / 1.3.1",
+      "blocks": [
+        "screen-reader"
+      ],
+      "note": "Wired on the signup page. Bundled experiment signup_a11y is the native-Experiments path; per-barrier flags stay at 0% treatment until a sequential run."
+    },
+    {
+      "name": "signup_div_button",
+      "role": "barrier",
+      "title": "Non-focusable Create account",
+      "wcag": "2.1.1 / 4.1.2",
+      "blocks": [
+        "keyboard",
+        "screen-reader"
+      ],
+      "note": "Wired on the signup page. Bundled experiment signup_a11y is the native-Experiments path; per-barrier flags stay at 0% treatment until a sequential run."
+    },
+    {
+      "name": "signup_autocomplete_off",
+      "role": "barrier",
+      "title": "autocomplete=off on email and password",
+      "wcag": "1.3.5 Identify Input Purpose",
+      "blocks": [],
+      "note": "Wired on the signup page. Bundled experiment signup_a11y is the native-Experiments path; per-barrier flags stay at 0% treatment until a sequential run."
+    },
+    {
+      "name": "signup_low_contrast",
+      "role": "barrier",
+      "title": "Low-contrast terms copy",
+      "wcag": "1.4.3 Contrast (Minimum)",
+      "blocks": [
+        "low-vision"
+      ],
+      "note": "Wired on the signup page. Bundled experiment signup_a11y is the native-Experiments path; per-barrier flags stay at 0% treatment until a sequential run."
+    }
+  ],
+  "personas": {
+    "mouse": {
+      "control": {
+        "visitors": 132,
+        "conversions": 97
+      },
+      "treatment": {
+        "visitors": 159,
+        "conversions": 120
+      }
+    },
+    "keyboard": {
+      "control": {
+        "visitors": 16,
+        "conversions": 0
+      },
+      "treatment": {
+        "visitors": 13,
+        "conversions": 9
+      }
+    },
+    "screen-reader": {
+      "control": {
+        "visitors": 21,
+        "conversions": 0
+      },
+      "treatment": {
+        "visitors": 25,
+        "conversions": 21
+      }
+    },
+    "low-vision": {
+      "control": {
+        "visitors": 16,
+        "conversions": 0
+      },
+      "treatment": {
+        "visitors": 18,
+        "conversions": 14
+      }
+    }
+  },
+  "barriers": [
+    {
+      "id": "missing_labels",
+      "flag": "signup_missing_labels",
+      "siteFlag": "signup_missing_labels",
+      "wcag": "1.3.1 / 3.3.2",
+      "title": "Signup fields without labels",
+      "control": "Email and password have placeholders only.",
+      "treatment": "Visible <label for> on every field.",
+      "blocks": [
+        "screen-reader"
+      ]
+    },
+    {
+      "id": "unlabeled_terms",
+      "flag": "signup_unlabeled_terms",
+      "siteFlag": "signup_unlabeled_terms",
+      "wcag": "4.1.2 / 1.3.1",
+      "title": "Unlabeled marketing checkbox",
+      "control": "Checkbox has no accessible name.",
+      "treatment": "A <label for> wraps the copy.",
+      "blocks": [
+        "screen-reader"
+      ]
+    },
+    {
+      "id": "div_button",
+      "flag": "signup_div_button",
+      "siteFlag": "signup_div_button",
+      "wcag": "2.1.1 / 4.1.2",
+      "title": "Non-focusable Create account",
+      "control": "Submit is a clickable div.",
+      "treatment": "Native <button type=\"submit\">.",
+      "blocks": [
+        "keyboard",
+        "screen-reader"
+      ]
+    },
+    {
+      "id": "autocomplete_off",
+      "flag": "signup_autocomplete_off",
+      "siteFlag": "signup_autocomplete_off",
+      "wcag": "1.3.5 Identify Input Purpose",
+      "title": "autocomplete=off on email and password",
+      "control": "Fields disable autofill.",
+      "treatment": "autocomplete=email and new-password.",
+      "blocks": []
+    },
+    {
+      "id": "low_contrast",
+      "flag": "signup_low_contrast",
+      "siteFlag": "signup_low_contrast",
+      "wcag": "1.4.3 Contrast (Minimum)",
+      "title": "Low-contrast terms copy",
+      "control": "Grey-on-grey legal copy (~1.4:1).",
+      "treatment": "Near-black on white.",
+      "blocks": [
+        "low-vision"
+      ]
+    }
+  ],
+  "visits": 400,
+  "flagsmithResults": {
+    "results": {
+      "as_of": "2026-11-26T10:59:58.923916Z",
+      "last_error_at": null,
+      "refresh_requested_at": "2026-11-26T10:59:58.848955Z",
+      "payload": {
+        "metrics": [
+          {
+            "variants": {
+              "control": {
+                "n": 186,
+                "sum": 97,
+                "sum_squares": 97
+              },
+              "treatment": {
+                "n": 215,
+                "sum": 164,
+                "sum_squares": 164
+              }
+            },
+            "inference": {
+              "treatment": {
+                "lift": 0.4626708223447616,
+                "ci_low": 0.23309981432888274,
+                "ci_high": 0.6922418303606405,
+                "chance_to_win": 0.9999609334102709
+              }
+            },
+            "metric_id": 606,
+            "conversions_timeseries": {
+              "points": [
+                {
+                  "bucket": "2026-11-26T10:00:00+00:00",
+                  "converted_identities": {
+                    "control": 97,
+                    "treatment": 164
+                  }
+                }
+              ],
+              "granularity": "hour"
+            }
+          }
+        ],
+        "srm_p_value": null,
+        "exposures_timeseries": {
+          "points": [
+            {
+              "bucket": "2026-11-26T10:00:00+00:00",
+              "new_identities": {
+                "control": 186,
+                "treatment": 215
+              }
+            }
+          ],
+          "granularity": "hour"
+        }
+      },
+      "is_final": false
+    }
+  },
+  "rolloutVerification": {
+    "applied": true,
+    "n": 20,
+    "matched": 20,
+    "expected": "treatment",
+    "usedFallback": false
+  }
+}

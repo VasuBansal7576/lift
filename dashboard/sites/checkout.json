@@ -1,0 +1,340 @@
+{
+  "traffic": "simulated",
+  "label": "SIMULATED TRAFFIC — Playwright persona bots, not humans. Demonstration of the pipeline; outcomes follow the persona model, not evidence about real users. Lift is a function of the assumed share of keyboard, screen-reader and low-vision users.",
+  "generatedAt": "2026-11-26T10:49:15.424Z",
+  "site": "checkout",
+  "sites": 1,
+  "flag": "checkout_a11y",
+  "experimentId": 613,
+  "flagsmithDashboard": "https://app.flagsmith.com/project/56470/environment/120798/experiments/613",
+  "personaMix": {
+    "mouse": 0.7,
+    "keyboard": 0.1,
+    "screen-reader": 0.1,
+    "low-vision": 0.1
+  },
+  "personaMixLabel": "mouse 70%, keyboard 10%, screen-reader 10%, low-vision 10%",
+  "realisedMix": {
+    "mouse": 0.6975,
+    "keyboard": 0.11,
+    "screen-reader": 0.1075,
+    "low-vision": 0.085
+  },
+  "realisedMixLabel": "mouse 70%, keyboard 11%, screen-reader 11%, low-vision 9%",
+  "personaMixNote": "Assumed mix is a modelling choice (mouse 70%, keyboard 10%, screen-reader 10%, low-vision 10%), not measured traffic. realisedMix is this run's actual draws. Win threshold is 95%.",
+  "localArms": {
+    "control": {
+      "conversions": 106,
+      "visitors": 207
+    },
+    "treatment": {
+      "conversions": 132,
+      "visitors": 193
+    }
+  },
+  "personasNote": "local visit log, n=400; Flagsmith counted n=400",
+  "outcome": "Flagsmith completed the experiment and rolled out treatment.",
+  "honesty": "Barrier flags are wired on the site; this run used the bundled checkout_a11y native experiment. Sequential per-barrier experiments are the attribution path.",
+  "headline": {
+    "conversionLift": 0.33561442956300697,
+    "displayLift": 0.33561442956300697,
+    "source": "flagsmith",
+    "copy": "Flagsmith lift (SIMULATED traffic, assumed mix 70/10/10/10): 33.6%, P(win) 99.9%, 95% CI +11.6% to +55.5%, rolled out",
+    "ciLow": 0.11609297094901011,
+    "ciHigh": 0.5551358881770039
+  },
+  "decision": {
+    "flag": "checkout_a11y",
+    "decision": "rollout_treatment",
+    "source": "flagsmith",
+    "winProbabilityTreatment": 0.9986344301369484,
+    "lift": 0.33561442956300697,
+    "ciLow": 0.11609297094901011,
+    "ciHigh": 0.5551358881770039,
+    "control": {
+      "visitors": 207,
+      "conversions": 106,
+      "rate": 0.5120772946859904
+    },
+    "treatment": {
+      "visitors": 193,
+      "conversions": 132,
+      "rate": 0.6839378238341969
+    },
+    "threshold": 0.95,
+    "notes": [
+      "All traffic is SIMULATED (Playwright persona bots, not humans). Outcomes follow the persona model, not evidence about real users.",
+      "Win probability from Flagsmith Experimentation (chance_to_win on the results payload).",
+      "Flagsmith results as of 2026-11-26T10:39:25.167153Z.",
+      "Treatment wins under the 95% chance-to-be-best rule."
+    ]
+  },
+  "flags": [
+    {
+      "name": "checkout_a11y",
+      "role": "experiment",
+      "control": {
+        "visitors": 207,
+        "conversions": 106
+      },
+      "treatment": {
+        "visitors": 193,
+        "conversions": 132
+      },
+      "armSource": "flagsmith",
+      "winProbabilityTreatment": 0.9986344301369484,
+      "ciLow": 0.11609297094901011,
+      "ciHigh": 0.5551358881770039,
+      "source": "flagsmith",
+      "decision": "rollout_treatment"
+    },
+    {
+      "name": "a11y_hover_menu",
+      "role": "barrier",
+      "title": "Hover-only checkout menu",
+      "wcag": "2.1.1 Keyboard",
+      "blocks": [
+        "keyboard",
+        "screen-reader"
+      ],
+      "note": "Wired on the checkout page. Bundled experiment checkout_a11y is the native-Experiments path; per-barrier flags stay at 0% treatment until a sequential run."
+    },
+    {
+      "name": "a11y_unlabeled_icon",
+      "role": "barrier",
+      "title": "Unlabeled icon button",
+      "wcag": "4.1.2 Name, Role, Value",
+      "blocks": [
+        "screen-reader"
+      ],
+      "note": "Wired on the checkout page. Bundled experiment checkout_a11y is the native-Experiments path; per-barrier flags stay at 0% treatment until a sequential run."
+    },
+    {
+      "name": "a11y_div_button",
+      "role": "barrier",
+      "title": "Non-focusable div used as Place order",
+      "wcag": "2.1.1 Keyboard / 4.1.2 Name, Role, Value",
+      "blocks": [
+        "keyboard",
+        "screen-reader"
+      ],
+      "note": "Wired on the checkout page. Bundled experiment checkout_a11y is the native-Experiments path; per-barrier flags stay at 0% treatment until a sequential run."
+    },
+    {
+      "name": "a11y_missing_labels",
+      "role": "barrier",
+      "title": "Form fields without labels",
+      "wcag": "1.3.1 Info and Relationships / 3.3.2 Labels or Instructions",
+      "blocks": [
+        "screen-reader"
+      ],
+      "note": "Wired on the checkout page. Bundled experiment checkout_a11y is the native-Experiments path; per-barrier flags stay at 0% treatment until a sequential run."
+    },
+    {
+      "name": "a11y_unlabeled_terms",
+      "role": "barrier",
+      "title": "Terms checkbox with no accessible name",
+      "wcag": "4.1.2 Name, Role, Value / 1.3.1 Info and Relationships",
+      "blocks": [
+        "screen-reader"
+      ],
+      "note": "Wired on the checkout page. Bundled experiment checkout_a11y is the native-Experiments path; per-barrier flags stay at 0% treatment until a sequential run."
+    },
+    {
+      "name": "a11y_low_contrast",
+      "role": "barrier",
+      "title": "Low-contrast terms copy",
+      "wcag": "1.4.3 Contrast (Minimum)",
+      "blocks": [
+        "low-vision"
+      ],
+      "note": "Wired on the checkout page. Bundled experiment checkout_a11y is the native-Experiments path; per-barrier flags stay at 0% treatment until a sequential run."
+    }
+  ],
+  "personas": {
+    "mouse": {
+      "control": {
+        "visitors": 146,
+        "conversions": 106
+      },
+      "treatment": {
+        "visitors": 133,
+        "conversions": 87
+      }
+    },
+    "keyboard": {
+      "control": {
+        "visitors": 22,
+        "conversions": 0
+      },
+      "treatment": {
+        "visitors": 22,
+        "conversions": 16
+      }
+    },
+    "screen-reader": {
+      "control": {
+        "visitors": 20,
+        "conversions": 0
+      },
+      "treatment": {
+        "visitors": 23,
+        "conversions": 15
+      }
+    },
+    "low-vision": {
+      "control": {
+        "visitors": 19,
+        "conversions": 0
+      },
+      "treatment": {
+        "visitors": 15,
+        "conversions": 14
+      }
+    }
+  },
+  "barriers": [
+    {
+      "id": "hover_menu",
+      "flag": "a11y_hover_menu",
+      "wcag": "2.1.1 Keyboard",
+      "title": "Hover-only checkout menu",
+      "control": "Checkout lives in a CSS :hover mega-menu. It is display:none until pointer hover, so it is not focusable and not in the accessibility tree.",
+      "treatment": "Menu opens on focus and keyboard activation; Checkout is a real link.",
+      "blocks": [
+        "keyboard",
+        "screen-reader"
+      ],
+      "siteFlag": "a11y_hover_menu"
+    },
+    {
+      "id": "unlabeled_icon",
+      "flag": "a11y_unlabeled_icon",
+      "wcag": "4.1.2 Name, Role, Value",
+      "title": "Unlabeled icon button",
+      "control": "Cart / continue control is a glyph with no accessible name.",
+      "treatment": "Button has aria-label=\"View cart and check out\".",
+      "blocks": [
+        "screen-reader"
+      ],
+      "siteFlag": "a11y_unlabeled_icon"
+    },
+    {
+      "id": "div_button",
+      "flag": "a11y_div_button",
+      "wcag": "2.1.1 Keyboard / 4.1.2 Name, Role, Value",
+      "title": "Non-focusable div used as Place order",
+      "control": "Place order is a clickable div with no role, tabindex, or name.",
+      "treatment": "Native <button type=\"submit\">Place order</button>.",
+      "blocks": [
+        "keyboard",
+        "screen-reader"
+      ],
+      "siteFlag": "a11y_div_button"
+    },
+    {
+      "id": "missing_labels",
+      "flag": "a11y_missing_labels",
+      "wcag": "1.3.1 Info and Relationships / 3.3.2 Labels or Instructions",
+      "title": "Form fields without labels",
+      "control": "Email and card fields have placeholders only, no <label> or aria-label.",
+      "treatment": "Every input has a visible associated label.",
+      "blocks": [
+        "screen-reader"
+      ],
+      "siteFlag": "a11y_missing_labels"
+    },
+    {
+      "id": "unlabeled_terms",
+      "flag": "a11y_unlabeled_terms",
+      "wcag": "4.1.2 Name, Role, Value / 1.3.1 Info and Relationships",
+      "title": "Terms checkbox with no accessible name",
+      "control": "The terms checkbox is an unlabeled input; the adjacent span is not associated via label/for or aria-labelledby.",
+      "treatment": "A <label for=\"terms\"> wraps the terms copy.",
+      "blocks": [
+        "screen-reader"
+      ],
+      "siteFlag": "a11y_unlabeled_terms"
+    },
+    {
+      "id": "low_contrast",
+      "flag": "a11y_low_contrast",
+      "wcag": "1.4.3 Contrast (Minimum)",
+      "title": "Low-contrast terms copy",
+      "control": "Terms checkbox label is grey-on-grey (~1.4:1). The contrast-threshold persona will not agree to unread terms.",
+      "treatment": "Near-black on white (~19:1).",
+      "blocks": [
+        "low-vision"
+      ],
+      "siteFlag": "a11y_low_contrast"
+    }
+  ],
+  "visits": 400,
+  "flagsmithResults": {
+    "results": {
+      "as_of": "2026-11-26T10:39:25.167153Z",
+      "last_error_at": null,
+      "refresh_requested_at": "2026-11-26T10:49:10.711465Z",
+      "payload": {
+        "metrics": [
+          {
+            "variants": {
+              "control": {
+                "n": 207,
+                "sum": 106,
+                "sum_squares": 106
+              },
+              "treatment": {
+                "n": 193,
+                "sum": 132,
+                "sum_squares": 132
+              }
+            },
+            "inference": {
+              "treatment": {
+                "lift": 0.33561442956300697,
+                "ci_low": 0.11609297094901011,
+                "ci_high": 0.5551358881770039,
+                "chance_to_win": 0.9986344301369484
+              }
+            },
+            "metric_id": 580,
+            "conversions_timeseries": {
+              "points": [
+                {
+                  "bucket": "2026-11-26T10:00:00+00:00",
+                  "converted_identities": {
+                    "control": 106,
+                    "treatment": 132
+                  }
+                }
+              ],
+              "granularity": "hour"
+            }
+          }
+        ],
+        "srm_p_value": null,
+        "exposures_timeseries": {
+          "points": [
+            {
+              "bucket": "2026-11-26T10:00:00+00:00",
+              "new_identities": {
+                "control": 207,
+                "treatment": 193
+              }
+            }
+          ],
+          "granularity": "hour"
+        }
+      },
+      "is_final": true
+    }
+  },
+  "rolloutVerification": {
+    "applied": true,
+    "n": 20,
+    "matched": 20,
+    "expected": "treatment",
+    "usedFallback": true
+  }
+}

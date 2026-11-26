@@ -1,0 +1,290 @@
+{
+  "traffic": "simulated",
+  "label": "SIMULATED TRAFFIC — Playwright persona bots, not humans. Demonstration of the pipeline; outcomes follow the persona model, not evidence about real users. Lift is a function of the assumed share of keyboard, screen-reader and low-vision users.",
+  "generatedAt": "2026-11-26T11:39:25.560Z",
+  "site": "login",
+  "sites": 1,
+  "flag": "login_a11y",
+  "experimentId": 624,
+  "flagsmithDashboard": "https://app.flagsmith.com/project/56470/environment/120798/experiments/624",
+  "personaMix": {
+    "mouse": 0.7,
+    "keyboard": 0.1,
+    "screen-reader": 0.1,
+    "low-vision": 0.1
+  },
+  "personaMixLabel": "mouse 70%, keyboard 10%, screen-reader 10%, low-vision 10%",
+  "realisedMix": {
+    "mouse": 0.71,
+    "keyboard": 0.0875,
+    "screen-reader": 0.115,
+    "low-vision": 0.0875
+  },
+  "realisedMixLabel": "mouse 71%, keyboard 9%, screen-reader 12%, low-vision 9%",
+  "personaMixNote": "Assumed mix is a modelling choice (mouse 70%, keyboard 10%, screen-reader 10%, low-vision 10%), not measured traffic. realisedMix is this run's actual draws. Win threshold is 95%.",
+  "localArms": {
+    "control": {
+      "conversions": 114,
+      "visitors": 197
+    },
+    "treatment": {
+      "conversions": 147,
+      "visitors": 203
+    }
+  },
+  "personasNote": "local visit log, n=400; Flagsmith counted n=401",
+  "outcome": "Flagsmith completed the experiment and rolled out treatment.",
+  "honesty": "Barrier flags are wired on the site; this run used the bundled login_a11y native experiment. Sequential per-barrier experiments are the attribution path.",
+  "headline": {
+    "conversionLift": 0.2452270381836946,
+    "displayLift": 0.2452270381836946,
+    "source": "flagsmith",
+    "copy": "Flagsmith lift (SIMULATED traffic, assumed mix 70/10/10/10): 24.5%, P(win) 99.6%, 95% CI +6.2% to +42.8%, rolled out",
+    "ciLow": 0.06218581160010811,
+    "ciHigh": 0.4282682647672811
+  },
+  "decision": {
+    "flag": "login_a11y",
+    "decision": "rollout_treatment",
+    "source": "flagsmith",
+    "winProbabilityTreatment": 0.9956781718827219,
+    "lift": 0.2452270381836946,
+    "ciLow": 0.06218581160010811,
+    "ciHigh": 0.4282682647672811,
+    "control": {
+      "visitors": 197,
+      "conversions": 114,
+      "rate": 0.5786802030456852
+    },
+    "treatment": {
+      "visitors": 204,
+      "conversions": 147,
+      "rate": 0.7205882352941176
+    },
+    "threshold": 0.95,
+    "notes": [
+      "All traffic is SIMULATED (Playwright persona bots, not humans). Outcomes follow the persona model, not evidence about real users.",
+      "Win probability from Flagsmith Experimentation (chance_to_win on the results payload).",
+      "Flagsmith results as of 2026-11-26T11:39:19.272304Z.",
+      "Treatment wins under the 95% chance-to-be-best rule.",
+      "Local visit counts differ from Flagsmith n/sum (local control 114/197, treatment 147/203; Flagsmith control 114/197, treatment 147/204). Using Flagsmith n/sum.",
+      "Embedded Flagsmith snapshot was taken before completion (results.is_final is false)."
+    ]
+  },
+  "flags": [
+    {
+      "name": "login_a11y",
+      "role": "experiment",
+      "control": {
+        "visitors": 197,
+        "conversions": 114
+      },
+      "treatment": {
+        "visitors": 204,
+        "conversions": 147
+      },
+      "armSource": "flagsmith",
+      "winProbabilityTreatment": 0.9956781718827219,
+      "ciLow": 0.06218581160010811,
+      "ciHigh": 0.4282682647672811,
+      "source": "flagsmith",
+      "decision": "rollout_treatment"
+    },
+    {
+      "name": "login_missing_labels",
+      "role": "barrier",
+      "title": "Login fields without labels",
+      "wcag": "1.3.1 / 3.3.2",
+      "blocks": [
+        "screen-reader"
+      ],
+      "note": "Wired on the login page. Bundled experiment login_a11y is the native-Experiments path; per-barrier flags stay at 0% treatment until a sequential run."
+    },
+    {
+      "name": "login_unlabeled_icon",
+      "role": "barrier",
+      "title": "Unlabeled lock submit",
+      "wcag": "4.1.2",
+      "blocks": [
+        "screen-reader"
+      ],
+      "note": "Wired on the login page. Bundled experiment login_a11y is the native-Experiments path; per-barrier flags stay at 0% treatment until a sequential run."
+    },
+    {
+      "name": "login_autocomplete_off",
+      "role": "barrier",
+      "title": "autocomplete=off on credentials",
+      "wcag": "1.3.5",
+      "blocks": [],
+      "note": "Wired on the login page. Bundled experiment login_a11y is the native-Experiments path; per-barrier flags stay at 0% treatment until a sequential run."
+    },
+    {
+      "name": "login_low_contrast",
+      "role": "barrier",
+      "title": "Low-contrast reset-password copy",
+      "wcag": "1.4.3",
+      "blocks": [
+        "low-vision"
+      ],
+      "note": "Wired on the login page. Bundled experiment login_a11y is the native-Experiments path; per-barrier flags stay at 0% treatment until a sequential run."
+    }
+  ],
+  "personas": {
+    "mouse": {
+      "control": {
+        "visitors": 142,
+        "conversions": 105
+      },
+      "treatment": {
+        "visitors": 142,
+        "conversions": 106
+      }
+    },
+    "keyboard": {
+      "control": {
+        "visitors": 12,
+        "conversions": 9
+      },
+      "treatment": {
+        "visitors": 23,
+        "conversions": 17
+      }
+    },
+    "screen-reader": {
+      "control": {
+        "visitors": 25,
+        "conversions": 0
+      },
+      "treatment": {
+        "visitors": 21,
+        "conversions": 16
+      }
+    },
+    "low-vision": {
+      "control": {
+        "visitors": 18,
+        "conversions": 0
+      },
+      "treatment": {
+        "visitors": 17,
+        "conversions": 8
+      }
+    }
+  },
+  "barriers": [
+    {
+      "id": "missing_labels",
+      "flag": "login_missing_labels",
+      "siteFlag": "login_missing_labels",
+      "wcag": "1.3.1 / 3.3.2",
+      "title": "Login fields without labels",
+      "control": "Email and password are placeholder-only.",
+      "treatment": "Visible associated labels.",
+      "blocks": [
+        "screen-reader"
+      ]
+    },
+    {
+      "id": "unlabeled_icon",
+      "flag": "login_unlabeled_icon",
+      "siteFlag": "login_unlabeled_icon",
+      "wcag": "4.1.2",
+      "title": "Unlabeled lock submit",
+      "control": "Submit is a glyph with no name.",
+      "treatment": "aria-label=\"Sign in\".",
+      "blocks": [
+        "screen-reader"
+      ]
+    },
+    {
+      "id": "autocomplete_off",
+      "flag": "login_autocomplete_off",
+      "siteFlag": "login_autocomplete_off",
+      "wcag": "1.3.5",
+      "title": "autocomplete=off on credentials",
+      "control": "Fields disable autofill.",
+      "treatment": "autocomplete=username and current-password.",
+      "blocks": []
+    },
+    {
+      "id": "low_contrast",
+      "flag": "login_low_contrast",
+      "siteFlag": "login_low_contrast",
+      "wcag": "1.4.3",
+      "title": "Low-contrast reset-password copy",
+      "control": "Grey-on-grey (~1.4:1).",
+      "treatment": "Near-black on white.",
+      "blocks": [
+        "low-vision"
+      ]
+    }
+  ],
+  "visits": 400,
+  "flagsmithResults": {
+    "results": {
+      "as_of": "2026-11-26T11:39:19.272304Z",
+      "last_error_at": null,
+      "refresh_requested_at": "2026-11-26T11:39:19.210465Z",
+      "payload": {
+        "metrics": [
+          {
+            "variants": {
+              "control": {
+                "n": 197,
+                "sum": 114,
+                "sum_squares": 114
+              },
+              "treatment": {
+                "n": 204,
+                "sum": 147,
+                "sum_squares": 147
+              }
+            },
+            "inference": {
+              "treatment": {
+                "lift": 0.2452270381836946,
+                "ci_low": 0.06218581160010811,
+                "ci_high": 0.4282682647672811,
+                "chance_to_win": 0.9956781718827219
+              }
+            },
+            "metric_id": 617,
+            "conversions_timeseries": {
+              "points": [
+                {
+                  "bucket": "2026-11-26T11:00:00+00:00",
+                  "converted_identities": {
+                    "control": 114,
+                    "treatment": 147
+                  }
+                }
+              ],
+              "granularity": "hour"
+            }
+          }
+        ],
+        "srm_p_value": null,
+        "exposures_timeseries": {
+          "points": [
+            {
+              "bucket": "2026-11-26T11:00:00+00:00",
+              "new_identities": {
+                "control": 197,
+                "treatment": 204
+              }
+            }
+          ],
+          "granularity": "hour"
+        }
+      },
+      "is_final": false
+    }
+  },
+  "rolloutVerification": {
+    "applied": true,
+    "n": 20,
+    "matched": 20,
+    "expected": "treatment",
+    "usedFallback": false
+  }
+}

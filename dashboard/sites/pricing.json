@@ -1,0 +1,294 @@
+{
+  "traffic": "simulated",
+  "label": "SIMULATED TRAFFIC — Playwright persona bots, not humans. Demonstration of the pipeline; outcomes follow the persona model, not evidence about real users. Lift is a function of the assumed share of keyboard, screen-reader and low-vision users.",
+  "generatedAt": "2026-11-26T11:08:50.945Z",
+  "site": "pricing",
+  "sites": 1,
+  "flag": "pricing_a11y",
+  "experimentId": 616,
+  "flagsmithDashboard": "https://app.flagsmith.com/project/56470/environment/120798/experiments/616",
+  "personaMix": {
+    "mouse": 0.7,
+    "keyboard": 0.1,
+    "screen-reader": 0.1,
+    "low-vision": 0.1
+  },
+  "personaMixLabel": "mouse 70%, keyboard 10%, screen-reader 10%, low-vision 10%",
+  "realisedMix": {
+    "mouse": 0.7075,
+    "keyboard": 0.095,
+    "screen-reader": 0.1025,
+    "low-vision": 0.095
+  },
+  "realisedMixLabel": "mouse 71%, keyboard 10%, screen-reader 10%, low-vision 10%",
+  "personaMixNote": "Assumed mix is a modelling choice (mouse 70%, keyboard 10%, screen-reader 10%, low-vision 10%), not measured traffic. realisedMix is this run's actual draws. Win threshold is 95%.",
+  "localArms": {
+    "control": {
+      "conversions": 126,
+      "visitors": 205
+    },
+    "treatment": {
+      "conversions": 72,
+      "visitors": 195
+    }
+  },
+  "personasNote": "local visit log, n=400; Flagsmith counted n=401",
+  "outcome": "Flagsmith completed the experiment and pulled to control.",
+  "honesty": "Barrier flags are wired on the site; this run used the bundled pricing_a11y native experiment. Sequential per-barrier experiments are the attribution path.",
+  "headline": {
+    "conversionLift": -0.40233236151603496,
+    "displayLift": -0.40233236151603496,
+    "source": "flagsmith",
+    "copy": "Flagsmith lift (SIMULATED traffic, assumed mix 70/10/10/10): -40.2%, P(win) <0.1%, 95% CI −53.0% to −27.5%, pulled to control",
+    "ciLow": -0.5301465615311477,
+    "ciHigh": -0.27451816150092223
+  },
+  "decision": {
+    "flag": "pricing_a11y",
+    "decision": "pull_to_control",
+    "source": "flagsmith",
+    "winProbabilityTreatment": 3.424088235171041e-10,
+    "lift": -0.40233236151603496,
+    "ciLow": -0.5301465615311477,
+    "ciHigh": -0.27451816150092223,
+    "control": {
+      "visitors": 205,
+      "conversions": 126,
+      "rate": 0.6146341463414634
+    },
+    "treatment": {
+      "visitors": 196,
+      "conversions": 72,
+      "rate": 0.3673469387755102
+    },
+    "threshold": 0.95,
+    "notes": [
+      "All traffic is SIMULATED (Playwright persona bots, not humans). Outcomes follow the persona model, not evidence about real users.",
+      "Win probability from Flagsmith Experimentation (chance_to_win on the results payload).",
+      "Flagsmith results as of 2026-11-26T11:08:45.877167Z.",
+      "Treatment loses under the 95% chance-to-be-best rule.",
+      "Local visit counts differ from Flagsmith n/sum (local control 126/205, treatment 72/195; Flagsmith control 126/205, treatment 72/196). Using Flagsmith n/sum.",
+      "Embedded Flagsmith snapshot was taken before completion (results.is_final is false)."
+    ]
+  },
+  "flags": [
+    {
+      "name": "pricing_a11y",
+      "role": "experiment",
+      "control": {
+        "visitors": 205,
+        "conversions": 126
+      },
+      "treatment": {
+        "visitors": 196,
+        "conversions": 72
+      },
+      "armSource": "flagsmith",
+      "winProbabilityTreatment": 3.424088235171041e-10,
+      "ciLow": -0.5301465615311477,
+      "ciHigh": -0.27451816150092223,
+      "source": "flagsmith",
+      "decision": "pull_to_control"
+    },
+    {
+      "name": "pricing_hover_menu",
+      "role": "barrier",
+      "title": "Hover-only Plans menu",
+      "wcag": "2.1.1 Keyboard",
+      "blocks": [
+        "keyboard",
+        "screen-reader"
+      ],
+      "note": "Wired on the pricing page. Bundled experiment pricing_a11y is the native-Experiments path; per-barrier flags stay at 0% treatment until a sequential run."
+    },
+    {
+      "name": "pricing_missing_labels",
+      "role": "barrier",
+      "title": "Workspace field without a label",
+      "wcag": "1.3.1 / 3.3.2",
+      "blocks": [
+        "screen-reader"
+      ],
+      "note": "Wired on the pricing page. Bundled experiment pricing_a11y is the native-Experiments path; per-barrier flags stay at 0% treatment until a sequential run."
+    },
+    {
+      "name": "pricing_div_button",
+      "role": "barrier",
+      "title": "Non-focusable Start trial",
+      "wcag": "2.1.1 / 4.1.2",
+      "blocks": [
+        "keyboard",
+        "screen-reader"
+      ],
+      "note": "Wired on the pricing page. Bundled experiment pricing_a11y is the native-Experiments path; per-barrier flags stay at 0% treatment until a sequential run."
+    },
+    {
+      "name": "pricing_extra_confirm",
+      "role": "barrier",
+      "title": "Extra 'confirm your trial' modal",
+      "wcag": "n/a (treatment friction)",
+      "blocks": [],
+      "note": "Wired on the pricing page. Bundled experiment pricing_a11y is the native-Experiments path; per-barrier flags stay at 0% treatment until a sequential run."
+    }
+  ],
+  "personas": {
+    "mouse": {
+      "control": {
+        "visitors": 141,
+        "conversions": 112
+      },
+      "treatment": {
+        "visitors": 142,
+        "conversions": 56
+      }
+    },
+    "keyboard": {
+      "control": {
+        "visitors": 24,
+        "conversions": 0
+      },
+      "treatment": {
+        "visitors": 14,
+        "conversions": 4
+      }
+    },
+    "screen-reader": {
+      "control": {
+        "visitors": 19,
+        "conversions": 0
+      },
+      "treatment": {
+        "visitors": 22,
+        "conversions": 8
+      }
+    },
+    "low-vision": {
+      "control": {
+        "visitors": 21,
+        "conversions": 14
+      },
+      "treatment": {
+        "visitors": 17,
+        "conversions": 4
+      }
+    }
+  },
+  "barriers": [
+    {
+      "id": "hover_menu",
+      "flag": "pricing_hover_menu",
+      "siteFlag": "pricing_hover_menu",
+      "wcag": "2.1.1 Keyboard",
+      "title": "Hover-only Plans menu",
+      "control": "Start trial lives in a CSS :hover menu.",
+      "treatment": "Menu opens on focus; Start trial is a real control.",
+      "blocks": [
+        "keyboard",
+        "screen-reader"
+      ]
+    },
+    {
+      "id": "missing_labels",
+      "flag": "pricing_missing_labels",
+      "siteFlag": "pricing_missing_labels",
+      "wcag": "1.3.1 / 3.3.2",
+      "title": "Workspace field without a label",
+      "control": "Company field is placeholder-only.",
+      "treatment": "Visible associated label.",
+      "blocks": [
+        "screen-reader"
+      ]
+    },
+    {
+      "id": "div_button",
+      "flag": "pricing_div_button",
+      "siteFlag": "pricing_div_button",
+      "wcag": "2.1.1 / 4.1.2",
+      "title": "Non-focusable Start trial",
+      "control": "Start trial is a clickable div.",
+      "treatment": "Native button.",
+      "blocks": [
+        "keyboard",
+        "screen-reader"
+      ]
+    },
+    {
+      "id": "extra_confirm",
+      "flag": "pricing_extra_confirm",
+      "siteFlag": "pricing_extra_confirm",
+      "wcag": "n/a (treatment friction)",
+      "title": "Extra 'confirm your trial' modal",
+      "control": "No extra step in control.",
+      "treatment": "Treatment adds a confirmation modal before the trial starts. Intended as a safeguard; it adds a friction step.",
+      "blocks": []
+    }
+  ],
+  "visits": 400,
+  "flagsmithResults": {
+    "results": {
+      "as_of": "2026-11-26T11:08:45.877167Z",
+      "last_error_at": null,
+      "refresh_requested_at": "2026-11-26T11:08:45.809451Z",
+      "payload": {
+        "metrics": [
+          {
+            "variants": {
+              "control": {
+                "n": 205,
+                "sum": 126,
+                "sum_squares": 126
+              },
+              "treatment": {
+                "n": 196,
+                "sum": 72,
+                "sum_squares": 72
+              }
+            },
+            "inference": {
+              "treatment": {
+                "lift": -0.40233236151603496,
+                "ci_low": -0.5301465615311477,
+                "ci_high": -0.27451816150092223,
+                "chance_to_win": 3.424088235171041e-10
+              }
+            },
+            "metric_id": 608,
+            "conversions_timeseries": {
+              "points": [
+                {
+                  "bucket": "2026-11-26T11:00:00+00:00",
+                  "converted_identities": {
+                    "control": 126,
+                    "treatment": 72
+                  }
+                }
+              ],
+              "granularity": "hour"
+            }
+          }
+        ],
+        "srm_p_value": null,
+        "exposures_timeseries": {
+          "points": [
+            {
+              "bucket": "2026-11-26T11:00:00+00:00",
+              "new_identities": {
+                "control": 205,
+                "treatment": 196
+              }
+            }
+          ],
+          "granularity": "hour"
+        }
+      },
+      "is_final": false
+    }
+  },
+  "rolloutVerification": {
+    "applied": true,
+    "n": 20,
+    "matched": 20,
+    "expected": "control",
+    "usedFallback": false
+  }
+}

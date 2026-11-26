@@ -1,0 +1,272 @@
+{
+  "traffic": "simulated",
+  "label": "SIMULATED TRAFFIC — Playwright persona bots, not humans. Demonstration of the pipeline; outcomes follow the persona model, not evidence about real users. Lift is a function of the assumed share of keyboard, screen-reader and low-vision users.",
+  "generatedAt": "2026-11-26T11:15:54.014Z",
+  "site": "newsletter",
+  "sites": 1,
+  "flag": "newsletter_a11y",
+  "experimentId": 618,
+  "flagsmithDashboard": "https://app.flagsmith.com/project/56470/environment/120798/experiments/618",
+  "personaMix": {
+    "mouse": 0.7,
+    "keyboard": 0.1,
+    "screen-reader": 0.1,
+    "low-vision": 0.1
+  },
+  "personaMixLabel": "mouse 70%, keyboard 10%, screen-reader 10%, low-vision 10%",
+  "realisedMix": {
+    "mouse": 0.67,
+    "keyboard": 0.115,
+    "screen-reader": 0.11,
+    "low-vision": 0.105
+  },
+  "realisedMixLabel": "mouse 67%, keyboard 12%, screen-reader 11%, low-vision 11%",
+  "personaMixNote": "Assumed mix is a modelling choice (mouse 70%, keyboard 10%, screen-reader 10%, low-vision 10%), not measured traffic. realisedMix is this run's actual draws. Win threshold is 95%.",
+  "localArms": {
+    "control": {
+      "conversions": 117,
+      "visitors": 184
+    },
+    "treatment": {
+      "conversions": 161,
+      "visitors": 216
+    }
+  },
+  "personasNote": "local visit log, n=400; Flagsmith counted n=401",
+  "outcome": "Flagsmith completed the experiment and rolled out treatment.",
+  "honesty": "Barrier flags are wired on the site; this run used the bundled newsletter_a11y native experiment. Sequential per-barrier experiments are the attribution path.",
+  "headline": {
+    "conversionLift": 0.16680452164323126,
+    "displayLift": 0.16680452164323126,
+    "source": "flagsmith",
+    "copy": "Flagsmith lift (SIMULATED traffic, assumed mix 70/10/10/10): 16.7%, P(win) 98.1%, 95% CI +0.9% to +32.4%, rolled out",
+    "ciLow": 0.009364831420068331,
+    "ciHigh": 0.3242442118663942
+  },
+  "decision": {
+    "flag": "newsletter_a11y",
+    "decision": "rollout_treatment",
+    "source": "flagsmith",
+    "winProbabilityTreatment": 0.9810782874837998,
+    "lift": 0.16680452164323126,
+    "ciLow": 0.009364831420068331,
+    "ciHigh": 0.3242442118663942,
+    "control": {
+      "visitors": 184,
+      "conversions": 117,
+      "rate": 0.6358695652173914
+    },
+    "treatment": {
+      "visitors": 217,
+      "conversions": 161,
+      "rate": 0.7419354838709677
+    },
+    "threshold": 0.95,
+    "notes": [
+      "All traffic is SIMULATED (Playwright persona bots, not humans). Outcomes follow the persona model, not evidence about real users.",
+      "Win probability from Flagsmith Experimentation (chance_to_win on the results payload).",
+      "Flagsmith results as of 2026-11-26T11:15:47.631388Z.",
+      "Treatment wins under the 95% chance-to-be-best rule.",
+      "Local visit counts differ from Flagsmith n/sum (local control 117/184, treatment 161/216; Flagsmith control 117/184, treatment 161/217). Using Flagsmith n/sum.",
+      "Embedded Flagsmith snapshot was taken before completion (results.is_final is false)."
+    ]
+  },
+  "flags": [
+    {
+      "name": "newsletter_a11y",
+      "role": "experiment",
+      "control": {
+        "visitors": 184,
+        "conversions": 117
+      },
+      "treatment": {
+        "visitors": 217,
+        "conversions": 161
+      },
+      "armSource": "flagsmith",
+      "winProbabilityTreatment": 0.9810782874837998,
+      "ciLow": 0.009364831420068331,
+      "ciHigh": 0.3242442118663942,
+      "source": "flagsmith",
+      "decision": "rollout_treatment"
+    },
+    {
+      "name": "newsletter_unlabeled_icon",
+      "role": "barrier",
+      "title": "Unlabeled subscribe glyph",
+      "wcag": "4.1.2 Name, Role, Value",
+      "blocks": [
+        "screen-reader"
+      ],
+      "note": "Wired on the newsletter page. Bundled experiment newsletter_a11y is the native-Experiments path; per-barrier flags stay at 0% treatment until a sequential run."
+    },
+    {
+      "name": "newsletter_missing_labels",
+      "role": "barrier",
+      "title": "Email field without a label",
+      "wcag": "1.3.1 / 3.3.2",
+      "blocks": [
+        "screen-reader"
+      ],
+      "note": "Wired on the newsletter page. Bundled experiment newsletter_a11y is the native-Experiments path; per-barrier flags stay at 0% treatment until a sequential run."
+    },
+    {
+      "name": "newsletter_low_contrast",
+      "role": "barrier",
+      "title": "Low-contrast privacy note",
+      "wcag": "1.4.3 Contrast (Minimum)",
+      "blocks": [
+        "low-vision"
+      ],
+      "note": "Wired on the newsletter page. Bundled experiment newsletter_a11y is the native-Experiments path; per-barrier flags stay at 0% treatment until a sequential run."
+    }
+  ],
+  "personas": {
+    "mouse": {
+      "control": {
+        "visitors": 130,
+        "conversions": 105
+      },
+      "treatment": {
+        "visitors": 138,
+        "conversions": 103
+      }
+    },
+    "keyboard": {
+      "control": {
+        "visitors": 18,
+        "conversions": 12
+      },
+      "treatment": {
+        "visitors": 28,
+        "conversions": 20
+      }
+    },
+    "screen-reader": {
+      "control": {
+        "visitors": 15,
+        "conversions": 0
+      },
+      "treatment": {
+        "visitors": 29,
+        "conversions": 21
+      }
+    },
+    "low-vision": {
+      "control": {
+        "visitors": 21,
+        "conversions": 0
+      },
+      "treatment": {
+        "visitors": 21,
+        "conversions": 17
+      }
+    }
+  },
+  "barriers": [
+    {
+      "id": "unlabeled_icon",
+      "flag": "newsletter_unlabeled_icon",
+      "siteFlag": "newsletter_unlabeled_icon",
+      "wcag": "4.1.2 Name, Role, Value",
+      "title": "Unlabeled subscribe glyph",
+      "control": "Envelope button has no accessible name.",
+      "treatment": "aria-label=\"Subscribe to the newsletter\".",
+      "blocks": [
+        "screen-reader"
+      ]
+    },
+    {
+      "id": "missing_labels",
+      "flag": "newsletter_missing_labels",
+      "siteFlag": "newsletter_missing_labels",
+      "wcag": "1.3.1 / 3.3.2",
+      "title": "Email field without a label",
+      "control": "Placeholder only.",
+      "treatment": "Visible associated label.",
+      "blocks": [
+        "screen-reader"
+      ]
+    },
+    {
+      "id": "low_contrast",
+      "flag": "newsletter_low_contrast",
+      "siteFlag": "newsletter_low_contrast",
+      "wcag": "1.4.3 Contrast (Minimum)",
+      "title": "Low-contrast privacy note",
+      "control": "Grey-on-grey (~1.4:1).",
+      "treatment": "Near-black on white.",
+      "blocks": [
+        "low-vision"
+      ]
+    }
+  ],
+  "visits": 400,
+  "flagsmithResults": {
+    "results": {
+      "as_of": "2026-11-26T11:15:47.631388Z",
+      "last_error_at": null,
+      "refresh_requested_at": "2026-11-26T11:15:47.559812Z",
+      "payload": {
+        "metrics": [
+          {
+            "variants": {
+              "control": {
+                "n": 184,
+                "sum": 117,
+                "sum_squares": 117
+              },
+              "treatment": {
+                "n": 217,
+                "sum": 161,
+                "sum_squares": 161
+              }
+            },
+            "inference": {
+              "treatment": {
+                "lift": 0.16680452164323126,
+                "ci_low": 0.009364831420068331,
+                "ci_high": 0.3242442118663942,
+                "chance_to_win": 0.9810782874837998
+              }
+            },
+            "metric_id": 609,
+            "conversions_timeseries": {
+              "points": [
+                {
+                  "bucket": "2026-11-26T11:00:00+00:00",
+                  "converted_identities": {
+                    "control": 117,
+                    "treatment": 161
+                  }
+                }
+              ],
+              "granularity": "hour"
+            }
+          }
+        ],
+        "srm_p_value": null,
+        "exposures_timeseries": {
+          "points": [
+            {
+              "bucket": "2026-11-26T11:00:00+00:00",
+              "new_identities": {
+                "control": 184,
+                "treatment": 217
+              }
+            }
+          ],
+          "granularity": "hour"
+        }
+      },
+      "is_final": false
+    }
+  },
+  "rolloutVerification": {
+    "applied": true,
+    "n": 20,
+    "matched": 20,
+    "expected": "treatment",
+    "usedFallback": false
+  }
+}

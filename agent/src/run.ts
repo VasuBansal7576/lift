@@ -114,10 +114,13 @@ export async function runExperiment() {
 
       const visits = loadVisits();
       const trafficEndedAt = new Date().toISOString();
+      const waitMs = cfg.continueUntilDecision
+        ? Math.max(cfg.resultsWaitMs, 5 * 60 * 1000)
+        : cfg.resultsWaitMs;
       let flagsmith = await waitForFlagsmithResults({
         experimentId: state.experimentId,
         visits,
-        waitMs: cfg.resultsWaitMs,
+        waitMs,
         trafficEndedAt,
       });
       let parsed = parseFlagsmithWin(flagsmith, {
@@ -134,7 +137,7 @@ export async function runExperiment() {
         flagsmith = await waitForFlagsmithResults({
           experimentId: state.experimentId,
           visits,
-          waitMs: cfg.resultsWaitMs,
+          waitMs,
           trafficEndedAt,
         });
         parsed = parseFlagsmithWin(flagsmith, {
@@ -149,6 +152,7 @@ export async function runExperiment() {
         threshold: cfg.winThreshold,
         allowLocalDecision: cfg.allowLocalDecision,
         statsSeed: cfg.trafficSeed,
+        trafficEndedAt,
       });
 
       const local = summariseVisits(visits);
@@ -159,18 +163,25 @@ export async function runExperiment() {
         local.control.visitors,
         local.treatment.visitors,
       );
-      const conclusive =
-        parsed?.usable === true && decision.decision !== "keep_running";
+      const flagsmithReady = parsed?.usable === true;
+      const conclusive = flagsmithReady && decision.decision !== "keep_running";
       const atCap = maxArm >= cfg.maxArmN;
       const sendMore =
         cfg.continueUntilDecision &&
         !conclusive &&
         !atCap &&
-        parsed?.rejectReason !== "srm";
+        parsed?.rejectReason !== "srm" &&
+        (parsed?.rejectReason === "stale" ||
+          parsed?.rejectReason === "error" ||
+          parsed == null ||
+          decision.decision === "keep_running");
+      process.stdout.write(
+        `batch=${batch} waitMs=${waitMs} visits=${visits.length} parsed=${parsed?.rejectReason ?? (flagsmithReady ? "usable" : "none")} source=${decision.source} decision=${decision.decision} maxArm=${maxArm} cap=${cfg.maxArmN} sendMore=${sendMore}\n`,
+      );
 
       if (sendMore) {
         process.stdout.write(
-          `keep_running at maxArm=${maxArm} (cap ${cfg.maxArmN}); sending another batch with a new run id.\n`,
+          `Not conclusive at maxArm=${maxArm} (cap ${cfg.maxArmN}); sending another batch with a new run id.\n`,
         );
         continue;
       }

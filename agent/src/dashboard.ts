@@ -58,14 +58,18 @@ export function formatSignedPct(n: number | null | undefined): string | null {
   return pct < 0 ? `−${abs}%` : `+${abs}%`;
 }
 
-export function outcomeIntro(decision: Decision): string {
+export function outcomeIntro(
+  decision: Decision,
+  source: "flagsmith" | "local_bayesian" = "flagsmith",
+): string {
+  if (source !== "flagsmith" || decision === "keep_running") {
+    return "The experiment is still running; Flagsmith has not called a winner.";
+  }
   switch (decision) {
     case "rollout_treatment":
       return "Flagsmith completed the experiment and rolled out treatment.";
     case "pull_to_control":
       return "Flagsmith completed the experiment and pulled to control.";
-    case "keep_running":
-      return "The experiment is still running; Flagsmith has not called a winner.";
     default:
       return assertNever(decision, "unknown decision");
   }
@@ -176,7 +180,7 @@ export function buildResultsDocument(input: {
     realisedMix: realised,
     realisedMixLabel: mixLabel(realised),
     personaMixNote: `Assumed mix is a modelling choice (${mixLabel(mix)}), not measured traffic. realisedMix is this run's actual draws. Win threshold is ${(input.decision.threshold * 100).toFixed(0)}%.`,
-    outcome: outcomeIntro(input.decision.decision),
+    outcome: outcomeIntro(input.decision.decision, input.decision.source),
     honesty:
       "Barrier flags are wired on the site; this run used the bundled checkout_a11y native experiment. Sequential per-barrier experiments are the attribution path.",
     headline: {

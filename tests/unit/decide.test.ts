@@ -276,4 +276,39 @@ describe("decideExperiment", () => {
     expect(decision.decision).toBe("keep_running");
     expect(decision.notes.some((n) => n.includes("srm_p_value"))).toBe(true);
   });
+
+  it("uses Flagsmith when as_of is after traffic even if n still lags", () => {
+    const decision = decideExperiment({
+      flag: "checkout_a11y",
+      visits: strongTreatment,
+      threshold: 0.95,
+      trafficEndedAt: "2026-11-26T00:00:00Z",
+      flagsmith: {
+        results: {
+          as_of: "2026-11-26T01:00:00Z",
+          payload: {
+            metrics: [
+              {
+                variants: {
+                  control: { n: 55, sum: 20 },
+                  treatment: { n: 55, sum: 40 },
+                },
+                inference: {
+                  treatment: {
+                    chance_to_win: 0.98,
+                    lift: 0.4,
+                    ci_low: 0.1,
+                    ci_high: 0.7,
+                  },
+                },
+              },
+            ],
+          },
+        },
+      },
+    });
+    expect(decision.source).toBe("flagsmith");
+    expect(decision.decision).toBe("rollout_treatment");
+    expect(decision.ciLow).toBe(0.1);
+  });
 });

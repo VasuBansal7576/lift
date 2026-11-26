@@ -185,6 +185,7 @@ export function decideExperiment(input: {
   threshold: number;
   allowLocalDecision?: boolean;
   statsSeed?: number;
+  trafficEndedAt?: string | number | Date;
 }): ExperimentDecision {
   const byVariant = summariseVisits(input.visits);
   const control = armStats(
@@ -201,6 +202,7 @@ export function decideExperiment(input: {
 
   const parsed = parseFlagsmithWin(input.flagsmith ?? null, {
     localN: input.visits.length,
+    trafficEndedAt: input.trafficEndedAt,
   });
   const collecting = !floorsMet(input.visits, input.flagsmith);
   const thresholdPct = `${(input.threshold * 100).toFixed(0)}%`;
@@ -554,6 +556,7 @@ async function main() {
     threshold: cfg.winThreshold,
     allowLocalDecision: cfg.allowLocalDecision,
     statsSeed: cfg.trafficSeed,
+    trafficEndedAt: visits.at(-1) ? new Date().toISOString() : undefined,
   });
   await applyDecision(decision);
   process.stdout.write(`${JSON.stringify({ decision, flagsmith }, null, 2)}\n`);

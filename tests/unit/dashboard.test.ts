@@ -92,6 +92,7 @@ describe("buildResultsDocument", () => {
     expect(doc.headline.conversionLift).toBe("Infinity");
     expect(doc.decision.lift).toBe("Infinity");
     expect(doc.headline.copy).toMatch(/local_bayesian lift \(SIMULATED traffic/);
+    expect(doc.outcome).toMatch(/still running/);
   });
 
   it("says NOT significant when Flagsmith has not called a winner", () => {

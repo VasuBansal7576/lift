@@ -4,7 +4,7 @@ Hackathon entry for WeMakeDevs Toggle Wars (Flagsmith), **Test Something Real** 
 
 Lift ships WCAG fixes behind Flagsmith flags, A/B tests them as native Flagsmith Experiments on simulated conversion traffic, and lets Flagsmith’s own `chance_to_win` decide whether to roll the fix out or pull it. The agent does not pick a winner in application code: it completes the experiment through the Flagsmith Admin API (`rollout_decision`) and then checks that new identities see the winning arm.
 
-**Live result (SIMULATED):** **32.2% median** conversion lift across **7 real accessibility fixes** (IQR 31.0% to 50.5%; range 29.2% to 56.1%; assumed mix 70/10/10/10). Pricing is a designed-to-lose pipeline check, shown separately. [Dashboard](https://vasubansal7576.github.io/lift/)
+**Live result (SIMULATED):** **32.2% median** conversion lift across **7 real accessibility fixes** (IQR 31.0% to 50.5%; range 29.2% to 56.1%; assumed mix 70/10/10/10). Pricing is a designed-to-lose pipeline check, shown separately. [Dashboard](https://vasubansal7576.github.io/lift/). [Demo script](docs/demo-script.md) · [Submission draft](docs/submission.md)
 
 > **All traffic is simulated.** Playwright bots complete each site’s conversion flow. Numbers on the dashboard, identity traits, and this README are labelled **SIMULATED**. This demonstrates the Flagsmith pipeline; it is not evidence about real users. Current fleet experiments: **632, 635, 637, 640, 642, 644, 647, 651**.
 

@@ -1,0 +1,21 @@
+{
+  "site": "signup",
+  "flagName": "signup_a11y",
+  "metricEvent": "signup_completed",
+  "allowMock": false,
+  "simulatedTrafficLabel": "SIMULATED TRAFFIC",
+  "barrierFlags": [
+    "signup_missing_labels",
+    "signup_unlabeled_terms",
+    "signup_div_button",
+    "signup_autocomplete_off",
+    "signup_low_contrast"
+  ],
+  "barrierFlagMap": {
+    "missing_labels": "signup_missing_labels",
+    "unlabeled_terms": "signup_unlabeled_terms",
+    "div_button": "signup_div_button",
+    "autocomplete_off": "signup_autocomplete_off",
+    "low_contrast": "signup_low_contrast"
+  }
+}

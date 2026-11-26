@@ -6,7 +6,7 @@
   <title>Lift — simulated conversion results</title>
   <style>
     :root { font-family: "Iowan Old Style", Palatino, serif; background: #f4efe6; color: #16181d; }
-    body { max-width: 52rem; margin: 0 auto; padding: 2rem 1.25rem 4rem; }
+    body { max-width: 64rem; margin: 0 auto; padding: 2rem 1.25rem 4rem; }
     .banner { background: #111; color: #fff; padding: 0.6rem 0.8rem; letter-spacing: 0.08em; text-transform: uppercase; font-size: 0.8rem; }
     h1 { font-size: 2.4rem; margin-bottom: 0.2rem; }
     .headline { font-size: 1.6rem; }
@@ -14,6 +14,8 @@
     th, td { text-align: left; padding: 0.55rem 0.7rem; border-bottom: 1px solid #ddd; vertical-align: top; }
     .note { color: #5c6370; }
     .pill { display: inline-block; background: #1f4d3a; color: #fff; padding: 0.15rem 0.5rem; font-size: 0.8rem; }
+    .pill.pulled { background: #8a1f11; }
+    .pill.running { background: #5c6370; }
   </style>
 </head>
 <body>
@@ -24,8 +26,8 @@
   <p id="mix" class="note"></p>
   <p id="meta" class="note"></p>
   <p id="dashboard-link" class="note"></p>
-  <h2>Experiment flag</h2>
-  <table id="flag-table"><thead><tr><th>Flag</th><th>Control</th><th>Treatment</th><th>Win P(treatment)</th><th>95% CI</th><th>Decision</th></tr></thead><tbody></tbody></table>
+  <h2 id="table-title">Experiment flag</h2>
+  <table id="flag-table"><thead><tr id="flag-head"></tr></thead><tbody></tbody></table>
   <h2>Personas</h2>
   <p id="personas-note" class="note"></p>
   <table id="persona-table"><thead><tr><th>Persona</th><th>Control</th><th>Treatment</th></tr></thead><tbody></tbody></table>
@@ -49,56 +51,99 @@
       cell.textContent = text;
       return cell;
     }
+    function th(text) {
+      const cell = document.createElement("th");
+      cell.textContent = text;
+      return cell;
+    }
     function clear(node) {
       while (node.firstChild) node.removeChild(node.firstChild);
+    }
+    function ciText(low, high) {
+      if (typeof low !== "number" || typeof high !== "number") return "n/a";
+      return `${low < 0 ? "−" : "+"}${Math.abs(low * 100).toFixed(1)}% to ${high < 0 ? "−" : "+"}${Math.abs(high * 100).toFixed(1)}%`;
+    }
+    function pillFor(decision) {
+      const pill = document.createElement("span");
+      pill.className = "pill";
+      if (decision === "pull_to_control" || decision === "pulled") pill.classList.add("pulled");
+      if (decision === "keep_running" || decision === "still running") pill.classList.add("running");
+      pill.textContent = decision;
+      return pill;
     }
     fetch("./results.json")
       .then((r) => r.json())
       .then((data) => {
+        const isFleet = Array.isArray(data.rows) && data.aggregate;
         document.getElementById("headline").textContent = data.headline.copy;
         const intro = document.getElementById("intro");
         if (intro) {
           intro.textContent =
-            `Hypothesis: fixing accessibility barriers raises conversions. ${data.outcome || "The experiment outcome is in the headline."}`;
+            `Hypothesis: fixing accessibility barriers raises conversions. ${data.outcome || data.aggregate?.explanation || "The experiment outcome is in the headline."}`;
         }
-        document.getElementById("mix").textContent =
-          `Assumed mix: ${data.personaMixLabel || ""}. Realised this run: ${data.realisedMixLabel || ""}. ${data.personaMixNote || ""}`;
+        document.getElementById("mix").textContent = isFleet
+          ? data.aggregate.explanation
+          : `Assumed mix: ${data.personaMixLabel || ""}. Realised this run: ${data.realisedMixLabel || ""}. ${data.personaMixNote || ""}`;
         document.getElementById("meta").textContent =
-          `${data.label} Generated ${data.generatedAt}. Flag ${data.flag}. Headline source: ${data.headline?.source || "unknown"}. ${data.honesty || ""}`;
+          `${data.label} Generated ${data.generatedAt}. Headline source: ${data.headline?.source || "unknown"}. ${data.honesty || ""}`;
         const dash = document.getElementById("dashboard-link");
         clear(dash);
-        if (data.flagsmithDashboard) {
+        if (!isFleet && data.flagsmithDashboard) {
           const a = document.createElement("a");
           a.href = data.flagsmithDashboard;
           a.textContent = "Flagsmith experiment dashboard";
           dash.appendChild(a);
         }
-        const experiment = (data.flags || []).filter((f) => f.role === "experiment");
+        const head = document.getElementById("flag-head");
         const body = document.querySelector("#flag-table tbody");
-        for (const flag of experiment) {
-          const tr = document.createElement("tr");
-          const name = document.createElement("td");
-          name.appendChild(document.createTextNode(flag.name + " "));
-          const pill = document.createElement("span");
-          pill.className = "pill";
-          pill.textContent = flag.decision;
-          name.appendChild(pill);
-          tr.appendChild(name);
-          tr.appendChild(td(rate(flag.control)));
-          tr.appendChild(td(rate(flag.treatment)));
-          tr.appendChild(td(`${pWin(flag.winProbabilityTreatment)} (${flag.source})`));
-          const ciLow = flag.ciLow;
-          const ciHigh = flag.ciHigh;
-          const ci =
-            typeof ciLow === "number" && typeof ciHigh === "number"
-              ? `${ciLow < 0 ? "−" : "+"}${Math.abs(ciLow * 100).toFixed(1)}% to ${ciHigh < 0 ? "−" : "+"}${Math.abs(ciHigh * 100).toFixed(1)}%`
-              : "n/a";
-          tr.appendChild(td(ci));
-          tr.appendChild(td(flag.decision));
-          body.appendChild(tr);
+        const title = document.getElementById("table-title");
+        if (isFleet) {
+          title.textContent = "Per-site experiments";
+          ["Site", "Control", "Treatment", "Lift", "P(win)", "95% CI", "Decision", "Flagsmith"].forEach((h) => head.appendChild(th(h)));
+          for (const row of data.rows) {
+            const tr = document.createElement("tr");
+            const name = document.createElement("td");
+            name.appendChild(document.createTextNode(`${row.name || row.site} `));
+            name.appendChild(pillFor(row.decisionLabel || row.decision));
+            tr.appendChild(name);
+            tr.appendChild(td(rate(row.control)));
+            tr.appendChild(td(rate(row.treatment)));
+            const lift = typeof row.lift === "number" ? `${(row.lift * 100).toFixed(1)}%` : "n/a";
+            tr.appendChild(td(lift));
+            tr.appendChild(td(pWin(row.winProbabilityTreatment)));
+            tr.appendChild(td(ciText(row.ciLow, row.ciHigh)));
+            tr.appendChild(td(row.decisionLabel || row.decision));
+            const linkCell = document.createElement("td");
+            if (row.flagsmithDashboard) {
+              const a = document.createElement("a");
+              a.href = row.flagsmithDashboard;
+              a.textContent = row.experimentId ? String(row.experimentId) : "open";
+              linkCell.appendChild(a);
+            } else {
+              linkCell.textContent = "n/a";
+            }
+            tr.appendChild(linkCell);
+            body.appendChild(tr);
+          }
+        } else {
+          ["Flag", "Control", "Treatment", "Win P(treatment)", "95% CI", "Decision"].forEach((h) => head.appendChild(th(h)));
+          const experiment = (data.flags || []).filter((f) => f.role === "experiment");
+          for (const flag of experiment) {
+            const tr = document.createElement("tr");
+            const name = document.createElement("td");
+            name.appendChild(document.createTextNode(flag.name + " "));
+            name.appendChild(pillFor(flag.decision));
+            tr.appendChild(name);
+            tr.appendChild(td(rate(flag.control)));
+            tr.appendChild(td(rate(flag.treatment)));
+            tr.appendChild(td(`${pWin(flag.winProbabilityTreatment)} (${flag.source})`));
+            tr.appendChild(td(ciText(flag.ciLow, flag.ciHigh)));
+            tr.appendChild(td(flag.decision));
+            body.appendChild(tr);
+          }
         }
         const personasNote = document.getElementById("personas-note");
-        if (personasNote) personasNote.textContent = data.personasNote || "";
+        if (personasNote) personasNote.textContent = data.personasNote || (isFleet ? "Persona breakdown lives on each site results file under dashboard/sites/." : "");
         const personas = document.querySelector("#persona-table tbody");
         for (const [name, arms] of Object.entries(data.personas || {})) {
           const tr = document.createElement("tr");
@@ -115,16 +160,21 @@
           li.appendChild(strong);
           li.appendChild(
             document.createTextNode(
-              ` — ${barrier.title} (${barrier.wcag}). Blocks ${barrier.blocks.join(", ")}.`,
+              ` — ${barrier.title} (${barrier.wcag}). Blocks ${barrier.blocks.join(", ") || "none of the four personas"}.`,
             ),
           );
+          list.appendChild(li);
+        }
+        if (isFleet && list && !list.firstChild) {
+          const li = document.createElement("li");
+          li.textContent = "Each site’s WCAG barriers are listed in dashboard/sites/<id>.json. Pricing ships a treatment-only extra confirmation step so a harmful “fix” can lose on live traffic.";
           list.appendChild(li);
         }
         document.getElementById("source").textContent = (data.decision?.notes || []).join(" ");
       })
       .catch(() => {
         document.getElementById("headline").textContent =
-          "No results.json yet. Run npm run experiment after Flagsmith bootstrap.";
+          "No results.json yet. Run npm run fleet or npm run experiment after Flagsmith bootstrap.";
       });
   </script>
 </body>

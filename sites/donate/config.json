@@ -1,0 +1,19 @@
+{
+  "site": "donate",
+  "flagName": "donate_a11y",
+  "metricEvent": "donation_completed",
+  "allowMock": false,
+  "simulatedTrafficLabel": "SIMULATED TRAFFIC",
+  "barrierFlags": [
+    "donate_unlabeled_icon",
+    "donate_missing_labels",
+    "donate_div_button",
+    "donate_low_contrast"
+  ],
+  "barrierFlagMap": {
+    "unlabeled_icon": "donate_unlabeled_icon",
+    "missing_labels": "donate_missing_labels",
+    "div_button": "donate_div_button",
+    "low_contrast": "donate_low_contrast"
+  }
+}

@@ -1,8 +1,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { Flagsmith } from "@flagsmith/nodejs";
-import barriersCatalog from "../../shared/barriers.json" with { type: "json" };
-import type { Barrier } from "../../shared/types.ts";
+import { barrierFlagMap, getSite, type SiteDef } from "../../shared/catalog.ts";
 import {
   type LiftConfig,
   ROOT,
@@ -42,6 +41,7 @@ export interface BootstrapState {
   warehouseId?: number;
   warehouseStatus?: string;
   barrierFlags: { name: string; id: number }[];
+  siteId: string;
   createdAt: string;
 }
 
@@ -259,6 +259,7 @@ async function ensureExperiment(
   treatmentId: number,
   metricId: number,
   name: string,
+  hypothesis: string,
 ): Promise<ExperimentRecord> {
   const { data } = await admin.get<unknown>(
     `/environments/${envKey}/experiments/?q=${encodeURIComponent(flag.name)}`,
@@ -274,8 +275,7 @@ async function ensureExperiment(
     treatmentId,
     metricId,
     name,
-    hypothesis:
-      "Fixing WCAG barriers (hover-only menu, unlabeled icon, non-focusable Place order, missing labels, unnamed terms checkbox, low-contrast terms) increases checkout completion for keyboard, screen-reader, and low-vision visitors. Traffic is simulated.",
+    hypothesis,
   });
 
   try {
@@ -312,8 +312,9 @@ async function startExperiment(
   return started.data;
 }
 
-export function writeCheckoutConfig(cfg: LiftConfig) {
+export function writeSiteConfig(cfg: LiftConfig, site: SiteDef = getSite(cfg.siteId)) {
   const config = {
+    site: site.id,
     flagsmithApiUrl: cfg.apiUrl,
     flagsmithEventsUrl: cfg.eventsUrl,
     flagsmithEnvironmentKey: cfg.environmentKey,
@@ -321,12 +322,17 @@ export function writeCheckoutConfig(cfg: LiftConfig) {
     metricEvent: cfg.metricEvent,
     allowMock: cfg.allowMock,
     simulatedTrafficLabel: "SIMULATED TRAFFIC",
-    barrierFlags: (barriersCatalog as Barrier[]).map((b) => b.flag),
+    barrierFlags: site.barriers.map((b) => b.flag),
+    barrierFlagMap: barrierFlagMap(site),
   };
   writeFileSync(
-    resolve(ROOT, "sites/checkout/config.json"),
+    resolve(ROOT, site.dir, "config.json"),
     `${JSON.stringify(config, null, 2)}\n`,
   );
+}
+
+export function writeCheckoutConfig(cfg: LiftConfig) {
+  writeSiteConfig(cfg, getSite("checkout"));
 }
 
 export async function bootstrap(cfg = loadConfig()): Promise<BootstrapState> {
@@ -360,17 +366,18 @@ export async function bootstrap(cfg = loadConfig()): Promise<BootstrapState> {
 
   const warehouse = await ensureWarehouse(admin, envKey, cfg.apiUrl, cfg);
 
+  const site = getSite(cfg.siteId);
   const combined = await ensureFeature(
     admin,
     cfg.projectId,
     cfg.flagName,
-    "Combined accessibility treatment for Northline checkout. control = baked-in WCAG barriers, treatment = Kane-style fixes.",
+    `Combined accessibility treatment for ${site.name}. control = baked-in WCAG barriers, treatment = Kane-style fixes.`,
     50,
   );
   const treatment = await ensureTreatmentKey(admin, cfg.projectId, combined);
 
   const barrierFlags: { name: string; id: number }[] = [];
-  for (const barrier of barriersCatalog as Barrier[]) {
+  for (const barrier of site.barriers) {
     const feature = await ensureFeature(
       admin,
       cfg.projectId,
@@ -389,7 +396,8 @@ export async function bootstrap(cfg = loadConfig()): Promise<BootstrapState> {
     combined,
     treatment.id,
     metric.id,
-    `Checkout accessibility lift (${cfg.trafficRunId})`,
+    `${site.name} accessibility lift (${cfg.trafficRunId})`,
+    site.hypothesis,
   );
   const running = await startExperiment(admin, envKey, experiment);
   if (running.status !== "running") {
@@ -409,18 +417,19 @@ export async function bootstrap(cfg = loadConfig()): Promise<BootstrapState> {
     warehouseId: warehouse.id,
     warehouseStatus: warehouse.status,
     barrierFlags,
+    siteId: site.id,
     createdAt: new Date().toISOString(),
   };
 
   mkdirSync(resolve(ROOT, "data"), { recursive: true });
-  writeFileSync(statePath(), `${JSON.stringify(state, null, 2)}\n`);
-  writeCheckoutConfig(cfg);
+  writeFileSync(statePath(site.id), `${JSON.stringify(state, null, 2)}\n`);
+  writeSiteConfig(cfg, site);
   return state;
 }
 
 /** Reuse a running experiment from disk; bootstrap a new one if it is missing or completed. */
 export async function loadRunningState(cfg = loadConfig()): Promise<BootstrapState> {
-  const existing = readJson<BootstrapState>(statePath());
+  const existing = readJson<BootstrapState>(statePath(cfg.siteId));
   if (!existing) return bootstrap(cfg);
   if (!cfg.adminToken || !cfg.environmentKey) {
     throw new Error(

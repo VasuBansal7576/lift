@@ -75,7 +75,8 @@ describe("mixSeed", () => {
     const b = mixSeed(20261126, "run-b", 0, "persona");
     const c = mixSeed(20261126, "run-a", 1, "persona");
     const d = mixSeed(20261126, "run-a", 0, "dropout");
-    expect(new Set([a, b, c, d]).size).toBe(4);
+    const e = mixSeed(20261126, "run-a", 0, "friction");
+    expect(new Set([a, b, c, d, e]).size).toBe(5);
   });
 });
 

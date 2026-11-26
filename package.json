@@ -13,6 +13,8 @@
     "decide": "tsx agent/src/decide.ts",
     "verify:pull": "tsx agent/src/verify-pull.ts",
     "experiment": "tsx agent/src/run.ts",
+    "fleet": "tsx agent/src/fleet.ts",
+    "fleet:estimate": "tsx agent/src/fleet.ts --estimate",
     "site": "node scripts/serve-site.mjs",
     "dashboard": "node scripts/serve-site.mjs --dashboard",
     "test": "vitest run",

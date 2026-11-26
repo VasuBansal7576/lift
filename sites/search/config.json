@@ -1,0 +1,19 @@
+{
+  "site": "search",
+  "flagName": "search_a11y",
+  "metricEvent": "cart_add_completed",
+  "allowMock": false,
+  "simulatedTrafficLabel": "SIMULATED TRAFFIC",
+  "barrierFlags": [
+    "search_unlabeled_icon",
+    "search_missing_labels",
+    "search_div_button",
+    "search_low_contrast"
+  ],
+  "barrierFlagMap": {
+    "unlabeled_icon": "search_unlabeled_icon",
+    "missing_labels": "search_missing_labels",
+    "div_button": "search_div_button",
+    "low_contrast": "search_low_contrast"
+  }
+}

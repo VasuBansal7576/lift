@@ -16,10 +16,11 @@ Hard deadline 29 Nov 2026 20:00 IST. This branch is the **fleet**: one checkout 
 
 | Path | Role |
 |------|------|
-| `sites/checkout/` | Northline Market checkout with 6 real WCAG barriers |
+| `sites/checkout/` plus 7 other fixtures | Distinct conversion flows, 3–5 WCAG barriers each, shared SDK/personas |
+| `shared/catalog.ts` | Site list, flags, metrics, first-failure blockedBy |
 | `agent/` | Fixture scan → bootstrap Flagsmith flags/metrics/experiment → decide → complete/rollout |
 | `traffic/` | Seeded Playwright personas + Node SDK local evaluation |
-| `dashboard/` | Static results page (`dashboard/results.json`) |
+| `dashboard/` | Static GitHub Pages app (`results.json` + `sites/*.json`) |
 | `docker-compose.flagsmith.yml` | Official Flagsmith compose (self-host) |
 
 ## Barriers (control = broken, treatment = fixed)
@@ -119,17 +120,21 @@ CI runs typecheck, unit, and Playwright. E2E uses `scripts/serve-site.mjs --allo
 | `npm run traffic` | Seeded N visitors, local eval, persona bots, events to Flagsmith |
 | `npm run decide` | Poll Flagsmith results; complete if `source=flagsmith`, or if `LIFT_ALLOW_LOCAL_DECISION=true` |
 | `npm run verify:pull` | Recorded probe output: throwaway complete-to-control, then Node SDK eval |
-| `npm run experiment` | scan → bootstrap if needed → traffic → decide → `dashboard/results.json` |
+| `npm run experiment` | One site: scan → bootstrap if needed → traffic → decide → `dashboard/sites/<id>.json` |
+| `npm run fleet` | Sequential fixed-horizon run of every site (200/arm), then aggregate `dashboard/results.json` |
+| `npm run fleet:estimate` | Print the Flagsmith HTTP estimate (no traffic) |
 | `npm run dashboard` | Serve the results page at :4173 |
 | `npm run typecheck` | `tsc --noEmit` |
 
-## Scale-up (6–12 sites)
+## Fleet (this branch)
 
-1. Clone the checkout fixture into `sites/signup`, `sites/pricing`, … each with 3–5 barriers and one `*_a11y` experiment flag.
-2. Keep **one metric per site**.
-3. Run experiments **sequentially**.
-4. After `checkout_a11y` ships, start per-barrier flags at 50/50 for attribution.
-5. Dashboard already has a `sites` field.
+`npm run fleet` runs each site sequentially against Flagsmith cloud **Development**, one look at a **fixed horizon of 200 identities per arm** (400 visits/site). That is under the 300/arm site-1 default so eight sites fit the 50k/month API budget; local evaluation and batched events keep HTTP to a few hundred calls. Estimate first with `npm run fleet:estimate`.
+
+Sites share `sites/shared/lift-sdk.js` and `traffic/src/generic-personas.ts`. **Lumen Cloud pricing** ships a treatment-only extra confirmation modal (`[data-friction-step]`). Converted visits then take an extra seeded dropout. Lift does **not** hard-code `pull_to_control` — if treatment loses, it falls out of the persona mix (70% mouse × extra friction).
+
+The dashboard headline is **conversion lift across N sites** (SIMULATED traffic, assumed mix). The number is the **unweighted median of per-site relative lifts**. Pooled lift (summed n) is a sensitivity check, not the headline, because the sites are different flows and not exchangeable. Each row links the Flagsmith experiment.
+
+GitHub Pages deploys `dashboard/` via `.github/workflows/pages.yml`. Enable Pages on the repo (source: GitHub Actions).
 
 ## Honest limits
 

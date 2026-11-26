@@ -8,7 +8,7 @@ const dashboard = process.argv.includes("--dashboard");
 const allowMock = process.argv.includes("--allow-mock");
 const portArg = process.argv.indexOf("--port");
 const port = Number(portArg >= 0 ? process.argv[portArg + 1] : dashboard ? 4173 : 4174);
-const siteRoot = resolve(rootDir, dashboard ? "dashboard" : "sites/checkout");
+const siteRoot = resolve(rootDir, dashboard ? "dashboard" : "sites");
 
 function isInsideRoot(root, filePath) {
   const base = resolve(root);
@@ -26,14 +26,20 @@ const MIME = {
 
 const server = createServer(async (req, res) => {
   const url = new URL(req.url ?? "/", `http://127.0.0.1:${port}`);
-  const relative = url.pathname === "/" ? "index.html" : url.pathname.slice(1);
+  if (!dashboard && url.pathname === "/") {
+    res.writeHead(302, { Location: `/checkout/${url.search}` });
+    res.end();
+    return;
+  }
+  let relative = url.pathname === "/" ? "index.html" : url.pathname.slice(1);
+  if (relative.endsWith("/")) relative += "index.html";
   const filePath = resolve(siteRoot, relative);
   if (!isInsideRoot(siteRoot, filePath)) {
     res.writeHead(403);
     res.end("forbidden");
     return;
   }
-  if (!dashboard && allowMock && relative === "config.json") {
+  if (!dashboard && allowMock && relative.endsWith("config.json")) {
     let parsed = {};
     try {
       parsed = JSON.parse(await readFile(filePath, "utf8"));

@@ -1,0 +1,19 @@
+{
+  "site": "login",
+  "flagName": "login_a11y",
+  "metricEvent": "login_completed",
+  "allowMock": false,
+  "simulatedTrafficLabel": "SIMULATED TRAFFIC",
+  "barrierFlags": [
+    "login_missing_labels",
+    "login_unlabeled_icon",
+    "login_autocomplete_off",
+    "login_low_contrast"
+  ],
+  "barrierFlagMap": {
+    "missing_labels": "login_missing_labels",
+    "unlabeled_icon": "login_unlabeled_icon",
+    "autocomplete_off": "login_autocomplete_off",
+    "low_contrast": "login_low_contrast"
+  }
+}

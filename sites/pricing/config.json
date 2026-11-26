@@ -1,0 +1,19 @@
+{
+  "site": "pricing",
+  "flagName": "pricing_a11y",
+  "metricEvent": "trial_started",
+  "allowMock": false,
+  "simulatedTrafficLabel": "SIMULATED TRAFFIC",
+  "barrierFlags": [
+    "pricing_hover_menu",
+    "pricing_missing_labels",
+    "pricing_div_button",
+    "pricing_extra_confirm"
+  ],
+  "barrierFlagMap": {
+    "hover_menu": "pricing_hover_menu",
+    "missing_labels": "pricing_missing_labels",
+    "div_button": "pricing_div_button",
+    "extra_confirm": "pricing_extra_confirm"
+  }
+}

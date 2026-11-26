@@ -10,7 +10,7 @@ async function openCheckout(page: Page) {
 }
 
 test("URL override: axe-core finds labelled control violations", async ({ page }) => {
-  await page.goto("/?lift_variant=control");
+  await page.goto("/checkout/?lift_variant=control");
   await expect(page.locator("body")).toHaveAttribute("data-variant", "control");
   await openCheckout(page);
   const results = await new AxeBuilder({ page }).include("body").analyze();
@@ -21,7 +21,7 @@ test("URL override: axe-core finds labelled control violations", async ({ page }
 });
 
 test("URL override: treatment clears those axe-core rules", async ({ page }) => {
-  await page.goto("/?lift_variant=treatment");
+  await page.goto("/checkout/?lift_variant=treatment");
   await expect(page.locator("body")).toHaveAttribute("data-variant", "treatment");
   await openCheckout(page);
   const results = await new AxeBuilder({ page }).include("body").analyze();

@@ -1,10 +1,9 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import barriersCatalog from "../../shared/barriers.json" with { type: "json" };
+import { getSite } from "../../shared/catalog.ts";
 import {
   assertNever,
   DEFAULT_PERSONA_MIX,
-  type Barrier,
   type Decision,
   type ExperimentDecision,
   type Persona,
@@ -223,7 +222,7 @@ export function buildResultsDocument(input: {
       : `local visit log, n=${localTotal}`,
     outcome: outcomeIntro(input.decision.decision, input.decision.source),
     honesty:
-      "Barrier flags are wired on the site; this run used the bundled checkout_a11y native experiment. Sequential per-barrier experiments are the attribution path.",
+      `Barrier flags are wired on the site; this run used the bundled ${input.decision.flag} native experiment. Sequential per-barrier experiments are the attribution path.`,
     headline: {
       conversionLift,
       displayLift,
@@ -246,25 +245,28 @@ export function buildResultsDocument(input: {
         source: input.decision.source,
         decision: input.decision.decision,
       },
-      ...(barriersCatalog as Barrier[]).map((barrier) => ({
+      ...getSite(input.site ?? "checkout").barriers.map((barrier) => ({
         name: barrier.flag,
         role: "barrier",
         title: barrier.title,
         wcag: barrier.wcag,
         blocks: barrier.blocks,
-        note: "Wired on the checkout page. Bundled experiment checkout_a11y is the native-Experiments path; per-barrier flags stay at 0% treatment until a sequential run.",
+        note: `Wired on the ${input.site ?? "checkout"} page. Bundled experiment ${input.decision.flag} is the native-Experiments path; per-barrier flags stay at 0% treatment until a sequential run.`,
       })),
     ],
     personas: personaBreakdown(input.visits),
-    barriers: barriersCatalog,
+    barriers: getSite(input.site ?? "checkout").barriers,
     visits: input.visits.length,
     flagsmithResults: input.flagsmith,
     rolloutVerification: input.verification ?? null,
   };
 }
 
-export function writeDashboard(doc: ReturnType<typeof buildResultsDocument>) {
-  mkdirSync(dirname(resultsPath()), { recursive: true });
-  writeFileSync(resultsPath(), `${JSON.stringify(doc, null, 2)}\n`);
-  return resultsPath();
+export function writeDashboard(
+  doc: ReturnType<typeof buildResultsDocument>,
+  path = resultsPath(String(doc.site ?? "checkout")),
+) {
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, `${JSON.stringify(doc, null, 2)}\n`);
+  return path;
 }

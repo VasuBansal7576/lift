@@ -1,0 +1,17 @@
+{
+  "site": "booking",
+  "flagName": "booking_a11y",
+  "metricEvent": "appointment_booked",
+  "allowMock": false,
+  "simulatedTrafficLabel": "SIMULATED TRAFFIC",
+  "barrierFlags": [
+    "booking_hover_menu",
+    "booking_missing_labels",
+    "booking_div_button"
+  ],
+  "barrierFlagMap": {
+    "hover_menu": "booking_hover_menu",
+    "missing_labels": "booking_missing_labels",
+    "div_button": "booking_div_button"
+  }
+}

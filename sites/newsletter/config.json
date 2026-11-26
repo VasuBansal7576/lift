@@ -1,0 +1,17 @@
+{
+  "site": "newsletter",
+  "flagName": "newsletter_a11y",
+  "metricEvent": "newsletter_subscribed",
+  "allowMock": false,
+  "simulatedTrafficLabel": "SIMULATED TRAFFIC",
+  "barrierFlags": [
+    "newsletter_unlabeled_icon",
+    "newsletter_missing_labels",
+    "newsletter_low_contrast"
+  ],
+  "barrierFlagMap": {
+    "unlabeled_icon": "newsletter_unlabeled_icon",
+    "missing_labels": "newsletter_missing_labels",
+    "low_contrast": "newsletter_low_contrast"
+  }
+}

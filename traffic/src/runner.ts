@@ -83,6 +83,40 @@ export async function assignVariant(
   return { variant, flag: flag as Flag };
 }
 
+async function waitUntilEnrolled(cfg: LiftConfig, timeoutMs = 120_000) {
+  const deadline = Date.now() + timeoutMs;
+  let last = "not tried";
+  while (Date.now() < deadline) {
+    const flagsmith = new Flagsmith({
+      environmentKey: cfg.serverKey || cfg.environmentKey,
+      apiUrl: cfg.adminApiUrl || cfg.apiUrl,
+      enableLocalEvaluation: Boolean(cfg.serverKey),
+      environmentRefreshIntervalSeconds: 1,
+    });
+    try {
+      const flag = (await flagsmith.getExperimentFlag(
+        cfg.flagName,
+        `lift-enroll-${Date.now()}`,
+        { simulated: true, site: cfg.siteId },
+      )) as Flag;
+      if (
+        flag.experiment?.inExperiment &&
+        (flag.variant === "control" || flag.variant === "treatment")
+      ) {
+        return;
+      }
+      last = `inExperiment=${Boolean(flag.experiment?.inExperiment)} variant=${String(flag.variant)}`;
+    } catch (err) {
+      last = err instanceof Error ? err.message : String(err);
+    } finally {
+      await flagsmith.close(2000);
+    }
+    process.stderr.write(`Waiting for ${cfg.flagName} enrollment (${last})\n`);
+    await new Promise((resolve) => setTimeout(resolve, 4000));
+  }
+  throw new Error(`Identities not enrolled in ${cfg.flagName} after ${timeoutMs}ms (${last})`);
+}
+
 async function assertExperimentRunning(cfg: LiftConfig) {
   if (!cfg.adminToken) {
     throw new Error(
@@ -130,6 +164,7 @@ export async function runTraffic(overrides?: Partial<LiftConfig>) {
   }
 
   await assertExperimentRunning(cfg);
+  await waitUntilEnrolled(cfg);
 
   const flagsmith = new Flagsmith({
     environmentKey: cfg.serverKey || cfg.environmentKey,

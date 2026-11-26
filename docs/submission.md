@@ -13,7 +13,7 @@ Lift ships WCAG accessibility fixes behind Flagsmith flags, runs them as native 
 Flagsmith is the mechanism, not a wrapper:
 
 - **Multivariate flags** — bundled `<site>_a11y` experiment (`control` vs keyed `treatment`) plus per-barrier flags the page reads.
-- **Identities and traits** — every visitor is a Flagsmith identity (`simulated`, `persona`, `converted`, `site`). Segments are not used for targeting.
+- **Identities and traits** — Node runner: `simulated`, `persona`, `converted` (on success), and `site`. Browser JS SDK: init with `simulated: false` and `site`, then `converted` on success. Segments are not used for targeting.
 - **JS SDK** — live browsers bucket with `@flagsmith/flagsmith@12.4.0`.
 - **Node SDK local evaluation** — bots get a variant without a Flags API call per visitor.
 - **Events** — `trackEvent` / `flushEvents` into `events.api.flagsmith.com`.

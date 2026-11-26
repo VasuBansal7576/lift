@@ -1,8 +1,24 @@
-import { DEFAULT_PERSONA_MIX, type Decision, type PersonaMix } from "./types.ts";
+import { DEFAULT_PERSONA_MIX, type Decision, type PersonaMix, type SrmSource } from "./types.ts";
+import {
+  blockedPersonaShare,
+  expectedLiftByConstruction,
+  getSite,
+  PRICING_FRICTION_DISCLOSURE,
+} from "./catalog.ts";
 import { compactMix } from "./mix.ts";
 import { gitCommitSha } from "./git.ts";
 
-export type ProducedBy = "fleet" | "snapshot" | "reused";
+export type ProducedBy = "fleet" | "snapshot" | "reused" | "experiment";
+
+/**
+ * Captain switch: when false (default), the headline uses the 7 real fixes
+ * and shows pricing as a designed-to-lose pipeline check. Set true to count
+ * all 8 sites in the headline.
+ */
+export const HEADLINE_INCLUDE_DESIGNED_TO_LOSE = false;
+
+export const LIFT_CONSTRUCTION_NOTE =
+  "The size of the lift is set by the assumed persona mix and which personas each barrier blocks; this demonstrates the Flagsmith pipeline, not real-user impact.";
 
 export interface SiteRow {
   site: string;
@@ -13,18 +29,22 @@ export interface SiteRow {
   control: { visitors: number; conversions: number; rate: number };
   treatment: { visitors: number; conversions: number; rate: number };
   lift: number | null;
+  expectedLift: number | null;
+  blockedShare: number | null;
+  designedToLose: boolean;
+  frictionDisclosure: string | null;
   ciLow: number | null;
   ciHigh: number | null;
   winProbabilityTreatment: number;
   decision: Decision;
   source: "flagsmith" | "local_bayesian";
+  srmPValue: number | null;
+  srmSource: SrmSource | null;
   producedBy: ProducedBy;
   commitSha: string;
 }
 
-export interface FleetAggregate {
-  method: "median_of_site_lifts";
-  explanation: string;
+export interface LiftSummary {
   siteCount: number;
   medianLift: number | null;
   iqrLow: number | null;
@@ -35,8 +55,19 @@ export interface FleetAggregate {
   pooledControl: { visitors: number; conversions: number; rate: number };
   pooledTreatment: { visitors: number; conversions: number; rate: number };
   pooledCopy: string;
-  multipleTestingNote: string;
   headline: string;
+}
+
+export interface FleetAggregate extends LiftSummary {
+  method: "median_of_site_lifts";
+  headlineIncludesDesignedToLose: boolean;
+  explanation: string;
+  constructionNote: string;
+  pipelineCheckNote: string;
+  multipleTestingNote: string;
+  /** The other scope (all 8 if headline is 7, or the 7 real fixes if headline is 8). */
+  secondary: LiftSummary;
+  designedToLoseSites: string[];
 }
 
 function median(values: number[]): number | null {
@@ -68,6 +99,23 @@ export function formatSignedPct(n: number | null | undefined): string {
   return pct < 0 ? `−${abs}%` : `${abs}%`;
 }
 
+export function isDesignedToLose(row: SiteRow): boolean {
+  if (row.designedToLose) return true;
+  try {
+    return getSite(row.site).harmfulFix?.designedToLose === true;
+  } catch {
+    return false;
+  }
+}
+
+export function headlineRows(
+  rows: SiteRow[],
+  includeDesignedToLose = HEADLINE_INCLUDE_DESIGNED_TO_LOSE,
+): SiteRow[] {
+  if (includeDesignedToLose) return rows;
+  return rows.filter((row) => !isDesignedToLose(row));
+}
+
 export function borderlineSites(rows: SiteRow[]): string[] {
   return rows
     .filter((row) => {
@@ -82,10 +130,11 @@ export function borderlineSites(rows: SiteRow[]): string[] {
     .map((row) => row.site);
 }
 
-export function aggregateSites(
+function summariseRows(
   rows: SiteRow[],
-  mix: PersonaMix = DEFAULT_PERSONA_MIX,
-): FleetAggregate {
+  mix: PersonaMix,
+  label: string,
+): LiftSummary {
   const usable = rows.filter((row) => Number.isFinite(row.lift ?? NaN));
   const lifts = usable
     .map((row) => row.lift)
@@ -118,25 +167,12 @@ export function aggregateSites(
     iqrLow === null || iqrHigh === null
       ? ""
       : ` (IQR ${formatSignedPct(iqrLow)} to ${formatSignedPct(iqrHigh)}; range ${formatSignedPct(liftMin)} to ${formatSignedPct(liftMax)})`;
-  const explanation =
-    "Headline is the unweighted median of per-site relative lifts (treatment vs control conversion rate). " +
-    "Sites are not a sample of the web; each row is its own experiment with an assumed persona mix. " +
-    "Pooled lift (visitors summed across sites) is shown as a sensitivity check — it weights larger n more, " +
-    "and it is not the headline because sites have different flows and are not exchangeable.";
-  const headline = `conversion lift across ${rows.length} sites (SIMULATED traffic, assumed mix ${compactMix(mix)}): ${display} median${iqrCopy}`;
+  const headline = `${label} (SIMULATED traffic, assumed mix ${compactMix(mix)}): ${display} median${iqrCopy}`;
   const pooledCopy =
     pooledLift === null
       ? "Pooled sensitivity: n/a."
       : `Pooled sensitivity (summed n, not the headline): ${formatSignedPct(pooledLift)} (control ${pooledControl.conversions}/${pooledControl.visitors} vs treatment ${pooledTreatment.conversions}/${pooledTreatment.visitors}).`;
-  const borderline = borderlineSites(rows);
-  const multipleTestingNote =
-    `${rows.length} separate tests were run at 95% with no multiple-testing correction` +
-    (borderline.length
-      ? `; ${borderline.join(" and ")} ${borderline.length === 1 ? "is" : "are"} borderline.`
-      : ".");
   return {
-    method: "median_of_site_lifts",
-    explanation,
     siteCount: rows.length,
     medianLift,
     iqrLow,
@@ -147,8 +183,54 @@ export function aggregateSites(
     pooledControl,
     pooledTreatment,
     pooledCopy,
-    multipleTestingNote,
     headline,
+  };
+}
+
+export function aggregateSites(
+  rows: SiteRow[],
+  mix: PersonaMix = DEFAULT_PERSONA_MIX,
+  includeDesignedToLose = HEADLINE_INCLUDE_DESIGNED_TO_LOSE,
+): FleetAggregate {
+  const designedToLoseSites = rows.filter((row) => isDesignedToLose(row)).map((row) => row.site);
+  const realFixes = rows.filter((row) => !isDesignedToLose(row));
+  const primaryRows = includeDesignedToLose ? rows : realFixes;
+  const secondaryRows = includeDesignedToLose ? realFixes : rows;
+  const primaryLabel = includeDesignedToLose
+    ? `conversion lift across ${rows.length} sites`
+    : `conversion lift across ${realFixes.length} sites`;
+  const secondaryLabel = includeDesignedToLose
+    ? `Real fixes only (${realFixes.length} sites)`
+    : `Including the designed-to-lose pipeline check (${rows.length} sites)`;
+  const primary = summariseRows(primaryRows, mix, primaryLabel);
+  const secondary = summariseRows(secondaryRows, mix, secondaryLabel);
+  const explanation =
+    "Headline is the unweighted median of per-site relative lifts on the real accessibility fixes " +
+    (includeDesignedToLose
+      ? "(captain switch counts every site, including designed-to-lose pipeline checks). "
+      : "(pricing is excluded from the headline as a designed-to-lose pull_to_control pipeline check). ") +
+    "Sites are not a sample of the web; each row is its own experiment with an assumed persona mix. " +
+    "Pooled lift (visitors summed across headline sites) is shown as a sensitivity check — it weights larger n more, " +
+    "and it is not the headline because sites have different flows and are not exchangeable.";
+  const pipelineCheckNote = designedToLoseSites.length
+    ? `${designedToLoseSites.join(", ")} ${designedToLoseSites.length === 1 ? "is" : "are"} a designed-to-lose pull_to_control pipeline check, shown separately from the headline.`
+    : "";
+  const borderline = borderlineSites(rows);
+  const multipleTestingNote =
+    `${rows.length} separate tests were run at 95% with no multiple-testing correction` +
+    (borderline.length
+      ? `; ${borderline.join(" and ")} ${borderline.length === 1 ? "is" : "are"} borderline.`
+      : ".");
+  return {
+    method: "median_of_site_lifts",
+    headlineIncludesDesignedToLose: includeDesignedToLose,
+    explanation,
+    constructionNote: LIFT_CONSTRUCTION_NOTE,
+    pipelineCheckNote,
+    multipleTestingNote,
+    designedToLoseSites,
+    ...primary,
+    secondary,
   };
 }
 
@@ -174,6 +256,10 @@ export function siteRowFromDocument(doc: {
   flagsmithDashboard?: string | null;
   producedBy?: ProducedBy;
   commitSha?: string;
+  expectedLift?: number | null;
+  blockedShare?: number | null;
+  designedToLose?: boolean;
+  frictionDisclosure?: string | null;
   decision: {
     flag: string;
     decision: Decision;
@@ -182,6 +268,8 @@ export function siteRowFromDocument(doc: {
     lift: number | string | null;
     ciLow: number | null;
     ciHigh: number | null;
+    srmPValue?: number | null;
+    srmSource?: SrmSource | null;
     control: { visitors: number; conversions: number; rate: number };
     treatment: { visitors: number; conversions: number; rate: number };
   };
@@ -196,6 +284,21 @@ export function siteRowFromDocument(doc: {
         : liftRaw === "-Infinity"
           ? Number.NEGATIVE_INFINITY
           : null;
+  let designedToLose = doc.designedToLose === true;
+  let expectedLift = typeof doc.expectedLift === "number" ? doc.expectedLift : null;
+  let blockedShare: number | null =
+    typeof doc.blockedShare === "number" ? doc.blockedShare : null;
+  let frictionDisclosure = doc.frictionDisclosure ?? null;
+  try {
+    const site = getSite(String(doc.site ?? ""));
+    designedToLose = site.harmfulFix?.designedToLose === true;
+    expectedLift = expectedLiftByConstruction(site);
+    blockedShare = blockedPersonaShare(site);
+    frictionDisclosure = designedToLose ? PRICING_FRICTION_DISCLOSURE : null;
+  } catch {
+    // Dummy rows in unit tests are not catalog sites.
+  }
+
   return {
     site: doc.site ?? doc.decision.flag,
     name: doc.site ?? doc.decision.flag,
@@ -205,11 +308,17 @@ export function siteRowFromDocument(doc: {
     control: doc.decision.control,
     treatment: doc.decision.treatment,
     lift,
+    expectedLift,
+    blockedShare,
+    designedToLose,
+    frictionDisclosure,
     ciLow: doc.decision.ciLow,
     ciHigh: doc.decision.ciHigh,
     winProbabilityTreatment: doc.decision.winProbabilityTreatment,
     decision: doc.decision.decision,
     source: doc.decision.source,
+    srmPValue: doc.decision.srmPValue ?? null,
+    srmSource: doc.decision.srmSource ?? null,
     producedBy: doc.producedBy ?? "fleet",
     commitSha: doc.commitSha ?? gitCommitSha(),
   };

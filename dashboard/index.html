@@ -16,6 +16,10 @@
     .pill { display: inline-block; background: #1f4d3a; color: #fff; padding: 0.15rem 0.5rem; font-size: 0.8rem; }
     .pill.pulled { background: #8a1f11; }
     .pill.running { background: #5c6370; }
+    .tag { display: inline-block; margin-left: 0.35rem; background: #8a1f11; color: #fff; padding: 0.1rem 0.45rem; font-size: 0.72rem; letter-spacing: 0.02em; }
+    details { margin: 1.5rem 0; background: #fff; padding: 0.6rem 0.8rem; }
+    details summary { cursor: pointer; }
+    details ul { margin: 0.4rem 0 0; padding-left: 1.2rem; }
   </style>
 </head>
 <body>
@@ -23,17 +27,24 @@
   <p class="note" id="intro">Hypothesis: fixing accessibility barriers raises conversions. Flagsmith assigns arms, records exposures/conversions, and reports whether treatment rolled out, was pulled, or is still running.</p>
   <h1>Lift</h1>
   <p id="headline" class="headline">Loading results…</p>
+  <p id="construction" class="note"></p>
   <p id="pooled" class="note"></p>
+  <p id="secondary" class="note"></p>
   <p id="mix" class="note"></p>
   <p id="meta" class="note"></p>
   <p id="dashboard-link" class="note"></p>
   <h2 id="table-title">Experiment flag</h2>
   <table id="flag-table"><thead><tr id="flag-head"></tr></thead><tbody></tbody></table>
+  <p class="note" id="pricing-footnote"></p>
   <h2>Personas</h2>
   <p id="personas-note" class="note"></p>
   <table id="persona-table"><thead><tr><th>Persona</th><th>Control</th><th>Treatment</th></tr></thead><tbody></tbody></table>
   <h2>Barriers shipped behind Flagsmith</h2>
   <ul id="barriers"></ul>
+  <details id="history" hidden>
+    <summary>Earlier, abandoned, and superseded experiments</summary>
+    <div id="history-body"></div>
+  </details>
   <p class="note" id="source"></p>
   <script>
     function pct(n) { return `${(n * 100).toFixed(1)}%`; }
@@ -60,6 +71,11 @@
     function clear(node) {
       while (node.firstChild) node.removeChild(node.firstChild);
     }
+    function signedPct(n) {
+      if (typeof n !== "number" || !Number.isFinite(n)) return "n/a";
+      const abs = Math.abs(n * 100).toFixed(1);
+      return n < 0 ? `−${abs}%` : `+${abs}%`;
+    }
     function ciText(low, high) {
       if (typeof low !== "number" || typeof high !== "number") return "n/a";
       return `${low < 0 ? "−" : "+"}${Math.abs(low * 100).toFixed(1)}% to ${high < 0 ? "−" : "+"}${Math.abs(high * 100).toFixed(1)}%`;
@@ -72,18 +88,53 @@
       pill.textContent = decision;
       return pill;
     }
+    function liftCell(row) {
+      const obs = typeof row.lift === "number" ? `${(row.lift * 100).toFixed(1)}%` : "n/a";
+      if (typeof row.expectedLift !== "number") return obs;
+      const blocked = typeof row.blockedShare === "number"
+        ? ` at ${(row.blockedShare * 100).toFixed(0)}% blocked`
+        : "";
+      return `${obs} (expected ${signedPct(row.expectedLift)}${blocked})`;
+    }
+    function historyList(title, rows) {
+      const wrap = document.createElement("div");
+      const h = document.createElement("p");
+      h.textContent = title;
+      wrap.appendChild(h);
+      const ul = document.createElement("ul");
+      for (const row of rows || []) {
+        const li = document.createElement("li");
+        const id = row.id != null ? String(row.id) : "?";
+        const site = row.site ? ` ${row.site}` : "";
+        const flag = row.flag ? ` ${row.flag}` : "";
+        li.textContent = `${id}${site}${flag} — ${row.reason || row.status || ""}`;
+        ul.appendChild(li);
+      }
+      wrap.appendChild(ul);
+      return wrap;
+    }
     fetch("./results.json")
       .then((r) => r.json())
       .then((data) => {
         const isFleet = Array.isArray(data.rows) && data.aggregate;
         document.getElementById("headline").textContent = data.headline.copy;
+        const construction = document.getElementById("construction");
+        construction.textContent =
+          data.constructionNote || data.headline?.constructionNote || data.aggregate?.constructionNote || "";
         const pooled = document.getElementById("pooled");
         if (pooled) {
           pooled.textContent = isFleet
-            ? [data.aggregate?.pooledCopy, data.aggregate?.multipleTestingNote || data.headline?.multipleTestingNote]
+            ? [data.aggregate?.pooledCopy, data.aggregate?.pipelineCheckNote, data.aggregate?.multipleTestingNote || data.headline?.multipleTestingNote]
                 .filter(Boolean)
                 .join(" ")
             : data.frictionDisclosure || "";
+        }
+        const secondary = document.getElementById("secondary");
+        if (secondary) {
+          const sec = data.aggregate?.secondary || data.headline?.secondary;
+          secondary.textContent = isFleet && sec
+            ? `${sec.headline} ${sec.pooledCopy || ""}`.trim()
+            : "";
         }
         const intro = document.getElementById("intro");
         if (intro) {
@@ -109,6 +160,7 @@
         const head = document.getElementById("flag-head");
         const body = document.querySelector("#flag-table tbody");
         const title = document.getElementById("table-title");
+        const footnote = document.getElementById("pricing-footnote");
         if (isFleet) {
           title.textContent = "Per-site experiments";
           ["Site", "Control", "Treatment", "Lift", "P(win)", "95% CI", "Decision", "Flagsmith"].forEach((h) => head.appendChild(th(h)));
@@ -117,11 +169,16 @@
             const name = document.createElement("td");
             name.appendChild(document.createTextNode(`${row.name || row.site} `));
             name.appendChild(pillFor(row.decisionLabel || row.decision));
+            if (row.designedToLose) {
+              const tag = document.createElement("span");
+              tag.className = "tag";
+              tag.textContent = "designed to lose (pipeline check)";
+              name.appendChild(tag);
+            }
             tr.appendChild(name);
             tr.appendChild(td(rate(row.control)));
             tr.appendChild(td(rate(row.treatment)));
-            const lift = typeof row.lift === "number" ? `${(row.lift * 100).toFixed(1)}%` : "n/a";
-            tr.appendChild(td(lift));
+            tr.appendChild(td(liftCell(row)));
             tr.appendChild(td(pWin(row.winProbabilityTreatment)));
             tr.appendChild(td(ciText(row.ciLow, row.ciHigh)));
             tr.appendChild(td(row.decisionLabel || row.decision));
@@ -136,6 +193,9 @@
             }
             tr.appendChild(linkCell);
             body.appendChild(tr);
+            if (row.designedToLose && row.frictionDisclosure && footnote && !footnote.textContent) {
+              footnote.textContent = `${row.site}: ${row.frictionDisclosure}`;
+            }
           }
         } else {
           ["Flag", "Control", "Treatment", "Win P(treatment)", "95% CI", "Decision"].forEach((h) => head.appendChild(th(h)));
@@ -181,6 +241,17 @@
           const li = document.createElement("li");
           li.textContent = "Each site’s WCAG barriers are listed in dashboard/sites/<id>.json. Pricing ships a treatment-only extra confirmation step so a harmful “fix” can lose on SIMULATED traffic. 60% of treatment conversions are dropped by construction (bots click through the modal; the friction is an injected drop-off). With the assumed mix, treatment cannot beat control, expected −50%. The decision isn't hard-coded, but the loss is.";
           list.appendChild(li);
+        }
+        const history = document.getElementById("history");
+        const historyBody = document.getElementById("history-body");
+        if (isFleet && history && historyBody) {
+          const abandoned = data.abandonedExperiments || [];
+          const superseded = data.supersededExperiments || [];
+          if (abandoned.length || superseded.length) {
+            history.hidden = false;
+            historyBody.appendChild(historyList("Abandoned", abandoned));
+            historyBody.appendChild(historyList("Superseded", superseded));
+          }
         }
         document.getElementById("source").textContent = (data.decision?.notes || []).join(" ");
       })

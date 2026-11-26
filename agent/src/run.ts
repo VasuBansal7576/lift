@@ -1,6 +1,5 @@
-import { copyFileSync, mkdirSync } from "node:fs";
-import { dirname } from "node:path";
-import { fleetResultsPath, loadConfig } from "./config.ts";
+import { loadConfig } from "./config.ts";
+import { rebuildFleetFromSiteDocs } from "./fleet-document.ts";
 import { loadRunningState } from "./bootstrap.ts";
 import {
   applyDecision,
@@ -116,14 +115,12 @@ export async function runExperiment() {
         personaMix: cfg.personaMix,
         site: site.id,
         verification,
-        producedBy: "fleet",
+        producedBy: process.env.LIFT_FLEET === "true" ? "fleet" : "experiment",
       });
       const path = writeDashboard(doc);
       if (process.env.LIFT_FLEET !== "true") {
-        const also = fleetResultsPath();
-        mkdirSync(dirname(also), { recursive: true });
-        copyFileSync(path, also);
-        process.stdout.write(`Wrote ${path} (and ${also} for the single-site view)\n`);
+        rebuildFleetFromSiteDocs();
+        process.stdout.write(`Wrote ${path} and rebuilt dashboard/results.json from sites/*.json\n`);
       } else {
         process.stdout.write(`Wrote ${path}\n`);
       }

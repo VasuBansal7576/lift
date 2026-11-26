@@ -1,9 +1,9 @@
 {
   "traffic": "simulated",
   "label": "SIMULATED TRAFFIC — Playwright persona bots, not humans. Demonstration of the pipeline; outcomes follow the persona model, not evidence about real users.",
-  "generatedAt": "2026-11-26T13:20:28.189Z",
+  "generatedAt": "2026-11-26T13:36:52.527Z",
   "producedBy": "fleet",
-  "commitSha": "837d329b0d117b1fa522bd633f9fff29d0b71030",
+  "commitSha": "9905ddeeebd8f12c4a7bdc5be175d76448a0b1db",
   "sites": 8,
   "site": "fleet",
   "personaMix": {
@@ -32,42 +32,93 @@
   },
   "aggregate": {
     "method": "median_of_site_lifts",
-    "explanation": "Headline is the unweighted median of per-site relative lifts (treatment vs control conversion rate). Sites are not a sample of the web; each row is its own experiment with an assumed persona mix. Pooled lift (visitors summed across sites) is shown as a sensitivity check — it weights larger n more, and it is not the headline because sites have different flows and are not exchangeable.",
-    "siteCount": 8,
-    "medianLift": 0.3176278240190251,
-    "iqrLow": 0.30304344336041367,
-    "iqrHigh": 0.4986116039567573,
-    "liftMin": -0.5017618040873855,
+    "headlineIncludesDesignedToLose": false,
+    "explanation": "Headline is the unweighted median of per-site relative lifts on the real accessibility fixes (pricing is excluded from the headline as a designed-to-lose pull_to_control pipeline check). Sites are not a sample of the web; each row is its own experiment with an assumed persona mix. Pooled lift (visitors summed across headline sites) is shown as a sensitivity check — it weights larger n more, and it is not the headline because sites have different flows and are not exchangeable.",
+    "constructionNote": "The size of the lift is set by the assumed persona mix and which personas each barrier blocks; this demonstrates the Flagsmith pipeline, not real-user impact.",
+    "pipelineCheckNote": "pricing is a designed-to-lose pull_to_control pipeline check, shown separately from the headline.",
+    "multipleTestingNote": "8 separate tests were run at 95% with no multiple-testing correction.",
+    "designedToLoseSites": [
+      "pricing"
+    ],
+    "siteCount": 7,
+    "medianLift": 0.32181076949210136,
+    "iqrLow": 0.3100334527953015,
+    "iqrHigh": 0.5051141691760684,
+    "liftMin": 0.29230769230769243,
     "liftMax": 0.5614207221350078,
-    "pooledLift": 0.26970113636757204,
+    "pooledLift": 0.3953629980902121,
     "pooledControl": {
-      "visitors": 1587,
-      "conversions": 895,
-      "rate": 0.5639571518588532
+      "visitors": 1385,
+      "conversions": 766,
+      "rate": 0.5530685920577617
     },
     "pooledTreatment": {
-      "visitors": 1613,
-      "conversions": 1155,
-      "rate": 0.7160570365778053
+      "visitors": 1415,
+      "conversions": 1092,
+      "rate": 0.7717314487632508
     },
-    "pooledCopy": "Pooled sensitivity (summed n, not the headline): 27.0% (control 895/1587 vs treatment 1155/1613).",
-    "multipleTestingNote": "8 separate tests were run at 95% with no multiple-testing correction.",
-    "headline": "conversion lift across 8 sites (SIMULATED traffic, assumed mix 70/10/10/10): 31.8% median (IQR 30.3% to 49.9%; range −50.2% to 56.1%)"
+    "pooledCopy": "Pooled sensitivity (summed n, not the headline): 39.5% (control 766/1385 vs treatment 1092/1415).",
+    "headline": "conversion lift across 7 sites (SIMULATED traffic, assumed mix 70/10/10/10): 32.2% median (IQR 31.0% to 50.5%; range 29.2% to 56.1%)",
+    "secondary": {
+      "siteCount": 8,
+      "medianLift": 0.3176278240190251,
+      "iqrLow": 0.30304344336041367,
+      "iqrHigh": 0.4986116039567573,
+      "liftMin": -0.5017618040873855,
+      "liftMax": 0.5614207221350078,
+      "pooledLift": 0.26970113636757204,
+      "pooledControl": {
+        "visitors": 1587,
+        "conversions": 895,
+        "rate": 0.5639571518588532
+      },
+      "pooledTreatment": {
+        "visitors": 1613,
+        "conversions": 1155,
+        "rate": 0.7160570365778053
+      },
+      "pooledCopy": "Pooled sensitivity (summed n, not the headline): 27.0% (control 895/1587 vs treatment 1155/1613).",
+      "headline": "Including the designed-to-lose pipeline check (8 sites) (SIMULATED traffic, assumed mix 70/10/10/10): 31.8% median (IQR 30.3% to 49.9%; range −50.2% to 56.1%)"
+    }
   },
   "headline": {
-    "conversionLift": 0.3176278240190251,
-    "displayLift": 0.3176278240190251,
+    "conversionLift": 0.32181076949210136,
+    "displayLift": 0.32181076949210136,
     "source": "lift_median_of_flagsmith_lifts",
-    "copy": "conversion lift across 8 sites (SIMULATED traffic, assumed mix 70/10/10/10): 31.8% median (IQR 30.3% to 49.9%; range −50.2% to 56.1%)",
+    "copy": "conversion lift across 7 sites (SIMULATED traffic, assumed mix 70/10/10/10): 32.2% median (IQR 31.0% to 50.5%; range 29.2% to 56.1%)",
     "method": "median_of_site_lifts",
-    "iqrLow": 0.30304344336041367,
-    "iqrHigh": 0.4986116039567573,
-    "pooledLift": 0.26970113636757204,
-    "pooledCopy": "Pooled sensitivity (summed n, not the headline): 27.0% (control 895/1587 vs treatment 1155/1613).",
-    "multipleTestingNote": "8 separate tests were run at 95% with no multiple-testing correction."
+    "iqrLow": 0.3100334527953015,
+    "iqrHigh": 0.5051141691760684,
+    "pooledLift": 0.3953629980902121,
+    "pooledCopy": "Pooled sensitivity (summed n, not the headline): 39.5% (control 766/1385 vs treatment 1092/1415).",
+    "multipleTestingNote": "8 separate tests were run at 95% with no multiple-testing correction.",
+    "constructionNote": "The size of the lift is set by the assumed persona mix and which personas each barrier blocks; this demonstrates the Flagsmith pipeline, not real-user impact.",
+    "pipelineCheckNote": "pricing is a designed-to-lose pull_to_control pipeline check, shown separately from the headline.",
+    "secondary": {
+      "siteCount": 8,
+      "medianLift": 0.3176278240190251,
+      "iqrLow": 0.30304344336041367,
+      "iqrHigh": 0.4986116039567573,
+      "liftMin": -0.5017618040873855,
+      "liftMax": 0.5614207221350078,
+      "pooledLift": 0.26970113636757204,
+      "pooledControl": {
+        "visitors": 1587,
+        "conversions": 895,
+        "rate": 0.5639571518588532
+      },
+      "pooledTreatment": {
+        "visitors": 1613,
+        "conversions": 1155,
+        "rate": 0.7160570365778053
+      },
+      "pooledCopy": "Pooled sensitivity (summed n, not the headline): 27.0% (control 895/1587 vs treatment 1155/1613).",
+      "headline": "Including the designed-to-lose pipeline check (8 sites) (SIMULATED traffic, assumed mix 70/10/10/10): 31.8% median (IQR 30.3% to 49.9%; range −50.2% to 56.1%)"
+    }
   },
-  "outcome": "Headline is the unweighted median of per-site relative lifts (treatment vs control conversion rate). Sites are not a sample of the web; each row is its own experiment with an assumed persona mix. Pooled lift (visitors summed across sites) is shown as a sensitivity check — it weights larger n more, and it is not the headline because sites have different flows and are not exchangeable. Pooled sensitivity (summed n, not the headline): 27.0% (control 895/1587 vs treatment 1155/1613). 8 separate tests were run at 95% with no multiple-testing correction.",
-  "honesty": "Headline is the unweighted median of per-site relative lifts (treatment vs control conversion rate). Sites are not a sample of the web; each row is its own experiment with an assumed persona mix. Pooled lift (visitors summed across sites) is shown as a sensitivity check — it weights larger n more, and it is not the headline because sites have different flows and are not exchangeable.",
+  "outcome": "Headline is the unweighted median of per-site relative lifts on the real accessibility fixes (pricing is excluded from the headline as a designed-to-lose pull_to_control pipeline check). Sites are not a sample of the web; each row is its own experiment with an assumed persona mix. Pooled lift (visitors summed across headline sites) is shown as a sensitivity check — it weights larger n more, and it is not the headline because sites have different flows and are not exchangeable. Pooled sensitivity (summed n, not the headline): 39.5% (control 766/1385 vs treatment 1092/1415). pricing is a designed-to-lose pull_to_control pipeline check, shown separately from the headline. 8 separate tests were run at 95% with no multiple-testing correction.",
+  "honesty": "Headline is the unweighted median of per-site relative lifts on the real accessibility fixes (pricing is excluded from the headline as a designed-to-lose pull_to_control pipeline check). Sites are not a sample of the web; each row is its own experiment with an assumed persona mix. Pooled lift (visitors summed across headline sites) is shown as a sensitivity check — it weights larger n more, and it is not the headline because sites have different flows and are not exchangeable. The size of the lift is set by the assumed persona mix and which personas each barrier blocks; this demonstrates the Flagsmith pipeline, not real-user impact.",
+  "constructionNote": "The size of the lift is set by the assumed persona mix and which personas each barrier blocks; this demonstrates the Flagsmith pipeline, not real-user impact.",
   "rows": [
     {
       "site": "checkout",
@@ -86,11 +137,17 @@
         "rate": 0.7804878048780488
       },
       "lift": 0.49210903873744616,
+      "expectedLift": 0.4285714285714286,
+      "blockedShare": 0.30000000000000004,
+      "designedToLose": false,
+      "frictionDisclosure": null,
       "ciLow": 0.2641028328783708,
       "ciHigh": 0.7201152445965215,
       "winProbabilityTreatment": 0.9999883267607292,
       "decision": "rollout_treatment",
       "source": "flagsmith",
+      "srmPValue": 0.6170750745520118,
+      "srmSource": "lift",
       "producedBy": "fleet",
       "commitSha": "837d329b0d117b1fa522bd633f9fff29d0b71030",
       "decisionLabel": "rolled out"
@@ -112,11 +169,17 @@
         "rate": 0.8021978021978022
       },
       "lift": 0.5614207221350078,
+      "expectedLift": 0.4285714285714286,
+      "blockedShare": 0.30000000000000004,
+      "designedToLose": false,
+      "frictionDisclosure": null,
       "ciLow": 0.3298908165845226,
       "ciHigh": 0.7929506276854931,
       "winProbabilityTreatment": 0.9999989958136211,
       "decision": "rollout_treatment",
       "source": "flagsmith",
+      "srmPValue": 0.0718605335950165,
+      "srmSource": "lift",
       "producedBy": "fleet",
       "commitSha": "837d329b0d117b1fa522bd633f9fff29d0b71030",
       "decisionLabel": "rolled out"
@@ -138,11 +201,17 @@
         "rate": 0.3181818181818182
       },
       "lift": -0.5017618040873855,
+      "expectedLift": -0.5,
+      "blockedShare": 0.2,
+      "designedToLose": true,
+      "frictionDisclosure": "60% of treatment conversions are dropped by construction (bots click through the modal; the friction is an injected drop-off). With the assumed mix, treatment cannot beat control, expected −50%. The decision isn't hard-coded, but the loss is.",
       "ciLow": -0.6160316611198863,
       "ciHigh": -0.38749194705488466,
       "winProbabilityTreatment": 0,
       "decision": "pull_to_control",
       "source": "flagsmith",
+      "srmPValue": 0.8414806307510496,
+      "srmSource": "lift",
       "producedBy": "fleet",
       "commitSha": "837d329b0d117b1fa522bd633f9fff29d0b71030",
       "decisionLabel": "pulled"
@@ -164,11 +233,17 @@
         "rate": 0.7535545023696683
       },
       "lift": 0.3066220270446541,
+      "expectedLift": 0.25,
+      "blockedShare": 0.2,
+      "designedToLose": false,
+      "frictionDisclosure": null,
       "ciLow": 0.11736732406864359,
       "ciHigh": 0.49587673002066457,
       "winProbabilityTreatment": 0.9992519687309611,
       "decision": "rollout_treatment",
       "source": "flagsmith",
+      "srmPValue": 0.27133221042580663,
+      "srmSource": "lift",
       "producedBy": "fleet",
       "commitSha": "837d329b0d117b1fa522bd633f9fff29d0b71030",
       "decisionLabel": "rolled out"
@@ -190,11 +265,17 @@
         "rate": 0.7783251231527094
       },
       "lift": 0.5181192996146907,
+      "expectedLift": 0.4285714285714286,
+      "blockedShare": 0.30000000000000004,
+      "designedToLose": false,
+      "frictionDisclosure": null,
       "ciLow": 0.28271147802829744,
       "ciHigh": 0.753527121201084,
       "winProbabilityTreatment": 0.9999919752992416,
       "decision": "rollout_treatment",
       "source": "flagsmith",
+      "srmPValue": 0.7641772921696476,
+      "srmSource": "lift",
       "producedBy": "fleet",
       "commitSha": "837d329b0d117b1fa522bd633f9fff29d0b71030",
       "decisionLabel": "rolled out"
@@ -216,11 +297,17 @@
         "rate": 0.7783251231527094
       },
       "lift": 0.32181076949210136,
+      "expectedLift": 0.25,
+      "blockedShare": 0.2,
+      "designedToLose": false,
+      "frictionDisclosure": null,
       "ciLow": 0.13912345128015918,
       "ciHigh": 0.5044980877040435,
       "winProbabilityTreatment": 0.9997223450777948,
       "decision": "rollout_treatment",
       "source": "flagsmith",
+      "srmPValue": 0.7641772921696476,
+      "srmSource": "lift",
       "producedBy": "fleet",
       "commitSha": "837d329b0d117b1fa522bd633f9fff29d0b71030",
       "decisionLabel": "rolled out"
@@ -242,11 +329,17 @@
         "rate": 0.7733990147783252
       },
       "lift": 0.3134448785459488,
+      "expectedLift": 0.25,
+      "blockedShare": 0.2,
+      "designedToLose": false,
+      "frictionDisclosure": null,
       "ciLow": 0.1311758285299114,
       "ciHigh": 0.49571392856198626,
       "winProbabilityTreatment": 0.9996248616855035,
       "decision": "rollout_treatment",
       "source": "flagsmith",
+      "srmPValue": 0.7641772921696476,
+      "srmSource": "lift",
       "producedBy": "fleet",
       "commitSha": "837d329b0d117b1fa522bd633f9fff29d0b71030",
       "decisionLabel": "rolled out"
@@ -268,11 +361,17 @@
         "rate": 0.7403846153846154
       },
       "lift": 0.29230769230769243,
+      "expectedLift": 0.4285714285714286,
+      "blockedShare": 0.30000000000000004,
+      "designedToLose": false,
+      "frictionDisclosure": null,
       "ciLow": 0.1028176886716563,
       "ciHigh": 0.48179769594372857,
       "winProbabilityTreatment": 0.9987504265482114,
       "decision": "rollout_treatment",
       "source": "flagsmith",
+      "srmPValue": 0.4237106771800861,
+      "srmSource": "lift",
       "producedBy": "fleet",
       "commitSha": "837d329b0d117b1fa522bd633f9fff29d0b71030",
       "decisionLabel": "rolled out"
@@ -300,7 +399,10 @@
       "decision": "rollout_treatment",
       "flagsmithDashboard": "https://app.flagsmith.com/project/56470/environment/120798/experiments/632",
       "producedBy": "fleet",
-      "commitSha": "837d329b0d117b1fa522bd633f9fff29d0b71030"
+      "commitSha": "837d329b0d117b1fa522bd633f9fff29d0b71030",
+      "expectedLift": 0.4285714285714286,
+      "blockedShare": 0.30000000000000004,
+      "designedToLose": false
     },
     {
       "name": "signup_a11y",
@@ -323,7 +425,10 @@
       "decision": "rollout_treatment",
       "flagsmithDashboard": "https://app.flagsmith.com/project/56470/environment/120798/experiments/635",
       "producedBy": "fleet",
-      "commitSha": "837d329b0d117b1fa522bd633f9fff29d0b71030"
+      "commitSha": "837d329b0d117b1fa522bd633f9fff29d0b71030",
+      "expectedLift": 0.4285714285714286,
+      "blockedShare": 0.30000000000000004,
+      "designedToLose": false
     },
     {
       "name": "pricing_a11y",
@@ -346,7 +451,10 @@
       "decision": "pull_to_control",
       "flagsmithDashboard": "https://app.flagsmith.com/project/56470/environment/120798/experiments/637",
       "producedBy": "fleet",
-      "commitSha": "837d329b0d117b1fa522bd633f9fff29d0b71030"
+      "commitSha": "837d329b0d117b1fa522bd633f9fff29d0b71030",
+      "expectedLift": -0.5,
+      "blockedShare": 0.2,
+      "designedToLose": true
     },
     {
       "name": "newsletter_a11y",
@@ -369,7 +477,10 @@
       "decision": "rollout_treatment",
       "flagsmithDashboard": "https://app.flagsmith.com/project/56470/environment/120798/experiments/640",
       "producedBy": "fleet",
-      "commitSha": "837d329b0d117b1fa522bd633f9fff29d0b71030"
+      "commitSha": "837d329b0d117b1fa522bd633f9fff29d0b71030",
+      "expectedLift": 0.25,
+      "blockedShare": 0.2,
+      "designedToLose": false
     },
     {
       "name": "donate_a11y",
@@ -392,7 +503,10 @@
       "decision": "rollout_treatment",
       "flagsmithDashboard": "https://app.flagsmith.com/project/56470/environment/120798/experiments/642",
       "producedBy": "fleet",
-      "commitSha": "837d329b0d117b1fa522bd633f9fff29d0b71030"
+      "commitSha": "837d329b0d117b1fa522bd633f9fff29d0b71030",
+      "expectedLift": 0.4285714285714286,
+      "blockedShare": 0.30000000000000004,
+      "designedToLose": false
     },
     {
       "name": "booking_a11y",
@@ -415,7 +529,10 @@
       "decision": "rollout_treatment",
       "flagsmithDashboard": "https://app.flagsmith.com/project/56470/environment/120798/experiments/644",
       "producedBy": "fleet",
-      "commitSha": "837d329b0d117b1fa522bd633f9fff29d0b71030"
+      "commitSha": "837d329b0d117b1fa522bd633f9fff29d0b71030",
+      "expectedLift": 0.25,
+      "blockedShare": 0.2,
+      "designedToLose": false
     },
     {
       "name": "login_a11y",
@@ -438,7 +555,10 @@
       "decision": "rollout_treatment",
       "flagsmithDashboard": "https://app.flagsmith.com/project/56470/environment/120798/experiments/647",
       "producedBy": "fleet",
-      "commitSha": "837d329b0d117b1fa522bd633f9fff29d0b71030"
+      "commitSha": "837d329b0d117b1fa522bd633f9fff29d0b71030",
+      "expectedLift": 0.25,
+      "blockedShare": 0.2,
+      "designedToLose": false
     },
     {
       "name": "search_a11y",
@@ -461,7 +581,10 @@
       "decision": "rollout_treatment",
       "flagsmithDashboard": "https://app.flagsmith.com/project/56470/environment/120798/experiments/651",
       "producedBy": "fleet",
-      "commitSha": "837d329b0d117b1fa522bd633f9fff29d0b71030"
+      "commitSha": "837d329b0d117b1fa522bd633f9fff29d0b71030",
+      "expectedLift": 0.4285714285714286,
+      "blockedShare": 0.30000000000000004,
+      "designedToLose": false
     }
   ],
   "abandonedExperiments": [
@@ -474,7 +597,7 @@
       "status": "not_found",
       "exposures": null,
       "rolloutDecision": null,
-      "reason": "Looked up on Development: GET /experiments/615/ returned 404 (No Experiment matches). ID gap between signup 614 and pricing 616. Likely a deleted or never-persisted bootstrap attempt. Exposures unknown because the object is gone."
+      "reason": "ID gap, 404 on lookup, cause unknown (IDs may be shared or allocated by failed creates)"
     },
     {
       "id": 617,
@@ -485,7 +608,7 @@
       "status": "not_found",
       "exposures": null,
       "rolloutDecision": null,
-      "reason": "Looked up on Development: GET /experiments/617/ returned 404. ID gap between pricing 616 and newsletter 618. Likely a deleted or never-persisted bootstrap attempt. Exposures unknown because the object is gone."
+      "reason": "ID gap, 404 on lookup, cause unknown (IDs may be shared or allocated by failed creates)"
     },
     {
       "id": 620,
@@ -496,7 +619,7 @@
       "status": "not_found",
       "exposures": null,
       "rolloutDecision": null,
-      "reason": "Looked up on Development: GET /experiments/620/ returned 404. ID gap between donate 619 and booking 621. Likely a deleted or never-persisted bootstrap attempt. Exposures unknown because the object is gone."
+      "reason": "ID gap, 404 on lookup, cause unknown (IDs may be shared or allocated by failed creates)"
     },
     {
       "id": 622,
@@ -507,7 +630,7 @@
       "status": "not_found",
       "exposures": null,
       "rolloutDecision": null,
-      "reason": "Looked up on Development: GET /experiments/622/ returned 404. ID gap between booking 621 and login 624. Likely a deleted or never-persisted bootstrap attempt. Exposures unknown because the object is gone."
+      "reason": "ID gap, 404 on lookup, cause unknown (IDs may be shared or allocated by failed creates)"
     },
     {
       "id": 623,
@@ -518,7 +641,7 @@
       "status": "not_found",
       "exposures": null,
       "rolloutDecision": null,
-      "reason": "Looked up on Development: GET /experiments/623/ returned 404. ID gap between booking 621 and login 624 (with 622). Likely a deleted or never-persisted bootstrap attempt. Exposures unknown because the object is gone."
+      "reason": "ID gap, 404 on lookup, cause unknown (IDs may be shared or allocated by failed creates)"
     },
     {
       "id": 626,
@@ -529,7 +652,7 @@
       "status": "not_found",
       "exposures": null,
       "rolloutDecision": null,
-      "reason": "Looked up on Development after the F1-fix re-run: GET returned 404 (No Experiment matches). ID gap while bootstrapping a new site experiment — likely a unicode/string create retry that allocated an id then discarded it. Exposures unknown because the object is gone."
+      "reason": "ID gap, 404 on lookup, cause unknown (IDs may be shared or allocated by failed creates)"
     },
     {
       "id": 627,
@@ -540,7 +663,7 @@
       "status": "not_found",
       "exposures": null,
       "rolloutDecision": null,
-      "reason": "Looked up on Development after the F1-fix re-run: GET returned 404 (No Experiment matches). ID gap while bootstrapping a new site experiment — likely a unicode/string create retry that allocated an id then discarded it. Exposures unknown because the object is gone."
+      "reason": "ID gap, 404 on lookup, cause unknown (IDs may be shared or allocated by failed creates)"
     },
     {
       "id": 628,
@@ -551,7 +674,7 @@
       "status": "not_found",
       "exposures": null,
       "rolloutDecision": null,
-      "reason": "Looked up on Development after the F1-fix re-run: GET returned 404 (No Experiment matches). ID gap while bootstrapping a new site experiment — likely a unicode/string create retry that allocated an id then discarded it. Exposures unknown because the object is gone."
+      "reason": "ID gap, 404 on lookup, cause unknown (IDs may be shared or allocated by failed creates)"
     },
     {
       "id": 629,
@@ -562,7 +685,7 @@
       "status": "not_found",
       "exposures": null,
       "rolloutDecision": null,
-      "reason": "Looked up on Development after the F1-fix re-run: GET returned 404 (No Experiment matches). ID gap while bootstrapping a new site experiment — likely a unicode/string create retry that allocated an id then discarded it. Exposures unknown because the object is gone."
+      "reason": "ID gap, 404 on lookup, cause unknown (IDs may be shared or allocated by failed creates)"
     },
     {
       "id": 630,
@@ -573,7 +696,7 @@
       "status": "not_found",
       "exposures": null,
       "rolloutDecision": null,
-      "reason": "Looked up on Development after the F1-fix re-run: GET returned 404 (No Experiment matches). ID gap while bootstrapping a new site experiment — likely a unicode/string create retry that allocated an id then discarded it. Exposures unknown because the object is gone."
+      "reason": "ID gap, 404 on lookup, cause unknown (IDs may be shared or allocated by failed creates)"
     },
     {
       "id": 631,
@@ -584,7 +707,7 @@
       "status": "not_found",
       "exposures": null,
       "rolloutDecision": null,
-      "reason": "Looked up on Development after the F1-fix re-run: GET returned 404 (No Experiment matches). ID gap while bootstrapping a new site experiment — likely a unicode/string create retry that allocated an id then discarded it. Exposures unknown because the object is gone."
+      "reason": "ID gap, 404 on lookup, cause unknown (IDs may be shared or allocated by failed creates)"
     },
     {
       "id": 633,
@@ -595,7 +718,7 @@
       "status": "not_found",
       "exposures": null,
       "rolloutDecision": null,
-      "reason": "Looked up on Development after the F1-fix re-run: GET returned 404 (No Experiment matches). ID gap while bootstrapping a new site experiment — likely a unicode/string create retry that allocated an id then discarded it. Exposures unknown because the object is gone."
+      "reason": "ID gap, 404 on lookup, cause unknown (IDs may be shared or allocated by failed creates)"
     },
     {
       "id": 634,
@@ -606,7 +729,7 @@
       "status": "not_found",
       "exposures": null,
       "rolloutDecision": null,
-      "reason": "Looked up on Development after the F1-fix re-run: GET returned 404 (No Experiment matches). ID gap while bootstrapping a new site experiment — likely a unicode/string create retry that allocated an id then discarded it. Exposures unknown because the object is gone."
+      "reason": "ID gap, 404 on lookup, cause unknown (IDs may be shared or allocated by failed creates)"
     },
     {
       "id": 636,
@@ -617,7 +740,7 @@
       "status": "not_found",
       "exposures": null,
       "rolloutDecision": null,
-      "reason": "Looked up on Development after the F1-fix re-run: GET returned 404 (No Experiment matches). ID gap while bootstrapping a new site experiment — likely a unicode/string create retry that allocated an id then discarded it. Exposures unknown because the object is gone."
+      "reason": "ID gap, 404 on lookup, cause unknown (IDs may be shared or allocated by failed creates)"
     },
     {
       "id": 638,
@@ -628,7 +751,7 @@
       "status": "not_found",
       "exposures": null,
       "rolloutDecision": null,
-      "reason": "Looked up on Development after the F1-fix re-run: GET returned 404 (No Experiment matches). ID gap while bootstrapping a new site experiment — likely a unicode/string create retry that allocated an id then discarded it. Exposures unknown because the object is gone."
+      "reason": "ID gap, 404 on lookup, cause unknown (IDs may be shared or allocated by failed creates)"
     },
     {
       "id": 639,
@@ -639,7 +762,7 @@
       "status": "not_found",
       "exposures": null,
       "rolloutDecision": null,
-      "reason": "Looked up on Development after the F1-fix re-run: GET returned 404 (No Experiment matches). ID gap while bootstrapping a new site experiment — likely a unicode/string create retry that allocated an id then discarded it. Exposures unknown because the object is gone."
+      "reason": "ID gap, 404 on lookup, cause unknown (IDs may be shared or allocated by failed creates)"
     },
     {
       "id": 641,
@@ -650,7 +773,7 @@
       "status": "not_found",
       "exposures": null,
       "rolloutDecision": null,
-      "reason": "Looked up on Development after the F1-fix re-run: GET returned 404 (No Experiment matches). ID gap while bootstrapping a new site experiment — likely a unicode/string create retry that allocated an id then discarded it. Exposures unknown because the object is gone."
+      "reason": "ID gap, 404 on lookup, cause unknown (IDs may be shared or allocated by failed creates)"
     },
     {
       "id": 643,
@@ -661,7 +784,7 @@
       "status": "not_found",
       "exposures": null,
       "rolloutDecision": null,
-      "reason": "Looked up on Development after the F1-fix re-run: GET returned 404 (No Experiment matches). ID gap while bootstrapping a new site experiment — likely a unicode/string create retry that allocated an id then discarded it. Exposures unknown because the object is gone."
+      "reason": "ID gap, 404 on lookup, cause unknown (IDs may be shared or allocated by failed creates)"
     },
     {
       "id": 645,
@@ -672,7 +795,7 @@
       "status": "not_found",
       "exposures": null,
       "rolloutDecision": null,
-      "reason": "Looked up on Development after the F1-fix re-run: GET returned 404 (No Experiment matches). ID gap while bootstrapping a new site experiment — likely a unicode/string create retry that allocated an id then discarded it. Exposures unknown because the object is gone."
+      "reason": "ID gap, 404 on lookup, cause unknown (IDs may be shared or allocated by failed creates)"
     },
     {
       "id": 646,
@@ -683,7 +806,7 @@
       "status": "not_found",
       "exposures": null,
       "rolloutDecision": null,
-      "reason": "Looked up on Development after the F1-fix re-run: GET returned 404 (No Experiment matches). ID gap while bootstrapping a new site experiment — likely a unicode/string create retry that allocated an id then discarded it. Exposures unknown because the object is gone."
+      "reason": "ID gap, 404 on lookup, cause unknown (IDs may be shared or allocated by failed creates)"
     },
     {
       "id": 648,
@@ -694,7 +817,7 @@
       "status": "not_found",
       "exposures": null,
       "rolloutDecision": null,
-      "reason": "Looked up on Development after the F1-fix re-run: GET returned 404 (No Experiment matches). ID gap while bootstrapping a new site experiment — likely a unicode/string create retry that allocated an id then discarded it. Exposures unknown because the object is gone."
+      "reason": "ID gap, 404 on lookup, cause unknown (IDs may be shared or allocated by failed creates)"
     },
     {
       "id": 649,
@@ -705,7 +828,7 @@
       "status": "not_found",
       "exposures": null,
       "rolloutDecision": null,
-      "reason": "Looked up on Development after the F1-fix re-run: GET returned 404 (No Experiment matches). ID gap while bootstrapping a new site experiment — likely a unicode/string create retry that allocated an id then discarded it. Exposures unknown because the object is gone."
+      "reason": "ID gap, 404 on lookup, cause unknown (IDs may be shared or allocated by failed creates)"
     },
     {
       "id": 650,
@@ -716,7 +839,7 @@
       "status": "not_found",
       "exposures": null,
       "rolloutDecision": null,
-      "reason": "Looked up on Development after the F1-fix re-run: GET returned 404 (No Experiment matches). ID gap while bootstrapping a new site experiment — likely a unicode/string create retry that allocated an id then discarded it. Exposures unknown because the object is gone."
+      "reason": "ID gap, 404 on lookup, cause unknown (IDs may be shared or allocated by failed creates)"
     }
   ],
   "supersededExperiments": [

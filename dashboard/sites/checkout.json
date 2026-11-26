@@ -71,7 +71,9 @@
       "Flagsmith results as of 2026-11-26T12:22:03.405924Z.",
       "Treatment wins under the 95% chance-to-be-best rule.",
       "Embedded Flagsmith snapshot was taken before completion (results.is_final is false)."
-    ]
+    ],
+    "srmPValue": 0.6170750745520118,
+    "srmSource": "lift"
   },
   "flags": [
     {
@@ -341,5 +343,8 @@
     "expected": "treatment",
     "usedFallback": false,
     "environmentDefaultPath": null
-  }
+  },
+  "expectedLift": 0.4285714285714286,
+  "blockedShare": 0.30000000000000004,
+  "designedToLose": false
 }

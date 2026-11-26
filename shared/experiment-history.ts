@@ -16,6 +16,9 @@ export interface HistoricExperiment {
   reason: string;
 }
 
+export const ABANDONED_REASON =
+  "ID gap, 404 on lookup, cause unknown (IDs may be shared or allocated by failed creates)";
+
 /** Gaps in Development experiment ids. Looked up 2026-11-26; all 404. */
 export const ABANDONED_EXPERIMENTS: HistoricExperiment[] = [
   {
@@ -27,8 +30,7 @@ export const ABANDONED_EXPERIMENTS: HistoricExperiment[] = [
     status: "not_found",
     exposures: null,
     rolloutDecision: null,
-    reason:
-      "Looked up on Development: GET /experiments/615/ returned 404 (No Experiment matches). ID gap between signup 614 and pricing 616. Likely a deleted or never-persisted bootstrap attempt. Exposures unknown because the object is gone.",
+    reason: ABANDONED_REASON,
   },
   {
     id: 617,
@@ -39,8 +41,7 @@ export const ABANDONED_EXPERIMENTS: HistoricExperiment[] = [
     status: "not_found",
     exposures: null,
     rolloutDecision: null,
-    reason:
-      "Looked up on Development: GET /experiments/617/ returned 404. ID gap between pricing 616 and newsletter 618. Likely a deleted or never-persisted bootstrap attempt. Exposures unknown because the object is gone.",
+    reason: ABANDONED_REASON,
   },
   {
     id: 620,
@@ -51,8 +52,7 @@ export const ABANDONED_EXPERIMENTS: HistoricExperiment[] = [
     status: "not_found",
     exposures: null,
     rolloutDecision: null,
-    reason:
-      "Looked up on Development: GET /experiments/620/ returned 404. ID gap between donate 619 and booking 621. Likely a deleted or never-persisted bootstrap attempt. Exposures unknown because the object is gone.",
+    reason: ABANDONED_REASON,
   },
   {
     id: 622,
@@ -63,8 +63,7 @@ export const ABANDONED_EXPERIMENTS: HistoricExperiment[] = [
     status: "not_found",
     exposures: null,
     rolloutDecision: null,
-    reason:
-      "Looked up on Development: GET /experiments/622/ returned 404. ID gap between booking 621 and login 624. Likely a deleted or never-persisted bootstrap attempt. Exposures unknown because the object is gone.",
+    reason: ABANDONED_REASON,
   },
   {
     id: 623,
@@ -75,8 +74,7 @@ export const ABANDONED_EXPERIMENTS: HistoricExperiment[] = [
     status: "not_found",
     exposures: null,
     rolloutDecision: null,
-    reason:
-      "Looked up on Development: GET /experiments/623/ returned 404. ID gap between booking 621 and login 624 (with 622). Likely a deleted or never-persisted bootstrap attempt. Exposures unknown because the object is gone.",
+    reason: ABANDONED_REASON,
   },
 ];
 
@@ -228,8 +226,7 @@ export const F1_RERUN_ABANDONED: HistoricExperiment[] = F1_RERUN_ABANDONED_IDS.m
     status: "not_found",
     exposures: null,
     rolloutDecision: null,
-    reason:
-      "Looked up on Development after the F1-fix re-run: GET returned 404 (No Experiment matches). ID gap while bootstrapping a new site experiment — likely a unicode/string create retry that allocated an id then discarded it. Exposures unknown because the object is gone.",
+    reason: ABANDONED_REASON,
   }),
 );
 

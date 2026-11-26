@@ -86,6 +86,7 @@ describe("parseFlagsmithWin", () => {
       },
     });
     expect(balanced?.usable).toBe(true);
+    expect(balanced?.srmSource).toBe("lift");
     expect(balanced?.srmPValue).toBeGreaterThan(0.5);
 
     const skewed = parseFlagsmithWin({
@@ -119,6 +120,7 @@ describe("parseFlagsmithWin", () => {
     });
     expect(parsed?.usable).toBe(false);
     expect(parsed?.rejectReason).toBe("srm");
+    expect(parsed?.srmSource).toBe("flagsmith");
   });
 
   it("treats as_of before traffic ended as stale even when n is caught up", () => {
@@ -386,7 +388,57 @@ describe("decideExperiment", () => {
     });
     expect(decision.source).toBe("flagsmith");
     expect(decision.decision).toBe("keep_running");
-    expect(decision.notes.some((n) => n.includes("srm_p_value"))).toBe(true);
+    expect(decision.srmSource).toBe("flagsmith");
+    expect(decision.srmPValue).toBe(0.001);
+    expect(decision.notes.some((n) => n.includes("Flagsmith srm_p_value"))).toBe(true);
+  });
+
+  it("labels a Lift-side SRM rejection when Flagsmith srm_p_value is null", () => {
+    const skewedVisits: VisitRecord[] = [
+      ...Array.from({ length: 270 }, (_, i) =>
+        visit({
+          identity: `c${i}`,
+          persona: "mouse",
+          variant: "control",
+          converted: i < 80,
+        }),
+      ),
+      ...Array.from({ length: 30 }, (_, i) =>
+        visit({
+          identity: `t${i}`,
+          persona: "keyboard",
+          variant: "treatment",
+          converted: i < 20,
+        }),
+      ),
+    ];
+    const decision = decideExperiment({
+      flag: "checkout_a11y",
+      visits: skewedVisits,
+      threshold: 0.95,
+      flagsmith: {
+        results: {
+          payload: {
+            srm_p_value: null,
+            metrics: [
+              {
+                variants: {
+                  control: { n: 270, sum: 80 },
+                  treatment: { n: 30, sum: 20 },
+                },
+                inference: { treatment: { chance_to_win: 0.99, lift: 0.4 } },
+              },
+            ],
+          },
+        },
+      },
+    });
+    expect(decision.decision).toBe("keep_running");
+    expect(decision.srmSource).toBe("lift");
+    expect(decision.srmPValue).toBeLessThan(0.01);
+    expect(decision.notes.some((n) => n.includes("Lift-side chi-square SRM p-value"))).toBe(
+      true,
+    );
   });
 
   it("does not decide when Flagsmith n lags local counts even if as_of is after traffic", () => {

@@ -72,7 +72,9 @@
       "Treatment loses under the 95% chance-to-be-best rule.",
       "Embedded Flagsmith snapshot was taken before completion (results.is_final is false).",
       "60% of treatment conversions are dropped by construction (bots click through the modal; the friction is an injected drop-off). With the assumed mix, treatment cannot beat control, expected −50%. The decision isn't hard-coded, but the loss is."
-    ]
+    ],
+    "srmPValue": 0.8414806307510496,
+    "srmSource": "lift"
   },
   "flags": [
     {
@@ -294,5 +296,8 @@
     "expected": "control",
     "usedFallback": false,
     "environmentDefaultPath": null
-  }
+  },
+  "expectedLift": -0.5,
+  "blockedShare": 0.2,
+  "designedToLose": true
 }

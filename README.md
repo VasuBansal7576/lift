@@ -4,11 +4,11 @@ Hackathon entry for WeMakeDevs Toggle Wars (Flagsmith), **Test Something Real** 
 
 **Hypothesis:** fixing accessibility barriers raises conversions.
 
-An agent scans a **fixture** checkout (data-barrier markers plus axe-core on control), ships WCAG fixes behind Flagsmith flags, runs a native Flagsmith experiment, sends simulated persona traffic, then auto-rolls out or pulls through the Flagsmith Admin API **when Flagsmith’s own `chance_to_win` is available**, or when `LIFT_ALLOW_LOCAL_DECISION=true`.
+An agent scans **fixture** sites (data-barrier markers plus axe-core on control), ships WCAG fixes behind Flagsmith flags, runs a native Flagsmith experiment per site, sends simulated persona traffic, then auto-rolls out or pulls through the Flagsmith Admin API **when Flagsmith’s own `chance_to_win` is available**, or when `LIFT_ALLOW_LOCAL_DECISION=true`.
 
-Live humans are assigned by the Flagsmith JS SDK (`@flagsmith/flagsmith@12.4.0`). Playwright bots get their variant from the **Node SDK** (Flagsmith local evaluation). The checkout page is then forced to that arm with `?lift_variant=` so the bot exercises the same HTML the identity was enrolled in — that is why bot pages show **URL override (no Flagsmith)** in the footer. The query is honoured only when the server overlays `allowMock: true` on `/config.json` in memory (never written to disk). Without Flagsmith, the live page will not bucket.
+Live humans are assigned by the Flagsmith JS SDK (`@flagsmith/flagsmith@12.4.0`). Playwright bots get their variant from the **Node SDK** (Flagsmith local evaluation). Each site's page is then forced to that arm with `?lift_variant=` so the bot exercises the same HTML the identity was enrolled in — that is why bot pages show **URL override (no Flagsmith)** in the footer. The query is honoured only when the server overlays `allowMock: true` on `/config.json` in memory (never written to disk). Without Flagsmith, the live page will not bucket.
 
-> **All traffic is simulated.** Playwright bots (mouse, keyboard-only, screen-reader, **contrast-threshold / low-vision**) attempt checkout. Numbers on the dashboard, identity traits, and this README are labelled **SIMULATED**. This demonstrates the pipeline; it is not evidence about real users.
+> **All traffic is simulated.** Playwright bots (mouse, keyboard-only, screen-reader, **contrast-threshold / low-vision**) complete each site's conversion flow. Numbers on the dashboard, identity traits, and this README are labelled **SIMULATED**. This demonstrates the pipeline; it is not evidence about real users. The live fleet on this branch is experiments **632–651**.
 
 Hard deadline 29 Nov 2026 20:00 IST. This branch is the **fleet**: one checkout plus additional demo sites, each with its own Flagsmith experiment.
 
@@ -44,7 +44,7 @@ The scanner looks for `data-barrier` markers in the fixture HTML. It does **not*
 
 ## Persona mix (assumption, not data)
 
-Default: **mouse 70%, keyboard 10%, screen-reader 10%, low-vision 10%** (`LIFT_PERSONA_MIX`). This is a modelling assumption, not a measurement of the web. **Lift is a function of the assumed share of keyboard, screen-reader and low-vision users** — those personas are blocked in control and succeed in treatment (subject to a seeded ~75% baseline completion probability that applies to both arms when unblocked). **Lift’s own floors** (not Flagsmith’s) are **50 identities and 5 conversions per arm** — they are not a reason to pick 10% minority weights. The assumed mix and this run’s realised mix are shown next to the dashboard headline.
+Default: **mouse 70%, keyboard 10%, screen-reader 10%, low-vision 10%** (`LIFT_PERSONA_MIX`). This is a modelling assumption, not a measurement of the web. Blocked personas convert 0% in control and mouse users are never blocked, so **expected lift by construction is about `1/(1 − blocked share) − 1`**. **Lift’s own floors** (not Flagsmith’s) are **50 identities and 5 conversions per arm** — they are not a reason to pick 10% minority weights. The assumed mix and this run’s realised mix are shown next to the dashboard headline.
 
 ## Flagsmith features used
 
@@ -65,7 +65,9 @@ Designed against [Flagsmith Experimentation](https://docs.flagsmith.com/experime
 
 ### API budget (stay under 50k/month)
 
-Simulated traffic uses `@flagsmith/nodejs` **local evaluation** and batched events (`maxBuffer` default 1000, flushed on close). Playwright does **not** call the JS SDK per bot. Checkout JS SDK is for live humans only (`https://cdn.jsdelivr.net/npm/@flagsmith/flagsmith@12.4.0/+esm`).
+Simulated traffic uses `@flagsmith/nodejs` **local evaluation** and batched events (`maxBuffer` default 1000, flushed on close). Playwright does **not** call the JS SDK per bot. The site JS SDK is for live humans only (`https://cdn.jsdelivr.net/npm/@flagsmith/flagsmith@12.4.0/+esm`).
+
+`sites/*/config.json` is gitignored. Bootstrap regenerates it (client environment key plus barrier map). CI and Pages generate a placeholder without the key when the file is missing. **The Development client key is in git history and is public-by-design** (Flagsmith client keys are meant to ship in frontend code).
 
 ## Quick start
 
@@ -88,7 +90,7 @@ Org **Lift** (`42178`), project **Lift** (`56470`), environments Development and
 3. Environment Settings → Warehouse → enable **Flagsmith**. If status is Pending Connection, click **Send your first event**.
 4. Put them in `.env` (see `.env.example`).
 5. `npm run bootstrap`
-6. `npm run experiment` (serves the checkout itself; reuses port 4174 if `npm run site` is already up). Then `npm run decide` is not required.
+6. `npm run experiment` (serves the chosen site; reuses port 4174 if `npm run site` is already up). Then `npm run decide` is not required. Single-site runs rebuild `dashboard/results.json` from `sites/*.json`; they do not overwrite the fleet aggregate with one site.
 7. `npm run dashboard` — banner says **SIMULATED TRAFFIC**. Headline source is `flagsmith` or `local_bayesian`.
 
 ### Self-host (local dev)
@@ -108,7 +110,7 @@ npm run test:unit    # payloads, decide/complete, stats, scanner, contrast, assi
 npm run test:e2e     # URL override personas + stubbed Flagsmith JS path + per-barrier flag + axe-core on control
 ```
 
-CI runs typecheck, unit, and Playwright. E2E uses `scripts/serve-site.mjs --allow-mock` so `?lift_variant=` is honoured. The live page ignores that query unless `config.allowMock` is true.
+CI runs typecheck, unit, and Playwright. E2E uses `tsx scripts/serve-site.ts --allow-mock` so `?lift_variant=` is honoured. The live page ignores that query unless `config.allowMock` is true.
 
 ## Commands
 
@@ -116,13 +118,14 @@ CI runs typecheck, unit, and Playwright. E2E uses `scripts/serve-site.mjs --allo
 |--------|----------------|
 | `npm run scan` | Fixture scan for `data-barrier` markers |
 | `npm run bootstrap` | Management API: flags, warehouse, metric, experiment, start |
-| `npm run site` | Serve the checkout at :4174 |
+| `npm run site` | Serve the sites at :4174 |
 | `npm run traffic` | Seeded N visitors, local eval, persona bots, events to Flagsmith |
 | `npm run decide` | Poll Flagsmith results; complete if `source=flagsmith`, or if `LIFT_ALLOW_LOCAL_DECISION=true` |
 | `npm run verify:pull` | Recorded probe output: throwaway complete-to-control, then Node SDK eval |
-| `npm run experiment` | One site: scan → bootstrap if needed → traffic → decide → `dashboard/sites/<id>.json` |
+| `npm run experiment` | One site: scan → bootstrap if needed → traffic → decide → `dashboard/sites/<id>.json`, then rebuild the fleet aggregate from `sites/*.json` (`producedBy: experiment`) |
 | `npx tsx agent/src/snapshot.ts` | Re-read a **completed** experiment and rewrite `dashboard/sites/<id>.json` without sending traffic. Sets `producedBy: snapshot`. Prefer `npm run fleet` with `LIFT_FLEET_FORCE=true` for a live fleet. |
 | `npm run fleet` | Sequential fixed-horizon run of every site (400 identities/site, ~200/arm, random 50/50), then aggregate `dashboard/results.json` |
+| `npm run fleet:rebuild` | Re-aggregate `dashboard/results.json` from existing `dashboard/sites/*.json` (no traffic) |
 | `npm run fleet:estimate` | Print the Flagsmith HTTP estimate (no traffic) |
 | `npm run dashboard` | Serve the results page at :4173 |
 | `npm run typecheck` | `tsc --noEmit` |
@@ -135,9 +138,11 @@ Sites share `sites/shared/lift-sdk.js` and `traffic/src/generic-personas.ts`. Th
 
 **Lumen Cloud pricing** is a designed-to-lose pipeline check of `pull_to_control`. Treatment shows `[data-friction-step]`; bots click through the modal; then **60% of treatment conversions are dropped by construction** (`frictionKeepRate: 0.4` is P(keep), i.e. `rand() < 0.4` keeps). With the assumed mix, treatment cannot beat control, expected −50%. **The decision isn't hard-coded, but the loss is.** That is the default while the captain decides.
 
-The dashboard headline is **conversion lift across N sites** (SIMULATED traffic, assumed mix). The number is the **unweighted median of per-site relative lifts**, with IQR and range, source `lift_median_of_flagsmith_lifts`. Pooled lift (summed n, with pooled arm counts) is a sensitivity check under the headline, not the headline, because the sites are different flows and not exchangeable. Eight separate tests run at 95% with **no multiple-testing correction**. Each row links the Flagsmith experiment. Abandoned and superseded experiment IDs are listed in `results.json` (`abandonedExperiments` / `supersededExperiments`). Every site doc and fleet row has `producedBy` (`fleet` \| `snapshot` \| `reused`) and the commit SHA.
+**The wins are built in too.** Blocked personas convert 0% in control and mouse users are never blocked, so expected lift is about `1/(1 − blocked share) − 1` (for example **+42.9% at 30% blocked**, **+25% at 20%**). Each dashboard row shows observed lift next to that expected value. The size of the lift is set by the assumed persona mix and which personas each barrier blocks; this demonstrates the Flagsmith pipeline, not real-user impact.
 
-`agent/src/snapshot.ts` re-reads a completed experiment and rewrites the site JSON without sending traffic. A forced fleet (`LIFT_FLEET_FORCE=true`) re-runs every site through the fleet runner so no row is reused or snapshotted.
+The dashboard headline is **conversion lift across the 7 real fixes** (SIMULATED traffic, assumed mix). Pricing is shown separately as the designed-to-lose pipeline check. The number is the **unweighted median of per-site relative lifts**, with IQR and range, source `lift_median_of_flagsmith_lifts`. Pooled lift (summed n, with pooled arm counts) is a sensitivity check under the headline, not the headline, because the sites are different flows and not exchangeable. The 8-site figures (including pricing) stay as a secondary line. Switch `HEADLINE_INCLUDE_DESIGNED_TO_LOSE` in `shared/aggregate.ts` if the captain prefers counting all 8. Eight separate tests run at 95% with **no multiple-testing correction**. Each row links the Flagsmith experiment. Abandoned and superseded experiment IDs are listed in `results.json` and in a collapsible on the dashboard. Every site doc and fleet row has `producedBy` (`fleet` \| `snapshot` \| `reused` \| `experiment`) and the commit SHA.
+
+`agent/src/snapshot.ts` re-reads a completed experiment and rewrites the site JSON without sending traffic. A forced fleet (`LIFT_FLEET_FORCE=true`) re-runs every site through the fleet runner so no row is reused or snapshotted. The committed live rows are fleet experiments **632–651**.
 
 GitHub Pages deploys `dashboard/` via `.github/workflows/pages.yml` on **push to `main`** and `workflow_dispatch`. Pull requests upload the dashboard artifact without deploying. Enable Pages on the repo (source: GitHub Actions).
 
@@ -145,9 +150,9 @@ GitHub Pages deploys `dashboard/` via `.github/workflows/pages.yml` on **push to
 
 - Bots, not humans. Every result surface says so.
 - First experiment is **one bundled flag**. Per-barrier flags are wired on the page but not concurrent Flagsmith experiments.
-- Lift waits for **50 identities and 5 conversions per arm** (Lift’s floors, not Flagsmith’s) before treating `chance_to_win` as a decision. Default design is a **fixed horizon**: `LIFT_TARGET_ARM_N=300` (so ~600 visitors), one look at Flagsmith, then decide. If `LIFT_RUN_ID` is unset, it defaults to a compact UTC timestamp so re-runs get fresh identities.
+- Lift waits for **50 identities and 5 conversions per arm** (Lift’s floors, not Flagsmith’s) before treating `chance_to_win` as a decision. Default design is a **fixed horizon**. **Fleet uses ~200/arm (400/site)**; **single-site default is 300/arm**. If `LIFT_RUN_ID` is unset, it defaults to a compact UTC timestamp so re-runs get fresh identities.
 - `LIFT_CONTINUE_UNTIL=true` is **optional stopping** (add batches until P(win) crosses the threshold). It is off by default because peeking inflates false positives. `LIFT_MAX_ARM_N` (default 600) caps that path.
 - A Flagsmith snapshot is used only when **each arm’s n exactly matches the local visit log**. Enrollment is probed with events off on visitor #0’s identity, so there are zero fake exposures. `as_of` after traffic is not enough on its own. If the warehouse is still short after the wait, the dashboard says **awaiting ingestion** and Lift does not complete.
 - Results refresh is at most once per 5 minutes. Lift polls with backoff until `chance_to_win` exists and ingestion holds.
 - Completing from local math requires `LIFT_ALLOW_LOCAL_DECISION=true` and is labelled everywhere. `npm run decide` completes in that case too.
-- Experiment **593** was an earlier sequential (optional-stopping) Development run. The dashboard is the latest fixed-horizon experiment.
+- Site-1 checkout runs (586, 593, 605) and the first fleet (613–625) are listed under `supersededExperiments`. Abandoned ID gaps (615, 617, 620, 622, 623, and bootstrap retries) are listed under `abandonedExperiments`. The dashboard is fleet experiments **632–651**.

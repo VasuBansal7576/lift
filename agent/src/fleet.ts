@@ -1,86 +1,18 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { SITES } from "../../shared/catalog.ts";
-import {
-  aggregateSites,
-  decisionLabel,
-  siteRowFromDocument,
-  type ProducedBy,
-  type SiteRow,
-} from "../../shared/aggregate.ts";
+import { siteRowFromDocument, type SiteRow } from "../../shared/aggregate.ts";
 import { gitCommitSha } from "../../shared/git.ts";
-import { historicLists } from "../../shared/experiment-history.ts";
-import {
-  estimateFleetCalls,
-  FLEET_ARM_N,
-  type FleetCallEstimate,
-} from "../../shared/estimate.ts";
-import { DEFAULT_PERSONA_MIX } from "../../shared/types.ts";
+import { FLEET_ARM_N, estimateFleetCalls } from "../../shared/estimate.ts";
 import { fleetResultsPath, loadConfig, readJson, resultsPath } from "./config.ts";
+import {
+  buildFleetDocument,
+  rebuildFleetFromSiteDocs,
+} from "./fleet-document.ts";
 import { runExperiment } from "./run.ts";
 import { serveSites } from "./serve.ts";
 
-export { estimateFleetCalls, FLEET_ARM_N };
-
-export function buildFleetDocument(rows: SiteRow[], estimate: FleetCallEstimate) {
-  const mix = DEFAULT_PERSONA_MIX;
-  const aggregate = aggregateSites(rows, mix);
-  const sha = gitCommitSha();
-  const currentIds = rows
-    .map((row) => row.experimentId)
-    .filter((id): id is number => typeof id === "number");
-  const historic = historicLists(currentIds);
-  return {
-    traffic: "simulated" as const,
-    label:
-      "SIMULATED TRAFFIC — Playwright persona bots, not humans. Demonstration of the pipeline; outcomes follow the persona model, not evidence about real users.",
-    generatedAt: new Date().toISOString(),
-    producedBy: "fleet" as ProducedBy,
-    commitSha: sha,
-    sites: rows.length,
-    site: "fleet",
-    personaMix: mix,
-    estimate,
-    aggregate,
-    headline: {
-      conversionLift: aggregate.medianLift,
-      displayLift: aggregate.medianLift,
-      source: "lift_median_of_flagsmith_lifts" as const,
-      copy: aggregate.headline,
-      method: aggregate.method,
-      iqrLow: aggregate.iqrLow,
-      iqrHigh: aggregate.iqrHigh,
-      pooledLift: aggregate.pooledLift,
-      pooledCopy: aggregate.pooledCopy,
-      multipleTestingNote: aggregate.multipleTestingNote,
-    },
-    outcome: `${aggregate.explanation} ${aggregate.pooledCopy} ${aggregate.multipleTestingNote}`,
-    honesty: aggregate.explanation,
-    rows: rows.map((row) => ({
-      ...row,
-      producedBy: row.producedBy,
-      commitSha: row.commitSha || sha,
-      decisionLabel: decisionLabel(row.decision),
-    })),
-    flags: rows.map((row) => ({
-      name: row.flag,
-      role: "experiment" as const,
-      site: row.site,
-      control: row.control,
-      treatment: row.treatment,
-      winProbabilityTreatment: row.winProbabilityTreatment,
-      ciLow: row.ciLow,
-      ciHigh: row.ciHigh,
-      source: row.source,
-      decision: row.decision,
-      flagsmithDashboard: row.flagsmithDashboard,
-      producedBy: row.producedBy,
-      commitSha: row.commitSha || sha,
-    })),
-    abandonedExperiments: historic.abandonedExperiments,
-    supersededExperiments: historic.supersededExperiments,
-  };
-}
+export { estimateFleetCalls, FLEET_ARM_N, buildFleetDocument, rebuildFleetFromSiteDocs };
 
 export async function runFleet() {
   const estimate = estimateFleetCalls(SITES.length, FLEET_ARM_N);
@@ -139,9 +71,12 @@ export async function runFleet() {
 }
 
 async function main() {
-  const dry = process.argv.includes("--estimate");
-  if (dry) {
+  if (process.argv.includes("--estimate")) {
     process.stdout.write(`${JSON.stringify(estimateFleetCalls(), null, 2)}\n`);
+    return;
+  }
+  if (process.argv.includes("--rebuild")) {
+    rebuildFleetFromSiteDocs();
     return;
   }
   await runFleet();

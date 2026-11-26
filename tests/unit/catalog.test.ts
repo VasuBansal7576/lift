@@ -2,9 +2,21 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { SITES, getSite, barrierFlagMap, PRICING_FRICTION_DISCLOSURE } from "../../shared/catalog.ts";
+import {
+  SITES,
+  getSite,
+  barrierFlagMap,
+  PRICING_FRICTION_DISCLOSURE,
+  blockedPersonaShare,
+  expectedLiftByConstruction,
+} from "../../shared/catalog.ts";
 import { PERSONAS } from "../../shared/types.ts";
-import { aggregateSites, decisionLabel, type SiteRow } from "../../shared/aggregate.ts";
+import {
+  HEADLINE_INCLUDE_DESIGNED_TO_LOSE,
+  aggregateSites,
+  decisionLabel,
+  type SiteRow,
+} from "../../shared/aggregate.ts";
 import { estimateFleetCalls } from "../../shared/estimate.ts";
 import { scanSite } from "../../agent/src/scan.ts";
 import { applyBaselineDropout, applyFrictionKeep } from "../../traffic/src/runner.ts";
@@ -68,60 +80,82 @@ describe("site catalog", () => {
   });
 });
 
+function dummyRow(partial: Partial<SiteRow> & Pick<SiteRow, "site" | "lift" | "decision" | "winProbabilityTreatment">): SiteRow {
+  return {
+    name: partial.site,
+    flag: `${partial.site}_a11y`,
+    experimentId: 1,
+    flagsmithDashboard: null,
+    control: { visitors: 100, conversions: 50, rate: 0.5 },
+    treatment: { visitors: 100, conversions: 60, rate: 0.6 },
+    expectedLift: null,
+    blockedShare: null,
+    designedToLose: false,
+    frictionDisclosure: null,
+    ciLow: 0,
+    ciHigh: 0.2,
+    source: "flagsmith",
+    srmPValue: null,
+    srmSource: null,
+    producedBy: "fleet",
+    commitSha: "test",
+    ...partial,
+  };
+}
+
+describe("expected lift by construction", () => {
+  it("is 1/(1 − blocked share) − 1, and −50% on pricing with friction", () => {
+    expect(HEADLINE_INCLUDE_DESIGNED_TO_LOSE).toBe(false);
+    expect(blockedPersonaShare(getSite("checkout"))).toBeCloseTo(0.3);
+    expect(expectedLiftByConstruction(getSite("checkout"))).toBeCloseTo(1 / 0.7 - 1);
+    expect(expectedLiftByConstruction(getSite("signup"))).toBeCloseTo(0.428571, 5);
+    expect(blockedPersonaShare(getSite("newsletter"))).toBeCloseTo(0.2);
+    expect(expectedLiftByConstruction(getSite("newsletter"))).toBeCloseTo(0.25);
+    expect(expectedLiftByConstruction(getSite("booking"))).toBeCloseTo(0.25);
+    expect(expectedLiftByConstruction(getSite("login"))).toBeCloseTo(0.25);
+    expect(expectedLiftByConstruction(getSite("pricing"))).toBeCloseTo(-0.5);
+  });
+});
+
 describe("fleet aggregation", () => {
   it("uses the unweighted median of per-site lifts as the headline", () => {
     const rows = [
-      {
+      dummyRow({
         site: "a",
         name: "A",
-        flag: "a_a11y",
         experimentId: 1,
-        flagsmithDashboard: "https://app.flagsmith.com/a",
         control: { visitors: 100, conversions: 50, rate: 0.5 },
         treatment: { visitors: 100, conversions: 60, rate: 0.6 },
         lift: 0.2,
         ciLow: 0.1,
         ciHigh: 0.3,
         winProbabilityTreatment: 0.99,
-        decision: "rollout_treatment" as const,
-        source: "flagsmith" as const,
-        producedBy: "fleet" as const,
-        commitSha: "test",
-      },
-      {
+        decision: "rollout_treatment",
+      }),
+      dummyRow({
         site: "b",
         name: "B",
-        flag: "b_a11y",
         experimentId: 2,
-        flagsmithDashboard: "https://app.flagsmith.com/b",
         control: { visitors: 100, conversions: 50, rate: 0.5 },
         treatment: { visitors: 100, conversions: 40, rate: 0.4 },
         lift: -0.2,
         ciLow: -0.3,
         ciHigh: -0.1,
         winProbabilityTreatment: 0.02,
-        decision: "pull_to_control" as const,
-        source: "flagsmith" as const,
-        producedBy: "fleet" as const,
-        commitSha: "test",
-      },
-      {
+        decision: "pull_to_control",
+      }),
+      dummyRow({
         site: "c",
         name: "C",
-        flag: "c_a11y",
         experimentId: 3,
-        flagsmithDashboard: "https://app.flagsmith.com/c",
         control: { visitors: 100, conversions: 50, rate: 0.5 },
         treatment: { visitors: 100, conversions: 55, rate: 0.55 },
         lift: 0.1,
         ciLow: 0,
         ciHigh: 0.2,
         winProbabilityTreatment: 0.8,
-        decision: "keep_running" as const,
-        source: "flagsmith" as const,
-        producedBy: "fleet" as const,
-        commitSha: "test",
-      },
+        decision: "keep_running",
+      }),
     ] satisfies SiteRow[];
     const agg = aggregateSites(rows);
     expect(agg.method).toBe("median_of_site_lifts");
@@ -133,9 +167,52 @@ describe("fleet aggregation", () => {
     expect(agg.pooledCopy).toMatch(/Pooled sensitivity/);
     expect(agg.pooledCopy).toMatch(/control 150\/300 vs treatment 155\/300/);
     expect(agg.multipleTestingNote).toMatch(/3 separate tests were run at 95%/);
+    expect(agg.constructionNote).toMatch(/assumed persona mix/);
     expect(decisionLabel("pull_to_control")).toBe("pulled");
     expect(decisionLabel("rollout_treatment")).toBe("rolled out");
     expect(decisionLabel("keep_running")).toBe("still running");
+  });
+
+  it("headlines the real fixes and keeps the designed-to-lose site as secondary", () => {
+    const rows = [
+      dummyRow({
+        site: "checkout",
+        lift: 0.4,
+        winProbabilityTreatment: 0.99,
+        decision: "rollout_treatment",
+        control: { visitors: 100, conversions: 50, rate: 0.5 },
+        treatment: { visitors: 100, conversions: 70, rate: 0.7 },
+      }),
+      dummyRow({
+        site: "pricing",
+        lift: -0.5,
+        winProbabilityTreatment: 0.001,
+        decision: "pull_to_control",
+        designedToLose: true,
+        control: { visitors: 100, conversions: 60, rate: 0.6 },
+        treatment: { visitors: 100, conversions: 30, rate: 0.3 },
+      }),
+      dummyRow({
+        site: "newsletter",
+        lift: 0.2,
+        winProbabilityTreatment: 0.96,
+        decision: "rollout_treatment",
+        control: { visitors: 100, conversions: 50, rate: 0.5 },
+        treatment: { visitors: 100, conversions: 60, rate: 0.6 },
+      }),
+    ];
+    const seven = aggregateSites(rows, undefined, false);
+    expect(seven.siteCount).toBe(2);
+    expect(seven.medianLift).toBeCloseTo(0.3);
+    expect(seven.headline).toMatch(/conversion lift across 2 sites/);
+    expect(seven.secondary.siteCount).toBe(3);
+    expect(seven.pipelineCheckNote).toMatch(/pricing/);
+    expect(seven.designedToLoseSites).toEqual(["pricing"]);
+
+    const eight = aggregateSites(rows, undefined, true);
+    expect(eight.siteCount).toBe(3);
+    expect(eight.medianLift).toBeCloseTo(0.2);
+    expect(eight.secondary.siteCount).toBe(2);
   });
 });
 

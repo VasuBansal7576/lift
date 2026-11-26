@@ -2,6 +2,7 @@ import { createServer, type Server } from "node:http";
 import { extname, resolve } from "node:path";
 import { readFile } from "node:fs/promises";
 import { isInsideRoot } from "../../shared/fs-path.ts";
+import { getSite, placeholderSiteConfig } from "../../shared/catalog.ts";
 import { ROOT } from "./config.ts";
 
 const MIME: Record<string, string> = {
@@ -17,14 +18,18 @@ export interface StaticServer {
   reused: boolean;
 }
 
-function overlayAllowMock(body: string): string {
-  let parsed: Record<string, unknown> = {};
-  try {
-    parsed = JSON.parse(body) as Record<string, unknown>;
-  } catch {
-    parsed = {};
-  }
+function overlayAllowMock(parsed: Record<string, unknown>): string {
   return JSON.stringify({ ...parsed, allowMock: true });
+}
+
+function configForRelative(relative: string): Record<string, unknown> | null {
+  const match = relative.match(/^([^/]+)\/config\.json$/);
+  if (!match) return null;
+  try {
+    return placeholderSiteConfig(getSite(match[1])) as unknown as Record<string, unknown>;
+  } catch {
+    return null;
+  }
 }
 
 export function serveSites(
@@ -51,7 +56,13 @@ export function serveSites(
     try {
       const raw = await readFile(filePath);
       if (allowMock && relative.endsWith("config.json")) {
-        const body = overlayAllowMock(raw.toString("utf8"));
+        let parsed: Record<string, unknown> = {};
+        try {
+          parsed = JSON.parse(raw.toString("utf8")) as Record<string, unknown>;
+        } catch {
+          parsed = configForRelative(relative) ?? {};
+        }
+        const body = overlayAllowMock(parsed);
         res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
         res.end(body);
         return;
@@ -59,6 +70,13 @@ export function serveSites(
       res.writeHead(200, { "Content-Type": MIME[extname(filePath)] ?? "text/plain" });
       res.end(raw);
     } catch {
+      if (allowMock && relative.endsWith("config.json")) {
+        const parsed = configForRelative(relative) ?? {};
+        const body = overlayAllowMock(parsed);
+        res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
+        res.end(body);
+        return;
+      }
       res.writeHead(404);
       res.end("not found");
     }

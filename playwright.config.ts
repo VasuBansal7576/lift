@@ -10,7 +10,7 @@ export default defineConfig({
     headless: true,
   },
   webServer: {
-    command: "node scripts/serve-site.mjs --port 4174 --allow-mock",
+    command: "npx tsx scripts/serve-site.ts --port 4174 --allow-mock",
     url: "http://127.0.0.1:4174",
     reuseExistingServer: !process.env.CI,
     timeout: 30_000,

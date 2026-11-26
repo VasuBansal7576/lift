@@ -56,6 +56,8 @@ export interface ArmStats {
   rate: number;
 }
 
+export type SrmSource = "flagsmith" | "lift";
+
 export interface ExperimentDecision {
   flag: string;
   decision: Decision;
@@ -64,6 +66,8 @@ export interface ExperimentDecision {
   lift: number | null;
   ciLow: number | null;
   ciHigh: number | null;
+  srmPValue: number | null;
+  srmSource: SrmSource | null;
   control: ArmStats;
   treatment: ArmStats;
   threshold: number;

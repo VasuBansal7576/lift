@@ -15,7 +15,7 @@ import {
   bayesianWinProbability,
   decideFromWinProbability,
   relativeLift,
-  srmPValue,
+  srmPValue as chiSquareSrm,
 } from "./stats.ts";
 
 export interface FlagsmithResultsPayload {
@@ -87,6 +87,7 @@ export interface ParsedFlagsmithWin {
   flagsmithControlN: number | null;
   flagsmithTreatmentN: number | null;
   srmPValue: number | null;
+  srmSource: "flagsmith" | "lift" | null;
   usable: boolean;
   rejectReason?: "error" | "stale" | "srm" | "ingestion";
 }
@@ -122,6 +123,8 @@ export function parseFlagsmithWin(
       ? controlN + (treatment?.n ?? 0)
       : null;
 
+  const flagsmithSrm =
+    typeof payload?.srm_p_value === "number" ? payload.srm_p_value : null;
   const parsed: ParsedFlagsmithWin = {
     chanceToWin: arm.chance_to_win,
     lift: typeof arm.lift === "number" ? arm.lift : null,
@@ -131,7 +134,8 @@ export function parseFlagsmithWin(
     flagsmithN,
     flagsmithControlN: variants?.control ? controlN : null,
     flagsmithTreatmentN: treatment?.n ?? null,
-    srmPValue: typeof payload?.srm_p_value === "number" ? payload.srm_p_value : null,
+    srmPValue: flagsmithSrm,
+    srmSource: flagsmithSrm !== null ? "flagsmith" : null,
     usable: true,
   };
 
@@ -177,12 +181,13 @@ export function parseFlagsmithWin(
     parsed.flagsmithControlN !== null &&
     parsed.flagsmithTreatmentN !== null
   ) {
-    const liftSrm = srmPValue(
+    const liftSrm = chiSquareSrm(
       parsed.flagsmithControlN,
       parsed.flagsmithTreatmentN,
       opts?.expectedControlShare ?? 0.5,
     );
     parsed.srmPValue = liftSrm;
+    parsed.srmSource = "lift";
     if (liftSrm < 0.01) {
       parsed.usable = false;
       parsed.rejectReason = "srm";
@@ -289,9 +294,7 @@ export function decideExperiment(input: {
     lift = parsed.lift ?? null;
     ciLow = parsed.ciLow;
     ciHigh = parsed.ciHigh;
-    notes.push(
-      `Flagsmith srm_p_value=${parsed.srmPValue} is below 0.01; declining to decide (sample-ratio mismatch).`,
-    );
+    notes.push(srmRejectNote(parsed));
   } else if (parsed?.rejectReason === "ingestion") {
     source = "flagsmith";
     winProbabilityTreatment = parsed.chanceToWin;
@@ -353,6 +356,13 @@ export function decideExperiment(input: {
     }
   }
 
+  let decisionSrm = parsed?.srmPValue ?? null;
+  let decisionSrmSource = parsed?.srmSource ?? null;
+  if (decisionSrm === null) {
+    decisionSrm = chiSquareSrm(control.visitors, treatment.visitors);
+    decisionSrmSource = "lift";
+  }
+
   return {
     flag: input.flag,
     decision,
@@ -361,11 +371,20 @@ export function decideExperiment(input: {
     lift,
     ciLow,
     ciHigh,
+    srmPValue: decisionSrm,
+    srmSource: decisionSrmSource,
     control,
     treatment,
     threshold: input.threshold,
     notes,
   };
+}
+
+function srmRejectNote(parsed: ParsedFlagsmithWin): string {
+  if (parsed.srmSource === "lift") {
+    return `Lift-side chi-square SRM p-value=${parsed.srmPValue} is below 0.01; declining to decide (sample-ratio mismatch).`;
+  }
+  return `Flagsmith srm_p_value=${parsed.srmPValue} is below 0.01; declining to decide (sample-ratio mismatch).`;
 }
 
 export function shouldApplyDecision(

@@ -2,18 +2,23 @@ import { readdirSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { SITES } from "../../shared/catalog.ts";
+import { SITES, expectedLiftByConstruction } from "../../shared/catalog.ts";
 import {
   aggregateSites,
   siteRowFromDocument,
   type SiteRow,
 } from "../../shared/aggregate.ts";
-import { historicLists } from "../../shared/experiment-history.ts";
+import { ABANDONED_REASON, historicLists } from "../../shared/experiment-history.ts";
+import { relativeLift } from "../../agent/src/stats.ts";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 
 function readJson<T>(path: string): T {
   return JSON.parse(readFileSync(path, "utf8")) as T;
+}
+
+function fleetFixtureNames(dir: string): string[] {
+  return readdirSync(dir).filter((name) => name.startsWith("flagsmith-results-fleet-"));
 }
 
 describe("committed fleet fixtures", () => {
@@ -25,6 +30,8 @@ describe("committed fleet fixtures", () => {
         pooledLift: number | null;
         pooledControl: { visitors: number; conversions: number };
         pooledTreatment: { visitors: number; conversions: number };
+        secondary?: { medianLift: number | null; pooledLift: number | null; siteCount: number };
+        siteCount: number;
       };
       headline: { source: string; copy: string };
       abandonedExperiments: { id: number }[];
@@ -33,6 +40,9 @@ describe("committed fleet fixtures", () => {
 
     expect(results.headline.source).toBe("lift_median_of_flagsmith_lifts");
     expect(results.rows).toHaveLength(SITES.length);
+    expect(results.headline.copy).toMatch(/conversion lift across 7 sites/);
+    expect(results.aggregate.siteCount).toBe(7);
+    expect(results.aggregate.secondary?.siteCount).toBe(8);
 
     const fromSites: SiteRow[] = [];
     for (const site of SITES) {
@@ -42,8 +52,11 @@ describe("committed fleet fixtures", () => {
         experimentId: number;
         producedBy?: string;
         commitSha?: string;
+        expectedLift?: number | null;
+        blockedShare?: number | null;
+        designedToLose?: boolean;
         flagsmithResults: { results?: { payload?: { metrics?: Array<{ variants?: Record<string, { n?: number; sum?: number }> }> } } };
-        decision: SiteRow["decision"] extends never ? never : {
+        decision: {
           flag: string;
           decision: SiteRow["decision"];
           source: SiteRow["source"];
@@ -51,6 +64,8 @@ describe("committed fleet fixtures", () => {
           lift: number | string | null;
           ciLow: number | null;
           ciHigh: number | null;
+          srmPValue?: number | null;
+          srmSource?: SiteRow["srmSource"];
           control: SiteRow["control"];
           treatment: SiteRow["treatment"];
         };
@@ -66,8 +81,12 @@ describe("committed fleet fixtures", () => {
       expect(row?.decision).toBe(doc.decision.decision);
       expect(row?.producedBy).toBeTruthy();
       expect(row?.commitSha).toBeTruthy();
+      expect(doc.decision.srmPValue, site.id).toEqual(expect.any(Number));
+      expect(doc.decision.srmSource).toMatch(/^(flagsmith|lift)$/);
+      expect(doc.expectedLift).toBeCloseTo(expectedLiftByConstruction(site), 10);
       if (site.id === "pricing") {
         expect(doc.frictionDisclosure).toMatch(/60% of treatment conversions are dropped by construction/);
+        expect(row?.designedToLose).toBe(true);
       }
       fromSites.push(
         siteRowFromDocument({
@@ -88,10 +107,14 @@ describe("committed fleet fixtures", () => {
     expect(agg.pooledTreatment.visitors).toBe(results.aggregate.pooledTreatment.visitors);
 
     const fixtureDir = resolve(ROOT, "tests/fixtures");
-    const fleetFixtures = readdirSync(fixtureDir).filter((name) =>
-      name.startsWith("flagsmith-results-fleet-"),
+    const supersededDir = resolve(ROOT, "tests/fixtures/superseded");
+    const currentIds = new Set(
+      results.rows.map((r) => r.experimentId).filter((id): id is number => typeof id === "number"),
     );
+    const supersededIds = new Set(results.supersededExperiments?.map((e) => e.id) ?? []);
+    const fleetFixtures = fleetFixtureNames(fixtureDir);
     expect(fleetFixtures.length).toBe(SITES.length);
+
     for (const name of fleetFixtures) {
       const match = name.match(/^flagsmith-results-fleet-([a-z]+)-(\d+)\.json$/);
       expect(match, name).toBeTruthy();
@@ -112,15 +135,28 @@ describe("committed fleet fixtures", () => {
       expect(fixtureVariants?.treatment?.n).toBe(row?.treatment.visitors);
       expect(fixtureVariants?.control?.sum).toBe(row?.control.conversions);
       expect(fixtureVariants?.treatment?.sum).toBe(row?.treatment.conversions);
+      const controlRate = (fixtureVariants?.control?.sum ?? 0) / (fixtureVariants?.control?.n ?? 1);
+      const treatmentRate = (fixtureVariants?.treatment?.sum ?? 0) / (fixtureVariants?.treatment?.n ?? 1);
+      const fromCounts = relativeLift(treatmentRate, controlRate);
+      expect(fromCounts, name).not.toBeNull();
+      expect(Math.abs((fromCounts ?? NaN) - (row?.lift ?? NaN))).toBeLessThan(1e-9);
+    }
+
+    for (const name of fleetFixtureNames(supersededDir)) {
+      const match = name.match(/^flagsmith-results-fleet-([a-z]+)-(\d+)\.json$/);
+      expect(match, name).toBeTruthy();
+      const experimentId = Number(match?.[2]);
+      expect(currentIds.has(experimentId), name).toBe(false);
+      expect(supersededIds.has(experimentId), `superseded fixture ${name}`).toBe(true);
     }
 
     const historic = historicLists(
       results.rows.map((r) => r.experimentId).filter((id): id is number => typeof id === "number"),
     );
     const abandonedIds = new Set(results.abandonedExperiments?.map((e) => e.id) ?? []);
-    const supersededIds = new Set(results.supersededExperiments?.map((e) => e.id) ?? []);
     for (const row of historic.abandonedExperiments) {
       expect(abandonedIds.has(row.id), `abandoned ${row.id}`).toBe(true);
+      expect(row.reason).toBe(ABANDONED_REASON);
     }
     for (const row of historic.supersededExperiments) {
       expect(supersededIds.has(row.id), `superseded ${row.id}`).toBe(true);

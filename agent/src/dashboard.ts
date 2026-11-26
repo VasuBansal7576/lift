@@ -1,6 +1,11 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import { getSite, PRICING_FRICTION_DISCLOSURE } from "../../shared/catalog.ts";
+import {
+  blockedPersonaShare,
+  expectedLiftByConstruction,
+  getSite,
+  PRICING_FRICTION_DISCLOSURE,
+} from "../../shared/catalog.ts";
 import { gitCommitSha } from "../../shared/git.ts";
 import type { ProducedBy } from "../../shared/aggregate.ts";
 import {
@@ -167,9 +172,14 @@ export function buildResultsDocument(input: {
     );
   }
   const siteDef = getSite(input.site ?? "checkout");
+  const expectedLift = expectedLiftByConstruction(siteDef, mix);
+  const blockedShare = blockedPersonaShare(siteDef, mix);
   if (siteDef.harmfulFix?.designedToLose) {
     notes.push(siteDef.harmfulFix.note);
   }
+  notes.push(
+    `Expected lift by construction is ${formatSignedPct(expectedLift) ?? "n/a"} at ${(blockedShare * 100).toFixed(0)}% blocked (blocked personas convert 0% in control; mouse users are never blocked).`,
+  );
   if (input.verification?.usedFallback && input.verification.environmentDefaultPath) {
     notes.push(
       `Rollout verification used environment default path ${input.verification.environmentDefaultPath}.`,
@@ -228,6 +238,9 @@ export function buildResultsDocument(input: {
     site: input.site ?? "checkout",
     sites: 1,
     flag: input.decision.flag,
+    expectedLift,
+    blockedShare,
+    designedToLose: Boolean(siteDef.harmfulFix?.designedToLose),
     frictionDisclosure:
       siteDef.harmfulFix?.designedToLose ? PRICING_FRICTION_DISCLOSURE : null,
     experimentId: input.experimentId ?? null,

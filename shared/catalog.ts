@@ -1,5 +1,12 @@
 import barriersJson from "./barriers.json" with { type: "json" };
-import type { Barrier, BarrierId, Persona } from "./types.ts";
+import {
+  DEFAULT_PERSONA_MIX,
+  PERSONAS,
+  type Barrier,
+  type BarrierId,
+  type Persona,
+  type PersonaMix,
+} from "./types.ts";
 
 export interface SiteBarrier extends Barrier {
   siteFlag: string;
@@ -562,4 +569,51 @@ export function barrierFlagMap(site: SiteDef): Record<string, string> {
   const map: Record<string, string> = {};
   for (const b of site.barriers) map[b.id] = b.flag;
   return map;
+}
+
+/** Share of the assumed mix whose control path is blocked. Mouse is never blocked. */
+export function blockedPersonaShare(
+  site: SiteDef,
+  mix: PersonaMix = DEFAULT_PERSONA_MIX,
+): number {
+  let share = 0;
+  for (const persona of PERSONAS) {
+    if ((site.controlBlocked[persona] ?? []).length > 0) share += mix[persona];
+  }
+  return share;
+}
+
+/**
+ * Expected relative lift by construction: blocked personas convert 0% in
+ * control, mouse users are never blocked, treatment unblocks everyone.
+ * baseline cancels, so lift ≈ 1/(1 − blocked share) − 1.
+ * Pricing also multiplies treatment by frictionKeepRate.
+ */
+export function expectedLiftByConstruction(
+  site: SiteDef,
+  mix: PersonaMix = DEFAULT_PERSONA_MIX,
+): number {
+  const blocked = blockedPersonaShare(site, mix);
+  const unblocked = 1 - blocked;
+  if (unblocked <= 0) return Number.POSITIVE_INFINITY;
+  if (site.harmfulFix?.designedToLose) {
+    return site.harmfulFix.frictionKeepRate / unblocked - 1;
+  }
+  return 1 / unblocked - 1;
+}
+
+/** Client config without secrets. Bootstrap fills the environment key. */
+export function placeholderSiteConfig(site: SiteDef) {
+  return {
+    site: site.id,
+    flagsmithApiUrl: "",
+    flagsmithEventsUrl: "",
+    flagsmithEnvironmentKey: "",
+    flagName: site.flagName,
+    metricEvent: site.metricEvent,
+    allowMock: false,
+    simulatedTrafficLabel: "SIMULATED TRAFFIC",
+    barrierFlags: site.barriers.map((b) => b.flag),
+    barrierFlagMap: barrierFlagMap(site),
+  };
 }

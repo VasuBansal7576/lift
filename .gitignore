@@ -9,7 +9,8 @@ flagsmith.env
 data/*.jsonl
 data/*.json
 !data/.gitkeep
-sites/checkout/config.json
+sites/*/config.json
+.vitest/
 *.log
 .DS_Store
 .vite/

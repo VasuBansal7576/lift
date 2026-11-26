@@ -116,6 +116,11 @@ describe("buildResultsDocument", () => {
     expect(doc.headline.copy).toMatch(/P\(win\) >99\.9%/);
     expect(doc.producedBy).toBe("fleet");
     expect(doc.commitSha).toBeTruthy();
+    expect(doc.expectedLift).toBeCloseTo(1 / 0.7 - 1);
+    expect(doc.blockedShare).toBeCloseTo(0.3);
+    expect(doc.designedToLose).toBe(false);
+    expect(doc.decision.srmSource).toMatch(/^(flagsmith|lift)$/);
+    expect(typeof doc.decision.srmPValue).toBe("number");
     expect(doc.rolloutVerification).toEqual({
       applied: true,
       n: 20,

@@ -41,6 +41,10 @@ export function mixLabel(mix: PersonaMix): string {
   return PERSONAS.map((p) => `${p} ${(mix[p] * 100).toFixed(0)}%`).join(", ");
 }
 
+export function compactMix(mix: PersonaMix): string {
+  return PERSONAS.map((p) => Math.round(mix[p] * 100)).join("/");
+}
+
 export function realisedMix(personas: Persona[]): PersonaMix {
   const mix: PersonaMix = { mouse: 0, keyboard: 0, "screen-reader": 0, "low-vision": 0 };
   if (personas.length === 0) return mix;

@@ -9,7 +9,7 @@ import {
 } from "../../agent/src/payloads.ts";
 import { ensureMetric, ensureTreatmentKey } from "../../agent/src/bootstrap.ts";
 import { FlagsmithAdmin } from "../../agent/src/flagsmith-admin.ts";
-import type { LiftConfig } from "../../agent/src/config.ts";
+import { clampWinThreshold, type LiftConfig } from "../../agent/src/config.ts";
 
 function cfg(): LiftConfig {
   return {
@@ -37,6 +37,9 @@ function cfg(): LiftConfig {
     allowMock: false,
     allowLocalDecision: false,
     resultsWaitMs: 0,
+    appendVisits: false,
+    continueUntilDecision: false,
+    maxArmN: 600,
     personaMix: {
       mouse: 0.7,
       keyboard: 0.1,
@@ -178,5 +181,16 @@ describe("ensureMetric", () => {
     const admin = new FlagsmithAdmin(cfg());
     const metric = await ensureMetric(admin, "env-key", "checkout_completed");
     expect(metric.id).toBe(2);
+  });
+});
+
+describe("clampWinThreshold", () => {
+  it("clamps to exclusive (0.5, 1)", () => {
+    expect(clampWinThreshold(0.5)).toBe(0.501);
+    expect(clampWinThreshold(0.4)).toBe(0.501);
+    expect(clampWinThreshold(1)).toBe(0.999);
+    expect(clampWinThreshold(1.2)).toBe(0.999);
+    expect(clampWinThreshold(0.95)).toBe(0.95);
+    expect(clampWinThreshold(Number.NaN)).toBe(0.95);
   });
 });

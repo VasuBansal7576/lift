@@ -76,6 +76,10 @@ export class FlagsmithAdmin {
     return this.request<T>("PUT", path, body);
   }
 
+  delete<T>(path: string) {
+    return this.request<T>("DELETE", path);
+  }
+
   async envKey(): Promise<string> {
     if (!this.cfg.environmentKey) {
       throw new Error("FLAGSMITH_ENVIRONMENT_KEY is required");

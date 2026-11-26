@@ -57,6 +57,8 @@ export interface ExperimentDecision {
   source: "flagsmith" | "local_bayesian";
   winProbabilityTreatment: number;
   lift: number | null;
+  ciLow: number | null;
+  ciHigh: number | null;
   control: ArmStats;
   treatment: ArmStats;
   threshold: number;

@@ -14,6 +14,16 @@ function env(name: string, fallback = ""): string {
   return (process.env[name] ?? fallback).trim();
 }
 
+function defaultRunId(): string {
+  return new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14);
+}
+
+/** Exclusive (0.5, 1) so a coin-flip or a certainty cannot be a win threshold. */
+export function clampWinThreshold(n: number): number {
+  if (!Number.isFinite(n)) return 0.95;
+  return Math.min(0.999, Math.max(0.501, n));
+}
+
 function envNumber(name: string, fallback: number): number {
   const raw = env(name);
   if (!raw) return fallback;
@@ -56,8 +66,11 @@ export function loadConfig() {
     siteUrl: env("LIFT_SITE_URL", "http://127.0.0.1:4174").replace(/\/$/, ""),
     trafficN: Math.max(8, Math.floor(envNumber("LIFT_TRAFFIC_N", 120))),
     trafficSeed: envNumber("LIFT_TRAFFIC_SEED", 20261126),
-    trafficRunId: env("LIFT_RUN_ID") || `r${envNumber("LIFT_TRAFFIC_SEED", 20261126)}`,
-    winThreshold: envNumber("LIFT_WIN_THRESHOLD", 0.95),
+    trafficRunId: env("LIFT_RUN_ID") || defaultRunId(),
+    winThreshold: clampWinThreshold(envNumber("LIFT_WIN_THRESHOLD", 0.95)),
+    appendVisits: env("LIFT_APPEND_VISITS") === "true",
+    continueUntilDecision: env("LIFT_CONTINUE_UNTIL") === "true",
+    maxArmN: Math.max(50, Math.floor(envNumber("LIFT_MAX_ARM_N", 600))),
     baselineConvert: Math.min(1, Math.max(0, envNumber("LIFT_BASELINE_CONVERT", 0.75))),
     allowMock: env("LIFT_ALLOW_MOCK", "false") === "true",
     allowLocalDecision: env("LIFT_ALLOW_LOCAL_DECISION", "false") === "true",

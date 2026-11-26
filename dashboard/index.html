@@ -18,14 +18,14 @@
 </head>
 <body>
   <p class="banner">Simulated traffic — Playwright persona bots, not humans</p>
-  <p class="note">Hypothesis: fixing accessibility barriers raises conversions. Flagsmith assigns arms, records exposures/conversions, and rolls out the winner.</p>
+  <p class="note" id="intro">Hypothesis: fixing accessibility barriers raises conversions. Flagsmith assigns arms, records exposures/conversions, and reports whether treatment rolled out, was pulled, or is still running.</p>
   <h1>Lift</h1>
   <p id="headline" class="headline">Loading results…</p>
   <p id="mix" class="note"></p>
   <p id="meta" class="note"></p>
   <p id="dashboard-link" class="note"></p>
   <h2>Experiment flag</h2>
-  <table id="flag-table"><thead><tr><th>Flag</th><th>Control</th><th>Treatment</th><th>Win P(treatment)</th><th>Decision</th></tr></thead><tbody></tbody></table>
+  <table id="flag-table"><thead><tr><th>Flag</th><th>Control</th><th>Treatment</th><th>Win P(treatment)</th><th>95% CI</th><th>Decision</th></tr></thead><tbody></tbody></table>
   <h2>Personas</h2>
   <table id="persona-table"><thead><tr><th>Persona</th><th>Control</th><th>Treatment</th></tr></thead><tbody></tbody></table>
   <h2>Barriers shipped behind Flagsmith</h2>
@@ -49,6 +49,11 @@
       .then((r) => r.json())
       .then((data) => {
         document.getElementById("headline").textContent = data.headline.copy;
+        const intro = document.getElementById("intro");
+        if (intro) {
+          intro.textContent =
+            `Hypothesis: fixing accessibility barriers raises conversions. ${data.outcome || "The experiment outcome is in the headline."}`;
+        }
         document.getElementById("mix").textContent =
           `Assumed mix: ${data.personaMixLabel || ""}. Realised this run: ${data.realisedMixLabel || ""}. ${data.personaMixNote || ""}`;
         document.getElementById("meta").textContent =
@@ -75,6 +80,13 @@
           tr.appendChild(td(rate(flag.control)));
           tr.appendChild(td(rate(flag.treatment)));
           tr.appendChild(td(`${pct(flag.winProbabilityTreatment)} (${flag.source})`));
+          const ciLow = flag.ciLow;
+          const ciHigh = flag.ciHigh;
+          const ci =
+            typeof ciLow === "number" && typeof ciHigh === "number"
+              ? `${ciLow < 0 ? "−" : "+"}${Math.abs(ciLow * 100).toFixed(1)}% to ${ciHigh < 0 ? "−" : "+"}${Math.abs(ciHigh * 100).toFixed(1)}%`
+              : "n/a";
+          tr.appendChild(td(ci));
           tr.appendChild(td(flag.decision));
           body.appendChild(tr);
         }

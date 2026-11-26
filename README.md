@@ -39,13 +39,11 @@ Mouse users still convert in control (they can hover, click the glyph, fill by p
 
 The **low-vision / contrast-threshold persona (simulated)** uses a real 200% zoom (`deviceScaleFactor` + CSS zoom that affects layout) as a **realism step**. The **outcome is decided by the WCAG 4.5:1 contrast threshold** on computed colours, not by whether the zoom itself blocked the task. Unparsed colours throw; they are not skipped. Translucent colours are composited over the background or rejected.
 
-Fixes reuse Curb Cut’s repair ideas (`mirrorHoverToFocus`, `addLabel`, `makeFocusable` / native button, `setContrast`) in source rather than a runtime patch DSL.
-
 The scanner looks for `data-barrier` markers in the fixture HTML. It does **not** crawl unknown sites. Playwright also runs axe-core against control and reports the violations it finds.
 
 ## Persona mix (assumption, not data)
 
-Default: **mouse 70%, keyboard 10%, screen-reader 10%, low-vision 10%** (`LIFT_PERSONA_MIX`). This is a modelling assumption, not a measurement of the web. **Lift is a function of the assumed share of keyboard, screen-reader and low-vision users** — those personas are blocked in control and succeed in treatment (subject to a seeded ~75% baseline completion probability that applies to both arms when unblocked). Flagsmith’s floors are **50 identities and 5 conversions per arm**, not a reason to pick 10% minority weights. The assumed mix and this run’s realised mix are shown next to the dashboard headline.
+Default: **mouse 70%, keyboard 10%, screen-reader 10%, low-vision 10%** (`LIFT_PERSONA_MIX`). This is a modelling assumption, not a measurement of the web. **Lift is a function of the assumed share of keyboard, screen-reader and low-vision users** — those personas are blocked in control and succeed in treatment (subject to a seeded ~75% baseline completion probability that applies to both arms when unblocked). **Lift’s own floors** (not Flagsmith’s) are **50 identities and 5 conversions per arm** — they are not a reason to pick 10% minority weights. The assumed mix and this run’s realised mix are shown next to the dashboard headline.
 
 ## Flagsmith features used
 
@@ -59,7 +57,7 @@ Designed against [Flagsmith Experimentation](https://docs.flagsmith.com/experime
 | Native **Experiments** + **Metrics** + Identities | **Yes** on the Lift free-plan org | Yes (`EXPERIMENTATION_ENABLED=true`) |
 | Managed Flagsmith warehouse (`warehouse_type: flagsmith`) | **Cloud-only** | Self-host: `warehouse_type: postgres` + `config.source: flagsmith_database` |
 | SDK events | `https://events.api.flagsmith.com/` | `http://localhost:8000/api/` |
-| Win probability (`chance_to_win`) | After warehouse is **Connected** and ≥50 identities / 5 conversions per arm | Same API |
+| Win probability (`chance_to_win`) | After warehouse is **Connected**. Lift waits for its own 50/5 floors before treating `chance_to_win` as a decision | Same API |
 | Complete → rollout | `POST .../complete/` then GET to assert `rollout_decision` | Yes |
 
 **Gap (self-host vs cloud):** native Experiments **is** on OSS. The missing piece is the **managed warehouse**. If the warehouse is not **Connected**, bootstrap warns and prints how to click **Send your first event**. Local Beta-Binomial math is labelled `local_bayesian` and **does not complete** the Flagsmith experiment unless `LIFT_ALLOW_LOCAL_DECISION=true`.
@@ -106,7 +104,7 @@ npm run experiment
 ```bash
 npm run typecheck
 npm run test:unit    # payloads, decide/complete, stats, scanner, contrast, assignVariant
-npm run test:e2e     # URL override personas + real Flagsmith JS path + axe-core on control
+npm run test:e2e     # URL override personas + stubbed Flagsmith JS path + per-barrier flag + axe-core on control
 ```
 
 CI runs typecheck, unit, and Playwright. E2E uses `scripts/serve-site.mjs --allow-mock` so `?lift_variant=` is honoured. The live page ignores that query unless `config.allowMock` is true.
@@ -136,6 +134,6 @@ CI runs typecheck, unit, and Playwright. E2E uses `scripts/serve-site.mjs --allo
 
 - Bots, not humans. Every result surface says so.
 - First experiment is **one bundled flag**. Per-barrier flags are wired on the page but not concurrent Flagsmith experiments.
-- Flagsmith will show **Collecting data** until **50 identities and 5 conversions per arm**. Default `LIFT_TRAFFIC_N=120`. Re-runs set `LIFT_RUN_ID` (and usually a new seed) so identities are new and a completed experiment is replaced.
+- Lift waits for **50 identities and 5 conversions per arm** (Lift’s floors, not Flagsmith’s) before treating `chance_to_win` as a decision. Default `LIFT_TRAFFIC_N=120`. If `LIFT_RUN_ID` is unset, it defaults to a compact UTC timestamp so re-runs get fresh identities.
 - Results refresh is at most once per 5 minutes. Lift polls with backoff until `chance_to_win` exists.
 - Completing from local math requires `LIFT_ALLOW_LOCAL_DECISION=true` and is labelled everywhere.

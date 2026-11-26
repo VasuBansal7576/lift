@@ -73,22 +73,82 @@ export function summariseVisits(visits: VisitRecord[]) {
   return byVariant;
 }
 
+export interface ParsedFlagsmithWin {
+  chanceToWin: number;
+  lift: number | null;
+  ciLow: number | null;
+  ciHigh: number | null;
+  asOf: string | null;
+  flagsmithN: number | null;
+  srmPValue: number | null;
+  usable: boolean;
+  rejectReason?: "error" | "stale" | "srm";
+}
+
 export function parseFlagsmithWin(
   envelope: FlagsmithResultsEnvelope | null,
-  treatmentKey = "treatment",
-): { chanceToWin: number; lift: number | null; asOf: string | null } | null {
+  opts?: {
+    treatmentKey?: string;
+    localN?: number;
+    trafficEndedAt?: string | number | Date;
+  },
+): ParsedFlagsmithWin | null {
   const payload = envelope?.results?.payload;
   const inference = payload?.metrics?.[0]?.inference;
   if (!inference) return null;
+  const treatmentKey = opts?.treatmentKey ?? "treatment";
   const arm =
     inference[treatmentKey] ??
     Object.entries(inference).find(([key]) => key !== "control")?.[1];
   if (!arm || typeof arm.chance_to_win !== "number") return null;
-  return {
+
+  const variants = payload?.metrics?.[0]?.variants;
+  const controlN = variants?.control?.n ?? 0;
+  const treatment =
+    variants?.treatment ??
+    (variants
+      ? Object.entries(variants).find(([key]) => key !== "control")?.[1]
+      : undefined);
+  const flagsmithN =
+    variants && (controlN > 0 || (treatment?.n ?? 0) > 0)
+      ? controlN + (treatment?.n ?? 0)
+      : null;
+
+  const parsed: ParsedFlagsmithWin = {
     chanceToWin: arm.chance_to_win,
     lift: typeof arm.lift === "number" ? arm.lift : null,
+    ciLow: typeof arm.ci_low === "number" ? arm.ci_low : null,
+    ciHigh: typeof arm.ci_high === "number" ? arm.ci_high : null,
     asOf: envelope?.results?.as_of ?? null,
+    flagsmithN,
+    srmPValue: typeof payload?.srm_p_value === "number" ? payload.srm_p_value : null,
+    usable: true,
   };
+
+  if (envelope?.results?.last_error_at) {
+    parsed.usable = false;
+    parsed.rejectReason = "error";
+    return parsed;
+  }
+  if (parsed.srmPValue !== null && parsed.srmPValue < 0.01) {
+    parsed.usable = false;
+    parsed.rejectReason = "srm";
+    return parsed;
+  }
+
+  const localN = opts?.localN ?? 0;
+  const asOfMs = parsed.asOf ? Date.parse(parsed.asOf) : NaN;
+  const endedAt = opts?.trafficEndedAt
+    ? new Date(opts.trafficEndedAt).getTime()
+    : NaN;
+  const asOfAfterTraffic = Number.isFinite(asOfMs) && Number.isFinite(endedAt) && asOfMs >= endedAt;
+  if (localN > 0 && !asOfAfterTraffic) {
+    if (flagsmithN === null || flagsmithN < localN) {
+      parsed.usable = false;
+      parsed.rejectReason = "stale";
+    }
+  }
+  return parsed;
 }
 
 export function floorsMet(
@@ -101,7 +161,9 @@ export function floorsMet(
     byVariant.treatment.visitors >= IDENTITY_FLOOR &&
     byVariant.control.conversions >= CONVERSION_FLOOR &&
     byVariant.treatment.conversions >= CONVERSION_FLOOR;
-  const variants = envelope?.results?.payload?.metrics?.[0]?.variants;
+  const metric = envelope?.results?.payload?.metrics?.[0];
+  if (metric?.inference && !metric.variants) return false;
+  const variants = metric?.variants;
   if (!variants) return localOk;
   const control = variants.control;
   const treatment =
@@ -137,8 +199,11 @@ export function decideExperiment(input: {
     "All traffic is SIMULATED (Playwright persona bots, not humans). Outcomes follow the persona model, not evidence about real users.",
   ];
 
-  const parsed = parseFlagsmithWin(input.flagsmith ?? null);
+  const parsed = parseFlagsmithWin(input.flagsmith ?? null, {
+    localN: input.visits.length,
+  });
   const collecting = !floorsMet(input.visits, input.flagsmith);
+  const thresholdPct = `${(input.threshold * 100).toFixed(0)}%`;
 
   let source: ExperimentDecision["source"] = "local_bayesian";
   let winProbabilityTreatment = bayesianWinProbability(
@@ -148,18 +213,37 @@ export function decideExperiment(input: {
     input.statsSeed ?? 20261126,
   );
   let lift: number | null = relativeLift(treatment.rate, control.rate) ?? null;
+  let ciLow: number | null = null;
+  let ciHigh: number | null = null;
 
-  if (parsed && !collecting) {
+  if (parsed?.usable && !collecting) {
     source = "flagsmith";
     winProbabilityTreatment = parsed.chanceToWin;
     lift = parsed.lift ?? null;
+    ciLow = parsed.ciLow;
+    ciHigh = parsed.ciHigh;
     notes.push(
       "Win probability from Flagsmith Experimentation (chance_to_win on the results payload).",
     );
     if (parsed.asOf) notes.push(`Flagsmith results as of ${parsed.asOf}.`);
+  } else if (parsed?.rejectReason === "srm") {
+    source = "flagsmith";
+    winProbabilityTreatment = parsed.chanceToWin;
+    lift = parsed.lift ?? null;
+    ciLow = parsed.ciLow;
+    ciHigh = parsed.ciHigh;
+    notes.push(
+      `Flagsmith srm_p_value=${parsed.srmPValue} is below 0.01; declining to decide (sample-ratio mismatch).`,
+    );
+  } else if (parsed && !parsed.usable) {
+    notes.push(
+      parsed.rejectReason === "error"
+        ? "Flagsmith results snapshot has last_error_at set; treating it as unusable."
+        : "Flagsmith results look stale (n below local visits and as_of not after traffic ended). Using local Beta-Binomial.",
+    );
   } else if (parsed && collecting) {
     notes.push(
-      "Flagsmith results exist but a variant is still under the 50-identity / 5-conversion floor, so Lift uses a local Beta-Binomial win probability.",
+      "Flagsmith results exist but a variant is still under Lift's 50-identity / 5-conversion-per-arm floor, so Lift uses a local Beta-Binomial win probability.",
     );
   } else {
     notes.push(
@@ -167,17 +251,20 @@ export function decideExperiment(input: {
     );
   }
 
-  const decision = decideFromWinProbability(
+  let decision = decideFromWinProbability(
     winProbabilityTreatment,
     input.threshold,
   );
+  if (parsed?.rejectReason === "srm") {
+    decision = "keep_running";
+  }
 
   switch (decision) {
     case "rollout_treatment":
-      notes.push("Treatment wins under the 95% chance-to-be-best rule.");
+      notes.push(`Treatment wins under the ${thresholdPct} chance-to-be-best rule.`);
       break;
     case "pull_to_control":
-      notes.push("Treatment loses under the 95% chance-to-be-best rule.");
+      notes.push(`Treatment loses under the ${thresholdPct} chance-to-be-best rule.`);
       break;
     case "keep_running":
       notes.push("Inconclusive: leave the experiment running.");
@@ -206,6 +293,8 @@ export function decideExperiment(input: {
     source,
     winProbabilityTreatment,
     lift,
+    ciLow,
+    ciHigh,
     control,
     treatment,
     threshold: input.threshold,
@@ -254,6 +343,7 @@ export async function waitForFlagsmithResults(input: {
   experimentId: number;
   visits: VisitRecord[];
   waitMs: number;
+  trafficEndedAt?: string | number | Date;
   sleep?: (ms: number) => Promise<void>;
   now?: () => number;
 }): Promise<FlagsmithResultsEnvelope | null> {
@@ -269,8 +359,11 @@ export async function waitForFlagsmithResults(input: {
     const refresh = lastRefresh === 0 || t - lastRefresh >= REFRESH_THROTTLE_MS;
     latest = await fetchFlagsmithResults(input.experimentId, { refresh });
     if (refresh) lastRefresh = t;
-    const parsed = parseFlagsmithWin(latest);
-    if (parsed && floorsMet(input.visits, latest)) return latest;
+    const parsed = parseFlagsmithWin(latest, {
+      localN: input.visits.length,
+      trafficEndedAt: input.trafficEndedAt,
+    });
+    if (parsed?.usable && floorsMet(input.visits, latest)) return latest;
     if (t >= deadline) return latest;
     const wait = Math.min(delay, Math.max(0, deadline - t));
     if (wait <= 0) return latest;
@@ -362,6 +455,7 @@ export async function applyDecision(
   deps?: {
     evaluateIdentity?: typeof evaluateIdentityVariant;
     setDefault?: typeof setEnvironmentDefault;
+    allowLocalDecision?: boolean;
   },
 ): Promise<void> {
   const cfg = loadConfig();
@@ -369,12 +463,19 @@ export async function applyDecision(
   if (!state || !cfg.adminToken || !cfg.environmentKey) {
     throw new Error("Bootstrap state and Flagsmith admin credentials are required to roll out");
   }
+  if (decision.decision === "keep_running") return;
+  const allowLocal = deps?.allowLocalDecision ?? cfg.allowLocalDecision;
+  if (decision.source !== "flagsmith" && !allowLocal) {
+    process.stderr.write(
+      "Not completing: source is local_bayesian. Set LIFT_ALLOW_LOCAL_DECISION=true to apply local math.\n",
+    );
+    return;
+  }
+
   const admin = new FlagsmithAdmin(cfg);
   const { data: experiment } = await admin.get<ExperimentRecord>(
     `/environments/${cfg.environmentKey}/experiments/${state.experimentId}/`,
   );
-
-  if (decision.decision === "keep_running") return;
   if (experiment.status !== "running") {
     throw new Error(
       `Refusing to complete experiment ${state.experimentId}: status is ${experiment.status}, expected running`,
@@ -454,9 +555,7 @@ async function main() {
     allowLocalDecision: cfg.allowLocalDecision,
     statsSeed: cfg.trafficSeed,
   });
-  if (shouldApplyDecision(decision, cfg.allowLocalDecision)) {
-    await applyDecision(decision);
-  }
+  await applyDecision(decision);
   process.stdout.write(`${JSON.stringify({ decision, flagsmith }, null, 2)}\n`);
 }
 

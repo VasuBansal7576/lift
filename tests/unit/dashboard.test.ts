@@ -4,6 +4,7 @@ import { decideExperiment } from "../../agent/src/decide.ts";
 import type { VisitRecord } from "../../shared/types.ts";
 import { DEFAULT_PERSONA_MIX } from "../../shared/types.ts";
 import fixture from "../fixtures/flagsmith-results-win.json" with { type: "json" };
+import running from "../fixtures/flagsmith-results.json" with { type: "json" };
 
 function visits(): VisitRecord[] {
   return [
@@ -48,7 +49,13 @@ describe("buildResultsDocument", () => {
     expect(doc.headline.copy).toMatch(
       /^Flagsmith lift \(SIMULATED traffic, assumed mix 70\/10\/10\/10\): /,
     );
-    expect(doc.flagsmithDashboard).not.toMatch(/[A-Za-z0-9]{20,}/);
+    expect(doc.headline.copy).toMatch(/P\(win\) 99\.0%/);
+    expect(doc.headline.copy).toMatch(/95% CI \+20\.0% to \+70\.0%/);
+    expect(doc.headline.ciLow).toBe(0.2);
+    expect(doc.headline.ciHigh).toBe(0.7);
+    expect(doc.outcome).toMatch(/rolled out treatment/);
+    expect(doc.personaMixNote).toContain("mouse 70%");
+    expect(doc.personaMixNote).toContain("Win threshold is 95%");
     expect(doc.realisedMix.mouse).toBe(0.5);
     const experimentFlag = doc.flags.find((f) => f.role === "experiment");
     expect(experimentFlag && "armSource" in experimentFlag && experimentFlag.armSource).toBe(
@@ -85,5 +92,25 @@ describe("buildResultsDocument", () => {
     expect(doc.headline.conversionLift).toBe("Infinity");
     expect(doc.decision.lift).toBe("Infinity");
     expect(doc.headline.copy).toMatch(/local_bayesian lift \(SIMULATED traffic/);
+  });
+
+  it("says NOT significant when Flagsmith has not called a winner", () => {
+    const decision = decideExperiment({
+      flag: "checkout_a11y",
+      visits: visits(),
+      threshold: 0.95,
+      flagsmith: running,
+    });
+    const doc = buildResultsDocument({
+      decision,
+      visits: visits(),
+      flagsmith: running,
+      personaMix: DEFAULT_PERSONA_MIX,
+    });
+    expect(decision.decision).toBe("keep_running");
+    expect(doc.headline.copy).toMatch(/NOT significant/);
+    expect(doc.headline.copy).toMatch(/keep running/);
+    expect(doc.headline.copy).toMatch(/95% CI/);
+    expect(doc.outcome).toMatch(/still running/);
   });
 });

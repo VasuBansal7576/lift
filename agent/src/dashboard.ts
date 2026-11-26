@@ -1,15 +1,17 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import barriersCatalog from "../../shared/barriers.json" with { type: "json" };
-import type {
-  Barrier,
-  ExperimentDecision,
-  Persona,
-  PersonaMix,
-  VisitRecord,
+import {
+  assertNever,
+  DEFAULT_PERSONA_MIX,
+  type Barrier,
+  type Decision,
+  type ExperimentDecision,
+  type Persona,
+  type PersonaMix,
+  type VisitRecord,
 } from "../../shared/types.ts";
-import { DEFAULT_PERSONA_MIX } from "../../shared/types.ts";
-import { mixLabel, realisedMix } from "../../shared/mix.ts";
+import { compactMix, mixLabel, realisedMix } from "../../shared/mix.ts";
 import { resultsPath } from "./config.ts";
 import type { FlagsmithResultsEnvelope } from "./decide.ts";
 import { summariseVisits } from "./decide.ts";
@@ -49,8 +51,54 @@ export function flagsmithArmCounts(envelope: FlagsmithResultsEnvelope | null): {
   };
 }
 
-function compactMix(mix: PersonaMix): string {
-  return `${Math.round(mix.mouse * 100)}/${Math.round(mix.keyboard * 100)}/${Math.round(mix["screen-reader"] * 100)}/${Math.round(mix["low-vision"] * 100)}`;
+export function formatSignedPct(n: number | null | undefined): string | null {
+  if (n === null || n === undefined || !Number.isFinite(n)) return null;
+  const pct = n * 100;
+  const abs = Math.abs(pct).toFixed(1);
+  return pct < 0 ? `−${abs}%` : `+${abs}%`;
+}
+
+export function outcomeIntro(decision: Decision): string {
+  switch (decision) {
+    case "rollout_treatment":
+      return "Flagsmith completed the experiment and rolled out treatment.";
+    case "pull_to_control":
+      return "Flagsmith completed the experiment and pulled to control.";
+    case "keep_running":
+      return "The experiment is still running; Flagsmith has not called a winner.";
+    default:
+      return assertNever(decision, "unknown decision");
+  }
+}
+
+export function buildHeadlineCopy(input: {
+  source: "flagsmith" | "local_bayesian";
+  mix: PersonaMix;
+  pct: string;
+  decision: Decision;
+  winProbability: number;
+  ciLow: number | null;
+  ciHigh: number | null;
+}): string {
+  const mixCompact = compactMix(input.mix);
+  const prefix =
+    input.source === "flagsmith"
+      ? `Flagsmith lift (SIMULATED traffic, assumed mix ${mixCompact}): ${input.pct}`
+      : `local_bayesian lift (SIMULATED traffic, assumed mix ${mixCompact}, not Flagsmith): ${input.pct}`;
+  const pWin = `P(win) ${(input.winProbability * 100).toFixed(1)}%`;
+  const ciLow = formatSignedPct(input.ciLow);
+  const ciHigh = formatSignedPct(input.ciHigh);
+  const ci = ciLow && ciHigh ? `95% CI ${ciLow} to ${ciHigh}` : null;
+  switch (input.decision) {
+    case "keep_running":
+      return [prefix, "NOT significant", pWin, ci, "keep running"].filter(Boolean).join(", ");
+    case "rollout_treatment":
+      return [prefix, pWin, ci, "rolled out"].filter(Boolean).join(", ");
+    case "pull_to_control":
+      return [prefix, pWin, ci, "pulled to control"].filter(Boolean).join(", ");
+    default:
+      return assertNever(input.decision, "unknown decision");
+  }
 }
 
 export function buildResultsDocument(input: {
@@ -97,10 +145,15 @@ export function buildResultsDocument(input: {
   const pct =
     displayLift === null ? "n/a" : `${(displayLift * 100).toFixed(1)}%`;
   const sourceLabel = fromFlagsmith ? "flagsmith" : "local_bayesian";
-  const mixCompact = compactMix(mix);
-  const copy = fromFlagsmith
-    ? `Flagsmith lift (SIMULATED traffic, assumed mix ${mixCompact}): ${pct}`
-    : `local_bayesian lift (SIMULATED traffic, assumed mix ${mixCompact}, not Flagsmith): ${pct}`;
+  const copy = buildHeadlineCopy({
+    source: sourceLabel,
+    mix,
+    pct,
+    decision: input.decision.decision,
+    winProbability: input.decision.winProbabilityTreatment,
+    ciLow: input.decision.ciLow,
+    ciHigh: input.decision.ciHigh,
+  });
 
   const serialisedDecision = {
     ...input.decision,
@@ -122,8 +175,8 @@ export function buildResultsDocument(input: {
     personaMixLabel: mixLabel(mix),
     realisedMix: realised,
     realisedMixLabel: mixLabel(realised),
-    personaMixNote:
-      "Assumed mix is a modelling choice (mouse 70% / keyboard 10% / screen-reader 10% / low-vision 10% by default), not measured traffic. realisedMix is this run's actual draws.",
+    personaMixNote: `Assumed mix is a modelling choice (${mixLabel(mix)}), not measured traffic. realisedMix is this run's actual draws. Win threshold is ${(input.decision.threshold * 100).toFixed(0)}%.`,
+    outcome: outcomeIntro(input.decision.decision),
     honesty:
       "Barrier flags are wired on the site; this run used the bundled checkout_a11y native experiment. Sequential per-barrier experiments are the attribution path.",
     headline: {
@@ -131,6 +184,8 @@ export function buildResultsDocument(input: {
       displayLift,
       source: sourceLabel,
       copy,
+      ciLow: input.decision.ciLow,
+      ciHigh: input.decision.ciHigh,
     },
     decision: serialisedDecision,
     flags: [
@@ -141,6 +196,8 @@ export function buildResultsDocument(input: {
         treatment,
         armSource: fromFlagsmith ? "flagsmith" : "local_bayesian",
         winProbabilityTreatment: input.decision.winProbabilityTreatment,
+        ciLow: input.decision.ciLow,
+        ciHigh: input.decision.ciHigh,
         source: input.decision.source,
         decision: input.decision.decision,
       },

@@ -7,11 +7,12 @@ import { loadRunningState } from "./bootstrap.ts";
 import {
   applyDecision,
   decideExperiment,
-  shouldApplyDecision,
+  parseFlagsmithWin,
+  summariseVisits,
   waitForFlagsmithResults,
   loadVisits,
 } from "./decide.ts";
-import { buildResultsDocument, writeDashboard } from "./dashboard.ts";
+import { buildResultsDocument, flagsmithArmCounts, writeDashboard } from "./dashboard.ts";
 import { scanCheckoutSite } from "./scan.ts";
 import { runTraffic } from "../../traffic/src/runner.ts";
 
@@ -100,44 +101,100 @@ export async function runExperiment() {
   const sitePort = Number(new URL(cfg.siteUrl).port || 4174);
   const server = await serveCheckout(sitePort);
   try {
-    await runTraffic();
+    let batch = 0;
+    for (;;) {
+      const runId = cfg.continueUntilDecision
+        ? `${cfg.trafficRunId}-b${batch}`
+        : cfg.trafficRunId;
+      await runTraffic({
+        trafficRunId: runId,
+        appendVisits: cfg.appendVisits || cfg.continueUntilDecision,
+      });
+      batch += 1;
+
+      const visits = loadVisits();
+      const trafficEndedAt = new Date().toISOString();
+      let flagsmith = await waitForFlagsmithResults({
+        experimentId: state.experimentId,
+        visits,
+        waitMs: cfg.resultsWaitMs,
+        trafficEndedAt,
+      });
+      let parsed = parseFlagsmithWin(flagsmith, {
+        localN: visits.length,
+        trafficEndedAt,
+      });
+      if (
+        cfg.continueUntilDecision &&
+        (parsed?.rejectReason === "stale" || parsed?.rejectReason === "error")
+      ) {
+        process.stdout.write(
+          "Flagsmith snapshot not usable yet; waiting another refresh window.\n",
+        );
+        flagsmith = await waitForFlagsmithResults({
+          experimentId: state.experimentId,
+          visits,
+          waitMs: cfg.resultsWaitMs,
+          trafficEndedAt,
+        });
+        parsed = parseFlagsmithWin(flagsmith, {
+          localN: visits.length,
+          trafficEndedAt,
+        });
+      }
+      const decision = decideExperiment({
+        flag: cfg.flagName,
+        visits,
+        flagsmith,
+        threshold: cfg.winThreshold,
+        allowLocalDecision: cfg.allowLocalDecision,
+        statsSeed: cfg.trafficSeed,
+      });
+
+      const local = summariseVisits(visits);
+      const arms = flagsmithArmCounts(flagsmith);
+      const maxArm = Math.max(
+        arms?.control.visitors ?? 0,
+        arms?.treatment.visitors ?? 0,
+        local.control.visitors,
+        local.treatment.visitors,
+      );
+      const conclusive =
+        parsed?.usable === true && decision.decision !== "keep_running";
+      const atCap = maxArm >= cfg.maxArmN;
+      const sendMore =
+        cfg.continueUntilDecision &&
+        !conclusive &&
+        !atCap &&
+        parsed?.rejectReason !== "srm";
+
+      if (sendMore) {
+        process.stdout.write(
+          `keep_running at maxArm=${maxArm} (cap ${cfg.maxArmN}); sending another batch with a new run id.\n`,
+        );
+        continue;
+      }
+
+      await applyDecision(decision);
+      const doc = buildResultsDocument({
+        decision,
+        visits,
+        flagsmith,
+        experimentId: state.experimentId,
+        dashboardUrl: `${cfg.dashboardUrl}/project/${state.projectId}/environment/${state.environmentId}/experiments/${state.experimentId}`,
+        personaMix: cfg.personaMix,
+      });
+      const path = writeDashboard(doc);
+      process.stdout.write(
+        `${decision.decision} (${decision.source}, P(treatment>control)=${decision.winProbabilityTreatment.toFixed(3)})\n`,
+      );
+      process.stdout.write(`Wrote ${path}\n`);
+      return doc;
+    }
+    throw new Error("experiment loop exited without a decision");
   } finally {
     if (!server.reused) await server.close();
   }
-
-  const visits = loadVisits();
-  const flagsmith = await waitForFlagsmithResults({
-    experimentId: state.experimentId,
-    visits,
-    waitMs: cfg.resultsWaitMs,
-  });
-  const decision = decideExperiment({
-    flag: cfg.flagName,
-    visits,
-    flagsmith,
-    threshold: cfg.winThreshold,
-    allowLocalDecision: cfg.allowLocalDecision,
-    statsSeed: cfg.trafficSeed,
-  });
-
-  if (shouldApplyDecision(decision, cfg.allowLocalDecision)) {
-    await applyDecision(decision);
-  }
-
-  const doc = buildResultsDocument({
-    decision,
-    visits,
-    flagsmith,
-    experimentId: state.experimentId,
-    dashboardUrl: `${cfg.dashboardUrl}/project/${state.projectId}/environment/${state.environmentId}/experiments/${state.experimentId}`,
-    personaMix: cfg.personaMix,
-  });
-  const path = writeDashboard(doc);
-  process.stdout.write(
-    `${decision.decision} (${decision.source}, P(treatment>control)=${decision.winProbabilityTreatment.toFixed(3)})\n`,
-  );
-  process.stdout.write(`Wrote ${path}\n`);
-  return doc;
 }
 
 async function main() {

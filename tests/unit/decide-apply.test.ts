@@ -230,6 +230,7 @@ describe("applyDecision", () => {
     let evals = 0;
     const setDefault = vi.fn(async () => undefined);
     await applyDecision(decision, {
+      allowLocalDecision: true,
       evaluateIdentity: async () => {
         evals += 1;
         if (evals === 1) return { variant: "treatment", value: "control" };
@@ -239,6 +240,25 @@ describe("applyDecision", () => {
     });
     expect(setDefault).toHaveBeenCalledTimes(1);
     expect(evals).toBe(2);
+  });
+
+  it("does not complete when the source is local_bayesian unless allowLocalDecision", async () => {
+    const fetchMock = vi.fn(async () => {
+      return new Response(
+        JSON.stringify({ id: 7, status: "running", rollout_decision: null }),
+        { status: 200 },
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const decision = decideExperiment({
+      flag: "checkout_a11y",
+      visits: visits(),
+      threshold: 0.95,
+      flagsmith: null,
+    });
+    expect(decision.source).toBe("local_bayesian");
+    await applyDecision(decision);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
 
@@ -313,5 +333,18 @@ describe("floorsMet", () => {
       flagsmith: under,
     });
     expect(decision.source).toBe("local_bayesian");
+  });
+
+  it("returns false when the payload has inference but no variants", () => {
+    const local = visits(60);
+    expect(
+      floorsMet(local, {
+        results: {
+          payload: {
+            metrics: [{ inference: { treatment: { chance_to_win: 0.99, lift: 0.4 } } }],
+          },
+        },
+      }),
+    ).toBe(false);
   });
 });

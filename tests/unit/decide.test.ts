@@ -47,11 +47,67 @@ describe("parseFlagsmithWin", () => {
         },
       },
     });
-    expect(parsed).toEqual({
+    expect(parsed).toMatchObject({
       chanceToWin: 0.981,
       lift: 1.4,
       asOf: "2026-11-26T00:00:00Z",
+      usable: true,
     });
+  });
+
+  it("rejects snapshots with last_error_at set", () => {
+    const parsed = parseFlagsmithWin({
+      results: {
+        last_error_at: "2026-11-26T00:00:00Z",
+        payload: {
+          metrics: [{ inference: { treatment: { chance_to_win: 0.99, lift: 0.4 } } }],
+        },
+      },
+    });
+    expect(parsed?.usable).toBe(false);
+    expect(parsed?.rejectReason).toBe("error");
+  });
+
+  it("declines to decide when srm_p_value is below 0.01", () => {
+    const parsed = parseFlagsmithWin({
+      results: {
+        payload: {
+          srm_p_value: 0.001,
+          metrics: [{ inference: { treatment: { chance_to_win: 0.99, lift: 0.4 } } }],
+        },
+      },
+    });
+    expect(parsed?.usable).toBe(false);
+    expect(parsed?.rejectReason).toBe("srm");
+  });
+
+  it("treats Flagsmith n below local visits as stale unless as_of is after traffic ended", () => {
+    const envelope = {
+      results: {
+        as_of: "2026-11-26T00:00:00Z",
+        payload: {
+          metrics: [
+            {
+              variants: {
+                control: { n: 10, sum: 5 },
+                treatment: { n: 10, sum: 6 },
+              },
+              inference: { treatment: { chance_to_win: 0.8, lift: 0.1, ci_low: -0.1, ci_high: 0.3 } },
+            },
+          ],
+        },
+      },
+    };
+    const stale = parseFlagsmithWin(envelope, { localN: 40 });
+    expect(stale?.usable).toBe(false);
+    expect(stale?.rejectReason).toBe("stale");
+    const caughtUp = parseFlagsmithWin(envelope, {
+      localN: 40,
+      trafficEndedAt: "2026-11-25T23:00:00Z",
+    });
+    expect(caughtUp?.usable).toBe(true);
+    expect(caughtUp?.ciLow).toBe(-0.1);
+    expect(caughtUp?.ciHigh).toBe(0.3);
   });
 
   it("returns null when Flagsmith has not computed yet", () => {
@@ -177,12 +233,47 @@ describe("decideExperiment", () => {
       flagsmith: {
         results: {
           payload: {
-            metrics: [{ inference: { treatment: { chance_to_win: 0.61, lift: 0.04 } } }],
+            metrics: [
+              {
+                variants: {
+                  control: { n: 50, sum: 25 },
+                  treatment: { n: 50, sum: 26 },
+                },
+                inference: { treatment: { chance_to_win: 0.61, lift: 0.04 } },
+              },
+            ],
           },
         },
       },
     });
     expect(decision.source).toBe("flagsmith");
     expect(decision.decision).toBe("keep_running");
+  });
+
+  it("keeps running when Flagsmith reports srm_p_value below 0.01", () => {
+    const decision = decideExperiment({
+      flag: "checkout_a11y",
+      visits: strongTreatment,
+      threshold: 0.95,
+      flagsmith: {
+        results: {
+          payload: {
+            srm_p_value: 0.001,
+            metrics: [
+              {
+                variants: {
+                  control: { n: 80, sum: 40 },
+                  treatment: { n: 20, sum: 20 },
+                },
+                inference: { treatment: { chance_to_win: 0.99, lift: 0.5 } },
+              },
+            ],
+          },
+        },
+      },
+    });
+    expect(decision.source).toBe("flagsmith");
+    expect(decision.decision).toBe("keep_running");
+    expect(decision.notes.some((n) => n.includes("srm_p_value"))).toBe(true);
   });
 });

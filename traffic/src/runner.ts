@@ -126,17 +126,20 @@ export async function runTraffic(overrides?: Partial<LiftConfig>) {
     },
   });
 
-  const rand = mulberry32(cfg.trafficSeed);
+  const personaRand = mulberry32(cfg.trafficSeed);
+  const dropoutRand = mulberry32(cfg.trafficSeed ^ 0x9e3779b9);
   const visitsPath = eventsPath();
   mkdirSync(dirname(visitsPath), { recursive: true });
-  writeFileSync(visitsPath, "");
+  if (!cfg.appendVisits) {
+    writeFileSync(visitsPath, "");
+  }
 
   const browser = await chromium.launch({ headless: true });
   const visits: VisitRecord[] = [];
 
   try {
     for (let i = 0; i < cfg.trafficN; i += 1) {
-      const persona = pickPersona(rand, cfg.personaMix);
+      const persona = pickPersona(personaRand, cfg.personaMix);
       const identity = identityFor(cfg.trafficRunId, cfg.trafficSeed, i);
       const { variant } = await assignVariant(
         flagsmith,
@@ -152,14 +155,32 @@ export async function runTraffic(overrides?: Partial<LiftConfig>) {
       const url = `${cfg.siteUrl}/?lift_variant=${variant}&lift_identity=${encodeURIComponent(identity)}`;
       await page.goto(url, { waitUntil: "domcontentloaded" });
       await page.waitForFunction(
-        () => Boolean(document.body.dataset.variant),
-        null,
+        ({ expected }) =>
+          document.body.dataset.variant === expected &&
+          (document.getElementById("flag-status")?.textContent ?? "").includes(
+            "URL override",
+          ),
+        { expected: variant },
         { timeout: 10_000 },
       );
+      const seen = await page.evaluate(() => ({
+        variant: document.body.dataset.variant,
+        status: document.getElementById("flag-status")?.textContent ?? "",
+      }));
+      if (seen.variant !== variant) {
+        throw new Error(
+          `Checkout dataset.variant=${seen.variant} does not match assigned ${variant}`,
+        );
+      }
+      if (!seen.status.includes("URL override")) {
+        throw new Error(
+          `Expected #flag-status to show URL override, got ${JSON.stringify(seen.status)}`,
+        );
+      }
       const attempt = await runPersona(page, persona);
       const dropout = applyBaselineDropout(
         attempt.converted,
-        rand,
+        dropoutRand,
         cfg.baselineConvert,
       );
       const converted = dropout.converted;

@@ -42,7 +42,7 @@ async function stubFlagsmith(page: Page, variant: "control" | "treatment") {
   });
 }
 
-test("real Flagsmith path loads without ?lift_variant", async ({ page }) => {
+test("stubbed Flagsmith SDK path loads without ?lift_variant", async ({ page }) => {
   await stubFlagsmith(page, "treatment");
   await page.goto("/");
   await expect(page.locator("body")).toHaveAttribute("data-variant", "treatment");
@@ -50,7 +50,7 @@ test("real Flagsmith path loads without ?lift_variant", async ({ page }) => {
   await expect(page.locator("#flag-status")).not.toHaveText(/URL override/);
 });
 
-test("allowMock:false ignores ?lift_variant=treatment when Flagsmith returns control", async ({
+test("stubbed Flagsmith SDK: allowMock:false ignores ?lift_variant=treatment when SDK returns control", async ({
   page,
 }) => {
   await stubFlagsmith(page, "control");
@@ -58,4 +58,51 @@ test("allowMock:false ignores ?lift_variant=treatment when Flagsmith returns con
   await expect(page.locator("body")).toHaveAttribute("data-variant", "control");
   await expect(page.locator("#flag-status")).toHaveText(/Flagsmith checkout_a11y=control/);
   await expect(page.locator("#flag-status")).not.toHaveText(/URL override/);
+});
+
+test("stubbed Flagsmith SDK: bundled control plus one barrier flag on (fixesFromFlagsmith)", async ({
+  page,
+}) => {
+  await page.route(SDK_URL, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/javascript",
+      body: `
+const flagsmith = {
+  async init() {},
+  getExperimentFlag() {
+    return { variant: "control", value: "control", enabled: true };
+  },
+  getValue(name) {
+    return name === "a11y_unlabeled_icon" ? "treatment" : "control";
+  },
+  trackEvent() {},
+  async setTrait() {},
+  async flushEvents() {},
+};
+export default flagsmith;
+`,
+    });
+  });
+  await page.route("**/config.json", async (route) => {
+    await route.fulfill({
+      json: {
+        allowMock: false,
+        flagsmithEnvironmentKey: "test-env",
+        flagsmithApiUrl: "https://edge.api.flagsmith.com/api/v1/",
+        flagsmithEventsUrl: "https://events.api.flagsmith.com/",
+        flagName: "checkout_a11y",
+        metricEvent: "checkout_completed",
+      },
+    });
+  });
+  await page.goto("/");
+  await expect(page.locator("body")).toHaveAttribute("data-variant", "control");
+  await expect(page.locator("#flag-status")).toHaveText(/Flagsmith checkout_a11y=control/);
+  await expect(page.locator("#cart-icon")).toHaveAttribute(
+    "aria-label",
+    "View cart and check out",
+  );
+  await expect(page.locator("#shop-trigger")).toHaveJSProperty("tagName", "SPAN");
+  await expect(page.locator("#place-order")).toHaveJSProperty("tagName", "DIV");
 });

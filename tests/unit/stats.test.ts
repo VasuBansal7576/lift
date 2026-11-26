@@ -52,11 +52,13 @@ describe("decideFromWinProbability", () => {
 });
 
 describe("formatPWin", () => {
-  it("formats near-certain wins as >99.9%", () => {
-    expect(formatPWin(0.999)).toBe(">99.9%");
+  it("formats strictly above 0.999 as >99.9% and strictly below 0.001 as <0.1%", () => {
+    expect(formatPWin(0.999)).toBe("99.9%");
+    expect(formatPWin(0.9991)).toBe(">99.9%");
     expect(formatPWin(1)).toBe(">99.9%");
     expect(formatPWin(0.99)).toBe("99.0%");
-    expect(formatPWin(0.001)).toBe("<0.1%");
+    expect(formatPWin(0.001)).toBe("0.1%");
+    expect(formatPWin(0.0009)).toBe("<0.1%");
   });
 });
 
@@ -67,6 +69,13 @@ describe("srmPValue", () => {
 
   it("rejects a 90/10 split at p < 0.01", () => {
     expect(srmPValue(270, 30)).toBeLessThan(0.01);
+  });
+
+  it("matches exact chi-square p-values used in the fleet review", () => {
+    expect(srmPValue(218, 183)).toBeCloseTo(0.0803, 3);
+    expect(srmPValue(184, 217)).toBeCloseTo(0.0992, 3);
+    expect(srmPValue(226, 174)).toBeCloseTo(0.00932, 3);
+    expect(srmPValue(226, 174)).toBeLessThan(0.01);
   });
 });
 

@@ -1,6 +1,6 @@
 import type { Page } from "@playwright/test";
 import type { BarrierId, Persona, Variant } from "../../shared/types.ts";
-import { getSite } from "../../shared/catalog.ts";
+import { getSite, type SiteAccessibleNames, type SiteDef } from "../../shared/catalog.ts";
 import { contrastRatio, parseCssColor } from "./contrast.ts";
 import type { AttemptResult } from "./attempt.ts";
 import { applyLowVisionZoom, CONTRAST_FLOOR } from "./vision.ts";
@@ -17,6 +17,20 @@ const FIELD_VALUES: Record<string, string> = {
   query: "waxed jacket",
   card: "4242424242424242",
 };
+
+async function siteFromPage(page: Page): Promise<SiteDef> {
+  const id = (await page.evaluate(() => document.body.dataset.site || "checkout")) as string;
+  return getSite(id);
+}
+
+function namesOf(site: SiteDef): SiteAccessibleNames {
+  return site.accessible;
+}
+
+function labelMatches(label: string, candidates: string[]): boolean {
+  const hay = label.toLowerCase();
+  return candidates.some((name) => hay.includes(name.toLowerCase()));
+}
 
 async function waitForConversion(page: Page): Promise<boolean> {
   try {
@@ -96,15 +110,20 @@ async function clickSubmit(page: Page) {
   await submit.click();
 }
 
-async function confirmFriction(page: Page) {
+async function confirmFriction(page: Page, names: SiteAccessibleNames) {
   const step = page.locator("[data-friction-step]");
   if ((await step.count()) === 0) return;
   if (await step.isVisible().catch(() => false)) {
+    if (names.frictionConfirm) {
+      await page.getByRole("button", { name: names.frictionConfirm }).click();
+      return;
+    }
     await page.locator("[data-lift-friction-confirm]").click();
   }
 }
 
 export async function runGenericMouse(page: Page): Promise<AttemptResult> {
+  const names = namesOf(await siteFromPage(page));
   const opened = await openIfNeeded(page);
   if (!opened) {
     return {
@@ -118,7 +137,7 @@ export async function runGenericMouse(page: Page): Promise<AttemptResult> {
   const terms = page.locator("[data-lift-terms]");
   if (await terms.count()) await terms.check();
   await clickSubmit(page);
-  await confirmFriction(page);
+  await confirmFriction(page, names);
   const converted = await waitForConversion(page);
   return {
     converted,
@@ -128,6 +147,7 @@ export async function runGenericMouse(page: Page): Promise<AttemptResult> {
 }
 
 export async function runGenericKeyboard(page: Page): Promise<AttemptResult> {
+  const names = namesOf(await siteFromPage(page));
   await page.locator("body").click({ position: { x: 8, y: 8 } });
   const panel = page.locator("#lift-panel");
   const hasOpener =
@@ -149,29 +169,16 @@ export async function runGenericKeyboard(page: Page): Promise<AttemptResult> {
           name: el.getAttribute("aria-label") ?? "",
         };
       });
-      const label = `${focused.text} ${focused.name}`.toLowerCase();
-      if (
-        focused.tag === "BUTTON" &&
-        (label.includes("plan") ||
-          label.includes("appointment") ||
-          label.includes("shop") ||
-          label.includes("bag") ||
-          label.includes("menu"))
-      ) {
+      const label = `${focused.text} ${focused.name}`;
+      if (focused.tag === "BUTTON" && labelMatches(label, names.menu)) {
         await page.keyboard.press("Enter");
       }
       const openerFocused = await page.evaluate(() => {
         const el = document.activeElement as HTMLElement | null;
         return Boolean(el?.hasAttribute("data-lift-open"));
       });
-      if (
-        openerFocused ||
-        label.includes("trial") ||
-        label.includes("book") ||
-        label.includes("visit") ||
-        label.includes("cart") ||
-        label.includes("give")
-      ) {
+      const openNames = names.open.map((item) => item.name);
+      if (openerFocused || labelMatches(label, openNames)) {
         await page.keyboard.press("Enter");
         opened = true;
         break;
@@ -253,12 +260,7 @@ export async function runGenericKeyboard(page: Page): Promise<AttemptResult> {
       if (!el) return { id: "", tag: "" };
       return { id: el.id, tag: el.tagName };
     });
-    if (
-      focused.id === "place-order" ||
-      focused.id === "subscribe" ||
-      focused.id === "signin" ||
-      focused.tag === "BUTTON"
-    ) {
+    if (names.submitIds.includes(focused.id) || focused.tag === "BUTTON") {
       onPay = focused.tag === "BUTTON";
       if (onPay) break;
     }
@@ -273,7 +275,11 @@ export async function runGenericKeyboard(page: Page): Promise<AttemptResult> {
   await page.keyboard.press("Enter");
   const friction = page.locator("[data-friction-step]");
   if (await friction.isVisible().catch(() => false)) {
-    await page.locator("[data-lift-friction-confirm]").focus();
+    if (names.frictionConfirm) {
+      await page.getByRole("button", { name: names.frictionConfirm }).focus();
+    } else {
+      await page.locator("[data-lift-friction-confirm]").focus();
+    }
     await page.keyboard.press("Enter");
   }
   const converted = await waitForConversion(page);
@@ -287,19 +293,23 @@ export async function runGenericKeyboard(page: Page): Promise<AttemptResult> {
 }
 
 export async function runGenericScreenReader(page: Page): Promise<AttemptResult> {
-  const namedOpen = page.getByRole("link", {
-    name: /start trial|book a visit|view cart|checkout/i,
-  });
-  const namedGive = page.getByRole("button", { name: /give to river keep|view cart/i });
-  const namedShop = page.getByRole("button", {
-    name: /plans|appointments|shop|bag/i,
-  });
-  if (await namedShop.count()) await namedShop.click();
-  if (await namedOpen.count()) {
-    await namedOpen.click();
-  } else if (await namedGive.count()) {
-    await namedGive.click();
-  } else if ((await page.locator("[data-lift-open], .hover-nav").count()) > 0) {
+  const names = namesOf(await siteFromPage(page));
+
+  for (const menuName of names.menu) {
+    const namedShop = page.getByRole("button", { name: menuName, exact: true });
+    if (await namedShop.count()) await namedShop.click();
+  }
+
+  let opened = names.open.length === 0;
+  for (const item of names.open) {
+    const loc = page.getByRole(item.role, { name: item.name, exact: true });
+    if (await loc.count()) {
+      await loc.click();
+      opened = true;
+      break;
+    }
+  }
+  if (!opened && (await page.locator("[data-lift-open], .hover-nav").count()) > 0) {
     const hasHover = (await page.locator(".hover-nav").count()) > 0;
     return {
       converted: false,
@@ -308,11 +318,10 @@ export async function runGenericScreenReader(page: Page): Promise<AttemptResult>
     };
   }
 
-  const searchBtn = page.getByRole("button", { name: /search the catalog/i });
-  const query = page.getByRole("searchbox", { name: "Search" }).or(
-    page.getByRole("textbox", { name: "Search" }),
-  );
-  if ((await page.locator("[data-lift-query]").count()) > 0) {
+  if (names.searchField && (await page.locator("[data-lift-query]").count()) > 0) {
+    const query = page
+      .getByRole("searchbox", { name: names.searchField, exact: true })
+      .or(page.getByRole("textbox", { name: names.searchField, exact: true }));
     if (!(await query.count())) {
       return {
         converted: false,
@@ -321,6 +330,14 @@ export async function runGenericScreenReader(page: Page): Promise<AttemptResult>
       };
     }
     await query.fill(FIELD_VALUES.query);
+    if (!names.searchButton) {
+      return {
+        converted: false,
+        blockedBy: ["unlabeled_icon"],
+        reason: "No named search control",
+      };
+    }
+    const searchBtn = page.getByRole("button", { name: names.searchButton, exact: true });
     if (!(await searchBtn.count())) {
       return {
         converted: false,
@@ -356,8 +373,8 @@ export async function runGenericScreenReader(page: Page): Promise<AttemptResult>
 
   await fillFields(page);
 
-  const terms = page.getByRole("checkbox", { name: /terms|harbor notes/i });
-  if ((await page.locator("[data-lift-terms]").count()) > 0) {
+  if (names.terms && (await page.locator("[data-lift-terms]").count()) > 0) {
+    const terms = page.getByRole("checkbox", { name: names.terms });
     if (!(await terms.count())) {
       return {
         converted: false,
@@ -368,7 +385,7 @@ export async function runGenericScreenReader(page: Page): Promise<AttemptResult>
     await terms.check();
   }
 
-  const submit = page.locator("button[data-lift-submit], button#place-order, button.place-order");
+  const submit = page.getByRole("button", { name: names.submit, exact: true });
   if (!(await submit.count())) {
     return {
       converted: false,
@@ -379,7 +396,11 @@ export async function runGenericScreenReader(page: Page): Promise<AttemptResult>
   await submit.last().click();
   const friction = page.locator("[data-friction-step]");
   if (await friction.isVisible().catch(() => false)) {
-    await page.getByRole("button", { name: /start trial anyway/i }).click();
+    if (names.frictionConfirm) {
+      await page.getByRole("button", { name: names.frictionConfirm, exact: true }).click();
+    } else {
+      await page.locator("[data-lift-friction-confirm]").click();
+    }
   }
   const converted = await waitForConversion(page);
   return {
@@ -392,6 +413,7 @@ export async function runGenericScreenReader(page: Page): Promise<AttemptResult>
 }
 
 export async function runGenericLowVision(page: Page): Promise<AttemptResult> {
+  const names = namesOf(await siteFromPage(page));
   await applyLowVisionZoom(page);
   const contrastEl = page.locator("[data-lift-contrast], #terms-copy");
   const opened = await openIfNeeded(page);
@@ -424,7 +446,7 @@ export async function runGenericLowVision(page: Page): Promise<AttemptResult> {
   const terms = page.locator("[data-lift-terms]");
   if (await terms.count()) await terms.check();
   await clickSubmit(page);
-  await confirmFriction(page);
+  await confirmFriction(page, names);
   const converted = await waitForConversion(page);
   return {
     converted,

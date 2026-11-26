@@ -50,7 +50,8 @@ export interface FlagsmithResultsEnvelope {
 const IDENTITY_FLOOR = 50;
 const CONVERSION_FLOOR = 5;
 const REFRESH_THROTTLE_MS = 5 * 60 * 1000;
-export const INGESTION_RATIO = 0.95;
+/** After the enrollment probe stopped inventing identities, Flagsmith n must equal local n. */
+export const INGESTION_RATIO = 1;
 export const VERIFY_IDENTITIES = 20;
 
 export function loadVisits(path = eventsPath()): VisitRecord[] {
@@ -158,18 +159,14 @@ export function parseFlagsmithWin(
   const localArms = opts?.localArms;
   const localN = opts?.localN ?? 0;
   if (localArms && (localArms.control > 0 || localArms.treatment > 0)) {
-    const controlOk =
-      parsed.flagsmithControlN !== null &&
-      parsed.flagsmithControlN >= INGESTION_RATIO * localArms.control;
-    const treatmentOk =
-      parsed.flagsmithTreatmentN !== null &&
-      parsed.flagsmithTreatmentN >= INGESTION_RATIO * localArms.treatment;
+    const controlOk = parsed.flagsmithControlN === localArms.control;
+    const treatmentOk = parsed.flagsmithTreatmentN === localArms.treatment;
     if (!controlOk || !treatmentOk) {
       parsed.usable = false;
       parsed.rejectReason = "ingestion";
       return parsed;
     }
-  } else if (localN > 0 && (flagsmithN === null || flagsmithN < INGESTION_RATIO * localN)) {
+  } else if (localN > 0 && (flagsmithN === null || flagsmithN !== localN)) {
     parsed.usable = false;
     parsed.rejectReason = "ingestion";
     return parsed;
@@ -302,7 +299,7 @@ export function decideExperiment(input: {
     ciLow = parsed.ciLow;
     ciHigh = parsed.ciHigh;
     notes.push(
-      "awaiting ingestion: Flagsmith n is below 95% of local counts on at least one arm. Not deciding.",
+      "awaiting ingestion: Flagsmith n does not exactly match local counts on at least one arm. Not deciding.",
     );
   } else if (parsed && !parsed.usable) {
     notes.push(
@@ -457,13 +454,20 @@ export interface FeatureStateRecord {
   }>;
 }
 
+export type EnvironmentDefaultPath = "v2_unicode" | "v2_string" | "v1_featurestates";
+
+export type EnvironmentDefaultClient = Pick<
+  FlagsmithAdmin,
+  "patchFutureFeature" | "get" | "patch"
+>;
+
 export async function setEnvironmentDefault(
-  admin: FlagsmithAdmin,
+  admin: EnvironmentDefaultClient,
   envKey: string,
   flagId: number,
   treatmentOptionId: number,
   variant: Variant,
-): Promise<void> {
+): Promise<EnvironmentDefaultPath> {
   const allocation = variant === "treatment" ? 100 : 0;
   const value = variant === "treatment" ? "treatment" : "control";
   for (const type of ["unicode", "string"] as const) {
@@ -475,7 +479,7 @@ export async function setEnvironmentDefault(
           variants: [{ id: treatmentOptionId, weight: allocation }],
         },
       });
-      return;
+      return type === "unicode" ? "v2_unicode" : "v2_string";
     } catch (err) {
       const retry =
         err instanceof FlagsmithAdminError &&
@@ -508,6 +512,7 @@ export async function setEnvironmentDefault(
     feature_state_value: variant === "treatment" ? "treatment" : "control",
     multivariate_feature_state_values: mv,
   });
+  return "v1_featurestates";
 }
 
 export async function evaluateIdentityVariant(
@@ -549,13 +554,20 @@ export interface RolloutVerification {
   matched: number;
   expected: Variant | null;
   usedFallback: boolean;
+  environmentDefaultPath: EnvironmentDefaultPath | null;
 }
 
 export async function applyDecision(
   decision: ExperimentDecision,
   deps?: {
     evaluateIdentity?: typeof evaluateIdentityVariant;
-    setDefault?: typeof setEnvironmentDefault;
+    setDefault?: (
+      admin: EnvironmentDefaultClient,
+      envKey: string,
+      flagId: number,
+      treatmentOptionId: number,
+      variant: Variant,
+    ) => Promise<EnvironmentDefaultPath | void>;
     allowLocalDecision?: boolean;
   },
 ): Promise<RolloutVerification> {
@@ -565,14 +577,28 @@ export async function applyDecision(
     throw new Error("Bootstrap state and Flagsmith admin credentials are required to roll out");
   }
   if (decision.decision === "keep_running") {
-    return { applied: false, n: 0, matched: 0, expected: null, usedFallback: false };
+    return {
+      applied: false,
+      n: 0,
+      matched: 0,
+      expected: null,
+      usedFallback: false,
+      environmentDefaultPath: null,
+    };
   }
   const allowLocal = deps?.allowLocalDecision ?? cfg.allowLocalDecision;
   if (decision.source !== "flagsmith" && !allowLocal) {
     process.stderr.write(
       "Not completing: source is local_bayesian. Set LIFT_ALLOW_LOCAL_DECISION=true to apply local math.\n",
     );
-    return { applied: false, n: 0, matched: 0, expected: null, usedFallback: false };
+    return {
+      applied: false,
+      n: 0,
+      matched: 0,
+      expected: null,
+      usedFallback: false,
+      environmentDefaultPath: null,
+    };
   }
 
   const admin = new FlagsmithAdmin(cfg);
@@ -631,6 +657,7 @@ export async function applyDecision(
       matched: first.length,
       expected,
       usedFallback: false,
+      environmentDefaultPath: null,
     };
   }
 
@@ -639,13 +666,14 @@ export async function applyDecision(
     `Fresh identities failed rollout check (e.g. variant=${sample?.variant} value=${String(sample?.value)}, expected ${expected}). Falling back to environment default PATCH.\n`,
   );
   const setDefault = deps?.setDefault ?? setEnvironmentDefault;
-  await setDefault(
-    admin,
-    cfg.environmentKey,
-    state.flagId,
-    state.treatmentOptionId,
-    expected,
-  );
+  const environmentDefaultPath =
+    (await setDefault(
+      admin,
+      cfg.environmentKey,
+      state.flagId,
+      state.treatmentOptionId,
+      expected,
+    )) ?? "v2_unicode";
   const second = await evaluateMany(
     evaluate,
     state.flagName,
@@ -659,12 +687,14 @@ export async function applyDecision(
       `Environment default fallback failed: identity still sees variant=${bad?.variant} value=${String(bad?.value)}, expected ${expected}`,
     );
   }
+  process.stderr.write(`Environment default path used: ${environmentDefaultPath}\n`);
   return {
     applied: true,
     n: VERIFY_IDENTITIES,
     matched,
     expected,
     usedFallback: true,
+    environmentDefaultPath,
   };
 }
 

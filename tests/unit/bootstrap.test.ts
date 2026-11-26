@@ -30,7 +30,7 @@ function cfg(): LiftConfig {
     flagName: "checkout_a11y",
     metricEvent: "checkout_completed",
     siteUrl: "http://127.0.0.1:4174",
-    frictionDropout: 0,
+    frictionKeepRate: 0,
     trafficN: 120,
     trafficSeed: 1,
     trafficRunId: "test",

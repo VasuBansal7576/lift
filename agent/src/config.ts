@@ -77,7 +77,7 @@ export function loadConfig() {
       "LIFT_SITE_URL",
       siteId === "checkout" ? "http://127.0.0.1:4174" : `http://127.0.0.1:4174/${siteId}`,
     ).replace(/\/$/, ""),
-    frictionDropout: site.harmfulFix?.dropout ?? 0,
+    frictionKeepRate: site.harmfulFix?.frictionKeepRate ?? 0,
     trafficN,
     trafficSeed: envNumber("LIFT_TRAFFIC_SEED", 20261126),
     trafficRunId: env("LIFT_RUN_ID") || defaultRunId(),

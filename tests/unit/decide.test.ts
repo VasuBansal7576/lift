@@ -148,7 +148,7 @@ describe("parseFlagsmithWin", () => {
     expect(parsed?.rejectReason).toBe("stale");
   });
 
-  it("rejects ingestion when either arm is below 95% of local n", () => {
+  it("rejects ingestion unless Flagsmith n exactly matches local n", () => {
     const envelope = {
       results: {
         as_of: "2026-11-26T02:00:00Z",
@@ -171,6 +171,55 @@ describe("parseFlagsmithWin", () => {
     });
     expect(parsed?.usable).toBe(false);
     expect(parsed?.rejectReason).toBe("ingestion");
+
+    const almost = parseFlagsmithWin(
+      {
+        results: {
+          as_of: "2026-11-26T02:00:00Z",
+          payload: {
+            metrics: [
+              {
+                variants: {
+                  control: { n: 50, sum: 20 },
+                  treatment: { n: 51, sum: 30 },
+                },
+                inference: { treatment: { chance_to_win: 0.9, lift: 0.2 } },
+              },
+            ],
+          },
+        },
+      },
+      {
+        localArms: { control: 50, treatment: 50 },
+        trafficEndedAt: "2026-11-26T01:00:00Z",
+      },
+    );
+    expect(almost?.usable).toBe(false);
+    expect(almost?.rejectReason).toBe("ingestion");
+
+    const exact = parseFlagsmithWin(
+      {
+        results: {
+          as_of: "2026-11-26T02:00:00Z",
+          payload: {
+            metrics: [
+              {
+                variants: {
+                  control: { n: 50, sum: 20 },
+                  treatment: { n: 50, sum: 30 },
+                },
+                inference: { treatment: { chance_to_win: 0.9, lift: 0.2 } },
+              },
+            ],
+          },
+        },
+      },
+      {
+        localArms: { control: 50, treatment: 50 },
+        trafficEndedAt: "2026-11-26T01:00:00Z",
+      },
+    );
+    expect(exact?.usable).toBe(true);
   });
 
   it("returns null when Flagsmith has not computed yet", () => {

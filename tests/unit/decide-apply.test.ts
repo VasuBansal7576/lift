@@ -15,7 +15,7 @@ import type { VisitRecord } from "../../shared/types.ts";
 import fixture from "../fixtures/flagsmith-results.json" with { type: "json" };
 import winner from "../fixtures/flagsmith-results-win.json" with { type: "json" };
 
-function visits(n = 50): VisitRecord[] {
+function visits(n = 60): VisitRecord[] {
   return [
     ...Array.from({ length: n }, (_, i) => ({
       identity: `c${i}`,
@@ -38,7 +38,7 @@ function visits(n = 50): VisitRecord[] {
   ];
 }
 
-function loserVisits(n = 50): VisitRecord[] {
+function loserVisits(n = 60): VisitRecord[] {
   return [
     ...Array.from({ length: n }, (_, i) => ({
       identity: `c${i}`,
@@ -176,6 +176,7 @@ describe("applyDecision", () => {
       matched: 20,
       expected: "treatment",
       usedFallback: false,
+      environmentDefaultPath: null,
     });
   });
 
@@ -235,7 +236,7 @@ describe("applyDecision", () => {
     });
     expect(decision.decision).toBe("pull_to_control");
     let evals = 0;
-    const setDefault = vi.fn(async () => undefined);
+    const setDefault = vi.fn(async () => "v2_unicode" as const);
     await applyDecision(decision, {
       allowLocalDecision: true,
       evaluateIdentity: async () => {

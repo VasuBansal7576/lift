@@ -42,7 +42,7 @@ export function estimateFleetCalls(
     environmentDocs: envDocs,
     total: admin + events + results + complete + envDocs,
     notes: [
-      `${armN} identities per arm (${armN * 2} visits/site) — under the 300/arm default to keep Playwright time and the 50k/month Flagsmith budget in check.`,
+      `Fixed horizon of ${armN * 2} identities per site (~${armN}/arm, random 50/50). Cap is Playwright runtime for eight sequential sites, not the 50k/month Flagsmith API budget (local eval + batched events keep HTTP to a few hundred calls).`,
       "Node SDK local evaluation: environment document ~1–2 times per site, not per visitor.",
       "Playwright bots do not call the JS SDK. Events flush in batches (~1–2 POSTs/site).",
       "Admin: ensure feature/metric/experiment/start (~20) + results poll/refresh (~6) + complete/GET (~2) per site.",

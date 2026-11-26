@@ -46,11 +46,12 @@ export async function snapshotSite() {
     matched: 0,
     expected: null,
     usedFallback: false,
+    environmentDefaultPath: null,
   };
   if (decision.decision !== "keep_running") {
     const expected = decision.decision === "rollout_treatment" ? "treatment" : "control";
     const admin = new FlagsmithAdmin(cfg);
-    await setEnvironmentDefault(
+    const environmentDefaultPath = await setEnvironmentDefault(
       admin,
       cfg.environmentKey,
       state.flagId,
@@ -77,6 +78,7 @@ export async function snapshotSite() {
       matched,
       expected,
       usedFallback: true,
+      environmentDefaultPath,
     };
   }
 
@@ -89,6 +91,7 @@ export async function snapshotSite() {
     personaMix: cfg.personaMix,
     site: site.id,
     verification,
+    producedBy: "snapshot",
   });
   const path = writeDashboard(doc);
   process.stdout.write(`Wrote ${path} for completed ${site.id} experiment ${state.experimentId}\n`);

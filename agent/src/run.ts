@@ -116,6 +116,7 @@ export async function runExperiment() {
         personaMix: cfg.personaMix,
         site: site.id,
         verification,
+        producedBy: "fleet",
       });
       const path = writeDashboard(doc);
       if (process.env.LIFT_FLEET !== "true") {

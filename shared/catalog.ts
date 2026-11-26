@@ -5,6 +5,21 @@ export interface SiteBarrier extends Barrier {
   siteFlag: string;
 }
 
+/** Accessible names the site-aware bots look up. Not guessed from regexes. */
+export interface SiteAccessibleNames {
+  menu: string[];
+  open: { role: "link" | "button"; name: string }[];
+  searchButton?: string;
+  searchField?: string;
+  terms?: string;
+  submit: string;
+  submitIds: string[];
+  frictionConfirm?: string;
+}
+
+export const PRICING_FRICTION_DISCLOSURE =
+  "60% of treatment conversions are dropped by construction (bots click through the modal; the friction is an injected drop-off). With the assumed mix, treatment cannot beat control, expected −50%. The decision isn't hard-coded, but the loss is.";
+
 export interface SiteDef {
   id: string;
   name: string;
@@ -17,10 +32,17 @@ export interface SiteDef {
   barriers: SiteBarrier[];
   /** First-failure blockedBy the control fixture returns, per persona. */
   controlBlocked: Record<Persona, BarrierId[]>;
-  /** Treatment-only friction (extra modal). Outcome is not hard-coded. */
+  /** Exact accessible names the Playwright bots use for this site. */
+  accessible: SiteAccessibleNames;
+  /**
+   * Treatment-only friction (extra modal). `frictionKeepRate` is P(keep),
+   * i.e. rand() < keepRate keeps the conversion. Pricing is a designed-to-lose
+   * pipeline check of pull_to_control; the decision is not hard-coded.
+   */
   harmfulFix?: {
     barrierId: "extra_confirm";
-    dropout: number;
+    frictionKeepRate: number;
+    designedToLose: true;
     note: string;
   };
 }
@@ -65,6 +87,16 @@ const checkout: SiteDef = {
     keyboard: ["hover_menu"],
     "screen-reader": ["hover_menu", "unlabeled_icon"],
     "low-vision": ["low_contrast"],
+  },
+  accessible: {
+    menu: ["Shop"],
+    open: [
+      { role: "link", name: "Checkout" },
+      { role: "button", name: "View cart and check out" },
+    ],
+    terms: "terms of sale",
+    submit: "Place order",
+    submitIds: ["place-order"],
   },
 };
 
@@ -131,6 +163,13 @@ const signup: SiteDef = {
     "screen-reader": ["missing_labels"],
     "low-vision": ["low_contrast"],
   },
+  accessible: {
+    menu: [],
+    open: [],
+    terms: "Harbor Notes",
+    submit: "Create account",
+    submitIds: ["place-order"],
+  },
 };
 
 const pricing: SiteDef = {
@@ -142,7 +181,7 @@ const pricing: SiteDef = {
   metricEvent: "trial_started",
   dir: "sites/pricing",
   hypothesis:
-    "Making Start trial keyboard-accessible and labelled raises trial starts. A treatment-only extra confirmation step is also shipped as a 'careful conversion' fix; whether that helps or hurts falls out of the persona model. Traffic is simulated.",
+    "Making Start trial keyboard-accessible and labelled raises trial starts. A treatment-only extra confirmation step is also shipped as a 'careful conversion' fix. 60% of treatment conversions are dropped by construction (bots click through the modal; the friction is an injected drop-off). With the assumed mix, treatment cannot beat control, expected −50%. The decision isn't hard-coded, but the loss is. Traffic is simulated.",
   barriers: [
     barrier(
       "pricing",
@@ -187,10 +226,18 @@ const pricing: SiteDef = {
     "screen-reader": ["hover_menu"],
     "low-vision": [],
   },
+  accessible: {
+    menu: ["Plans"],
+    open: [{ role: "link", name: "Start trial" }],
+    submit: "Start trial",
+    submitIds: ["place-order"],
+    frictionConfirm: "Start trial anyway",
+  },
   harmfulFix: {
     barrierId: "extra_confirm",
-    dropout: 0.4,
-    note: "Treatment shows [data-friction-step]. Converted visits then take an extra seeded dropout. Lift does not hard-code pull_to_control.",
+    frictionKeepRate: 0.4,
+    designedToLose: true,
+    note: PRICING_FRICTION_DISCLOSURE,
   },
 };
 
@@ -238,6 +285,12 @@ const newsletter: SiteDef = {
     keyboard: [],
     "screen-reader": ["missing_labels"],
     "low-vision": ["low_contrast"],
+  },
+  accessible: {
+    menu: [],
+    open: [],
+    submit: "Subscribe to the newsletter",
+    submitIds: ["subscribe"],
   },
 };
 
@@ -295,6 +348,12 @@ const donate: SiteDef = {
     "screen-reader": ["unlabeled_icon"],
     "low-vision": ["low_contrast"],
   },
+  accessible: {
+    menu: [],
+    open: [{ role: "button", name: "Give to River Keep" }],
+    submit: "Give",
+    submitIds: ["place-order"],
+  },
 };
 
 const booking: SiteDef = {
@@ -341,6 +400,12 @@ const booking: SiteDef = {
     keyboard: ["hover_menu"],
     "screen-reader": ["hover_menu"],
     "low-vision": [],
+  },
+  accessible: {
+    menu: ["Appointments"],
+    open: [{ role: "link", name: "Book a visit" }],
+    submit: "Reserve",
+    submitIds: ["place-order"],
   },
 };
 
@@ -398,6 +463,12 @@ const login: SiteDef = {
     "screen-reader": ["missing_labels"],
     "low-vision": ["low_contrast"],
   },
+  accessible: {
+    menu: [],
+    open: [],
+    submit: "Sign in",
+    submitIds: ["signin"],
+  },
 };
 
 const search: SiteDef = {
@@ -453,6 +524,14 @@ const search: SiteDef = {
     keyboard: ["div_button"],
     "screen-reader": ["missing_labels"],
     "low-vision": ["low_contrast"],
+  },
+  accessible: {
+    menu: [],
+    open: [],
+    searchButton: "Search the catalog",
+    searchField: "Search",
+    submit: "Add to cart",
+    submitIds: ["place-order"],
   },
 };
 

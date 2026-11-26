@@ -130,8 +130,8 @@ export function srmPValue(
 
 export function formatPWin(p: number): string {
   if (!Number.isFinite(p)) return "n/a";
-  if (p >= 0.999) return ">99.9%";
-  if (p <= 0.001) return "<0.1%";
+  if (p > 0.999) return ">99.9%";
+  if (p < 0.001) return "<0.1%";
   return `${(p * 100).toFixed(1)}%`;
 }
 

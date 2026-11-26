@@ -33,19 +33,29 @@ export function applyBaselineDropout(
   return { converted: false, dropped: true };
 }
 
-/** Extra seeded dropout when treatment added a friction step. Not a hard-coded loser. */
-export function applyFrictionDropout(
+/**
+ * Extra seeded keep/drop when treatment added a friction step.
+ * `keepRate` is P(keep): rand() < keepRate keeps the conversion.
+ * Not a hard-coded loser — pricing's 0.4 keep rate is a designed-to-lose
+ * pipeline check of pull_to_control.
+ */
+export function applyFrictionKeep(
   converted: boolean,
   rand: () => number,
   hasFriction: boolean,
-  probability: number,
+  keepRate: number,
 ): { converted: boolean; dropped: boolean } {
-  if (!converted || !hasFriction || probability <= 0) {
+  if (!converted || !hasFriction) {
     return { converted, dropped: false };
   }
-  if (rand() < probability) return { converted: true, dropped: false };
+  if (keepRate <= 0) return { converted: false, dropped: true };
+  if (keepRate >= 1) return { converted: true, dropped: false };
+  if (rand() < keepRate) return { converted: true, dropped: false };
   return { converted: false, dropped: true };
 }
+
+/** @deprecated Use applyFrictionKeep. Same keep-rate semantics. */
+export const applyFrictionDropout = applyFrictionKeep;
 
 export function variantFromFlag(flag: {
   value?: unknown;
@@ -83,7 +93,12 @@ export async function assignVariant(
   return { variant, flag: flag as Flag };
 }
 
+/**
+ * Poll local eval until visitor #0 would enroll. Events stay off so this
+ * records zero fake exposures. The traffic loop then uses the same identity.
+ */
 async function waitUntilEnrolled(cfg: LiftConfig, timeoutMs = 120_000) {
+  const identity = identityFor(cfg.trafficRunId, cfg.trafficSeed, 0);
   const deadline = Date.now() + timeoutMs;
   let last = "not tried";
   while (Date.now() < deadline) {
@@ -91,15 +106,15 @@ async function waitUntilEnrolled(cfg: LiftConfig, timeoutMs = 120_000) {
       environmentKey: cfg.serverKey || cfg.environmentKey,
       apiUrl: cfg.adminApiUrl || cfg.apiUrl,
       enableLocalEvaluation: Boolean(cfg.serverKey),
-      enableEvents: true,
+      enableEvents: false,
       environmentRefreshIntervalSeconds: 1,
     });
     try {
-      const flag = (await flagsmith.getExperimentFlag(
-        cfg.flagName,
-        `lift-enroll-${Date.now()}`,
-        { simulated: true, site: cfg.siteId },
-      )) as Flag;
+      const flags = await flagsmith.getIdentityFlags(identity, {
+        simulated: true,
+        site: cfg.siteId,
+      });
+      const flag = flags.getFlag(cfg.flagName) as Flag;
       if (
         flag.experiment?.inExperiment &&
         (flag.variant === "control" || flag.variant === "treatment")
@@ -245,11 +260,11 @@ export async function runTraffic(overrides?: Partial<LiftConfig>) {
         dropoutRand,
         cfg.baselineConvert,
       );
-      const friction = applyFrictionDropout(
+      const friction = applyFrictionKeep(
         baseline.converted,
         frictionRand,
         hasFriction,
-        cfg.frictionDropout,
+        cfg.frictionKeepRate,
       );
       const converted = friction.converted;
       const reason = friction.dropped

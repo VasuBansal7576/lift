@@ -1,10 +1,14 @@
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { SITES, getSite, barrierFlagMap } from "../../shared/catalog.ts";
+import { SITES, getSite, barrierFlagMap, PRICING_FRICTION_DISCLOSURE } from "../../shared/catalog.ts";
 import { PERSONAS } from "../../shared/types.ts";
-import { aggregateSites, decisionLabel } from "../../shared/aggregate.ts";
+import { aggregateSites, decisionLabel, type SiteRow } from "../../shared/aggregate.ts";
 import { estimateFleetCalls } from "../../shared/estimate.ts";
 import { scanSite } from "../../agent/src/scan.ts";
-import { applyFrictionDropout } from "../../traffic/src/runner.ts";
+import { applyBaselineDropout, applyFrictionKeep } from "../../traffic/src/runner.ts";
+import { mixSeed, mulberry32 } from "../../shared/rng.ts";
 
 describe("site catalog", () => {
   it("ships checkout plus 7 demo sites with unique flags and metrics", () => {
@@ -32,6 +36,27 @@ describe("site catalog", () => {
       }
     }
     expect(getSite("pricing").harmfulFix?.barrierId).toBe("extra_confirm");
+    expect(getSite("pricing").harmfulFix?.frictionKeepRate).toBe(0.4);
+    expect(getSite("pricing").harmfulFix?.designedToLose).toBe(true);
+    expect(getSite("pricing").harmfulFix?.note).toBe(PRICING_FRICTION_DISCLOSURE);
+    for (const site of SITES) {
+      expect(site.accessible.submit.length).toBeGreaterThan(0);
+      expect(site.accessible.submitIds.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("keeps expected accessible names in the catalog, not generic-persona regexes", () => {
+    const src = readFileSync(
+      resolve(dirname(fileURLToPath(import.meta.url)), "../../traffic/src/generic-personas.ts"),
+      "utf8",
+    );
+    expect(src).not.toMatch(/start trial\|book a visit/);
+    expect(src).not.toMatch(/give to river keep\|view cart/i);
+    expect(src).not.toMatch(/plans\|appointments\|shop\|bag/i);
+    expect(src).not.toMatch(/terms\|harbor notes/i);
+    expect(getSite("pricing").accessible.frictionConfirm).toBe("Start trial anyway");
+    expect(getSite("search").accessible.searchButton).toBe("Search the catalog");
+    expect(getSite("donate").accessible.open[0]?.name).toBe("Give to River Keep");
   });
 
   it("scans data-barrier markers on every fixture", () => {
@@ -60,6 +85,8 @@ describe("fleet aggregation", () => {
         winProbabilityTreatment: 0.99,
         decision: "rollout_treatment" as const,
         source: "flagsmith" as const,
+        producedBy: "fleet" as const,
+        commitSha: "test",
       },
       {
         site: "b",
@@ -75,6 +102,8 @@ describe("fleet aggregation", () => {
         winProbabilityTreatment: 0.02,
         decision: "pull_to_control" as const,
         source: "flagsmith" as const,
+        producedBy: "fleet" as const,
+        commitSha: "test",
       },
       {
         site: "c",
@@ -90,14 +119,20 @@ describe("fleet aggregation", () => {
         winProbabilityTreatment: 0.8,
         decision: "keep_running" as const,
         source: "flagsmith" as const,
+        producedBy: "fleet" as const,
+        commitSha: "test",
       },
-    ];
+    ] satisfies SiteRow[];
     const agg = aggregateSites(rows);
     expect(agg.method).toBe("median_of_site_lifts");
     expect(agg.medianLift).toBeCloseTo(0.1);
     expect(agg.pooledLift).toBeCloseTo((0.5166666667 - 0.5) / 0.5);
     expect(agg.headline).toMatch(/conversion lift across 3 sites/);
     expect(agg.headline).toMatch(/SIMULATED/);
+    expect(agg.headline).toMatch(/IQR/);
+    expect(agg.pooledCopy).toMatch(/Pooled sensitivity/);
+    expect(agg.pooledCopy).toMatch(/control 150\/300 vs treatment 155\/300/);
+    expect(agg.multipleTestingNote).toMatch(/3 separate tests were run at 95%/);
     expect(decisionLabel("pull_to_control")).toBe("pulled");
     expect(decisionLabel("rollout_treatment")).toBe("rolled out");
     expect(decisionLabel("keep_running")).toBe("still running");
@@ -111,22 +146,64 @@ describe("fleet API estimate", () => {
     expect(estimate.sites).toBe(8);
     expect(estimate.visitors).toBe(3200);
     expect(estimate.total).toBeLessThan(2000);
+    expect(estimate.notes[0]).toMatch(/Playwright runtime/);
+    expect(estimate.notes[0]).toMatch(/400 identities per site/);
   });
 });
 
-describe("friction dropout", () => {
-  it("only applies when the treatment friction step is present", () => {
-    expect(applyFrictionDropout(true, () => 0.9, false, 0.4)).toEqual({
+describe("friction keep rate", () => {
+  it("treats frictionKeepRate as P(keep), not P(drop)", () => {
+    expect(applyFrictionKeep(true, () => 0.399, true, 0.4)).toEqual({
       converted: true,
       dropped: false,
     });
-    expect(applyFrictionDropout(true, () => 0.9, true, 0.4)).toEqual({
+    expect(applyFrictionKeep(true, () => 0.4, true, 0.4)).toEqual({
       converted: false,
       dropped: true,
     });
-    expect(applyFrictionDropout(true, () => 0.1, true, 0.4)).toEqual({
+    expect(applyFrictionKeep(true, () => 0.9, false, 0.4)).toEqual({
       converted: true,
       dropped: false,
     });
+    expect(applyFrictionKeep(true, () => 0.1, true, 0.4)).toEqual({
+      converted: true,
+      dropped: false,
+    });
+  });
+
+  it("baseline 0.75 × frictionKeep 0.4 yields about 0.30 over 10k independent draws", () => {
+    const dropoutRand = mulberry32(mixSeed(20261126, "sim-friction", 0, "dropout"));
+    const frictionRand = mulberry32(mixSeed(20261126, "sim-friction", 0, "friction"));
+    const n = 10_000;
+    const xs: number[] = [];
+    const ys: number[] = [];
+    let kept = 0;
+    for (let i = 0; i < n; i += 1) {
+      const x = dropoutRand();
+      const y = frictionRand();
+      xs.push(x);
+      ys.push(y);
+      const baseline = applyBaselineDropout(true, () => x, 0.75);
+      const friction = applyFrictionKeep(baseline.converted, () => y, true, 0.4);
+      if (friction.converted) kept += 1;
+    }
+    const observed = kept / n;
+    expect(observed).toBeGreaterThan(0.28);
+    expect(observed).toBeLessThan(0.32);
+    const mean = (arr: number[]) => arr.reduce((s, v) => s + v, 0) / arr.length;
+    const mx = mean(xs);
+    const my = mean(ys);
+    let num = 0;
+    let dx = 0;
+    let dy = 0;
+    for (let i = 0; i < n; i += 1) {
+      const a = xs[i] - mx;
+      const b = ys[i] - my;
+      num += a * b;
+      dx += a * a;
+      dy += b * b;
+    }
+    const r = num / Math.sqrt(dx * dy);
+    expect(Math.abs(r)).toBeLessThan(0.05);
   });
 });

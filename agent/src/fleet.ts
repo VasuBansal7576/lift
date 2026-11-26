@@ -62,7 +62,7 @@ export async function runFleet() {
     if (!server.reused) await server.close();
   }
 
-  const fleetDoc = buildFleetDocument(rows, estimate);
+  const fleetDoc = buildFleetDocument(rows, estimate, "fleet", sha);
   const path = fleetResultsPath();
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, `${JSON.stringify(fleetDoc, null, 2)}\n`);

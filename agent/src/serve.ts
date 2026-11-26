@@ -98,7 +98,7 @@ function listen(server: Server, port: number, label: string): Promise<StaticServ
     server.on("error", (err: NodeJS.ErrnoException) => {
       if (err.code === "EADDRINUSE") {
         process.stderr.write(
-          `Port ${port} already in use; reusing the existing ${label} server.\n`,
+          `Port ${port} already in use; reusing the existing ${label} server. If bots need URL override, start it with npm run site -- --allow-mock.\n`,
         );
         resolveServer({ reused: true, close: async () => undefined });
         return;

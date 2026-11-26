@@ -208,11 +208,15 @@ describe("fleet aggregation", () => {
     expect(seven.secondary.siteCount).toBe(3);
     expect(seven.pipelineCheckNote).toMatch(/pricing/);
     expect(seven.designedToLoseSites).toEqual(["pricing"]);
+    expect(seven.explanation).toMatch(/pricing is excluded from the headline/);
+    expect(seven.explanation).not.toMatch(/captain/i);
 
     const eight = aggregateSites(rows, undefined, true);
     expect(eight.siteCount).toBe(3);
     expect(eight.medianLift).toBeCloseTo(0.2);
     expect(eight.secondary.siteCount).toBe(2);
+    expect(eight.explanation).toMatch(/across every site, including designed-to-lose/);
+    expect(eight.explanation).not.toMatch(/captain/i);
   });
 });
 

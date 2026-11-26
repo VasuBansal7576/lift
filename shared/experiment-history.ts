@@ -16,16 +16,15 @@ export interface HistoricExperiment {
   reason: string;
 }
 
-export const ABANDONED_REASON =
-  "ID gap, 404 on lookup, cause unknown (IDs may be shared or allocated by failed creates)";
+export const ABANDONED_REASON = "ID gaps; cause unknown";
 
-/** Gaps in Development experiment ids. Looked up 2026-11-26; all 404. */
+/** ID gaps; cause unknown. Looked up 2026-11-26; all 404. */
 export const ABANDONED_EXPERIMENTS: HistoricExperiment[] = [
   {
     id: 615,
     kind: "abandoned",
     flag: null,
-    site: "pricing",
+    site: "adjacent to pricing run",
     name: null,
     status: "not_found",
     exposures: null,
@@ -36,7 +35,7 @@ export const ABANDONED_EXPERIMENTS: HistoricExperiment[] = [
     id: 617,
     kind: "abandoned",
     flag: null,
-    site: "newsletter",
+    site: "adjacent to newsletter run",
     name: null,
     status: "not_found",
     exposures: null,
@@ -47,7 +46,7 @@ export const ABANDONED_EXPERIMENTS: HistoricExperiment[] = [
     id: 620,
     kind: "abandoned",
     flag: null,
-    site: "booking",
+    site: "adjacent to booking run",
     name: null,
     status: "not_found",
     exposures: null,
@@ -58,7 +57,7 @@ export const ABANDONED_EXPERIMENTS: HistoricExperiment[] = [
     id: 622,
     kind: "abandoned",
     flag: null,
-    site: "login",
+    site: "adjacent to login run",
     name: null,
     status: "not_found",
     exposures: null,
@@ -69,7 +68,7 @@ export const ABANDONED_EXPERIMENTS: HistoricExperiment[] = [
     id: 623,
     kind: "abandoned",
     flag: null,
-    site: "login",
+    site: "adjacent to login run",
     name: null,
     status: "not_found",
     exposures: null,
@@ -210,7 +209,7 @@ export const FLEET_F1_EXPERIMENTS: HistoricExperiment[] = [
   },
 ];
 
-/** ID gaps from the F1-fix re-run bootstrap (unicode/string create retries). */
+/** ID gaps; cause unknown. F1-fix re-run bootstrap (unicode/string create retries). */
 export const F1_RERUN_ABANDONED_IDS = [
   626, 627, 628, 629, 630, 631, 633, 634, 636, 638, 639, 641, 643, 645, 646, 648,
   649, 650,

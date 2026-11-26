@@ -8,12 +8,12 @@ import {
 import { compactMix } from "./mix.ts";
 import { gitCommitSha } from "./git.ts";
 
-export type ProducedBy = "fleet" | "snapshot" | "reused" | "experiment";
+export type ProducedBy = "fleet" | "snapshot" | "reused" | "experiment" | "rebuild";
 
 /**
- * Captain switch: when false (default), the headline uses the 7 real fixes
- * and shows pricing as a designed-to-lose pipeline check. Set true to count
- * all 8 sites in the headline.
+ * When false (default), the headline uses the 7 real fixes and shows pricing
+ * as a designed-to-lose pipeline check. Set HEADLINE_INCLUDE_DESIGNED_TO_LOSE=true
+ * to count all 8 sites in the headline.
  */
 export const HEADLINE_INCLUDE_DESIGNED_TO_LOSE = false;
 
@@ -204,14 +204,9 @@ export function aggregateSites(
     : `Including the designed-to-lose pipeline check (${rows.length} sites)`;
   const primary = summariseRows(primaryRows, mix, primaryLabel);
   const secondary = summariseRows(secondaryRows, mix, secondaryLabel);
-  const explanation =
-    "Headline is the unweighted median of per-site relative lifts on the real accessibility fixes " +
-    (includeDesignedToLose
-      ? "(captain switch counts every site, including designed-to-lose pipeline checks). "
-      : "(pricing is excluded from the headline as a designed-to-lose pull_to_control pipeline check). ") +
-    "Sites are not a sample of the web; each row is its own experiment with an assumed persona mix. " +
-    "Pooled lift (visitors summed across headline sites) is shown as a sensitivity check — it weights larger n more, " +
-    "and it is not the headline because sites have different flows and are not exchangeable.";
+  const explanation = includeDesignedToLose
+    ? "Headline is the unweighted median of per-site relative lifts across every site, including designed-to-lose pipeline checks. Sites are not a sample of the web; each row is its own experiment with an assumed persona mix. Pooled lift (visitors summed across headline sites) is shown as a sensitivity check — it weights larger n more, and it is not the headline because sites have different flows and are not exchangeable."
+    : "Headline is the unweighted median of per-site relative lifts on the real accessibility fixes (pricing is excluded from the headline as a designed-to-lose pull_to_control pipeline check). Sites are not a sample of the web; each row is its own experiment with an assumed persona mix. Pooled lift (visitors summed across headline sites) is shown as a sensitivity check — it weights larger n more, and it is not the headline because sites have different flows and are not exchangeable.";
   const pipelineCheckNote = designedToLoseSites.length
     ? `${designedToLoseSites.join(", ")} ${designedToLoseSites.length === 1 ? "is" : "are"} a designed-to-lose pull_to_control pipeline check, shown separately from the headline.`
     : "";

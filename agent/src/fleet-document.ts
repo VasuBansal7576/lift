@@ -24,10 +24,24 @@ import type { FlagsmithResultsEnvelope } from "./decide.ts";
 
 export { estimateFleetCalls, FLEET_ARM_N };
 
-export function buildFleetDocument(rows: SiteRow[], estimate: FleetCallEstimate) {
+export function dataCommitShaFromRows(rows: SiteRow[]): string {
+  const shas = [
+    ...new Set(rows.map((row) => row.commitSha).filter((sha) => Boolean(sha) && sha !== "unknown")),
+  ];
+  if (shas.length === 0) return gitCommitSha();
+  if (shas.length === 1) return shas[0];
+  return [...shas].sort().join(",");
+}
+
+export function buildFleetDocument(
+  rows: SiteRow[],
+  estimate: FleetCallEstimate,
+  producedBy: ProducedBy = "fleet",
+  aggregationCommitSha = gitCommitSha(),
+) {
   const mix = DEFAULT_PERSONA_MIX;
   const aggregate = aggregateSites(rows, mix);
-  const sha = gitCommitSha();
+  const dataCommitSha = dataCommitShaFromRows(rows);
   const currentIds = rows
     .map((row) => row.experimentId)
     .filter((id): id is number => typeof id === "number");
@@ -37,8 +51,10 @@ export function buildFleetDocument(rows: SiteRow[], estimate: FleetCallEstimate)
     label:
       "SIMULATED TRAFFIC — Playwright persona bots, not humans. Demonstration of the pipeline; outcomes follow the persona model, not evidence about real users.",
     generatedAt: new Date().toISOString(),
-    producedBy: "fleet" as ProducedBy,
-    commitSha: sha,
+    producedBy,
+    dataCommitSha,
+    aggregationCommitSha,
+    commitSha: aggregationCommitSha,
     sites: rows.length,
     site: "fleet",
     personaMix: mix,
@@ -59,13 +75,13 @@ export function buildFleetDocument(rows: SiteRow[], estimate: FleetCallEstimate)
       pipelineCheckNote: aggregate.pipelineCheckNote,
       secondary: aggregate.secondary,
     },
-    outcome: `${aggregate.explanation} ${aggregate.pooledCopy} ${aggregate.pipelineCheckNote} ${aggregate.multipleTestingNote}`,
-    honesty: `${aggregate.explanation} ${LIFT_CONSTRUCTION_NOTE}`,
+    outcome: aggregate.headline,
+    honesty: LIFT_CONSTRUCTION_NOTE,
     constructionNote: LIFT_CONSTRUCTION_NOTE,
     rows: rows.map((row) => ({
       ...row,
       producedBy: row.producedBy,
-      commitSha: row.commitSha || sha,
+      commitSha: row.commitSha || aggregationCommitSha,
       decisionLabel: decisionLabel(row.decision),
     })),
     flags: rows.map((row) => ({
@@ -81,7 +97,7 @@ export function buildFleetDocument(rows: SiteRow[], estimate: FleetCallEstimate)
       decision: row.decision,
       flagsmithDashboard: row.flagsmithDashboard,
       producedBy: row.producedBy,
-      commitSha: row.commitSha || sha,
+      commitSha: row.commitSha || aggregationCommitSha,
       expectedLift: row.expectedLift,
       blockedShare: row.blockedShare,
       designedToLose: row.designedToLose,
@@ -141,8 +157,8 @@ export function enrichSiteDocument(doc: SiteDashboardDoc): SiteDashboardDoc {
 
 /** Rebuild dashboard/results.json from dashboard/sites/*.json. Does not send traffic. */
 export function rebuildFleetFromSiteDocs(): ReturnType<typeof buildFleetDocument> {
+  const aggregationCommitSha = gitCommitSha();
   const rows: SiteRow[] = [];
-  const sha = gitCommitSha();
   for (const site of SITES) {
     const path = resultsPath(site.id);
     if (!existsSync(path)) {
@@ -152,10 +168,14 @@ export function rebuildFleetFromSiteDocs(): ReturnType<typeof buildFleetDocument
     writeFileSync(path, `${JSON.stringify(enriched, null, 2)}\n`);
     const row = siteRowFromDocument(enriched);
     row.name = site.name;
-    if (!row.commitSha) row.commitSha = sha;
     rows.push(row);
   }
-  const fleetDoc = buildFleetDocument(rows, estimateFleetCalls(SITES.length, FLEET_ARM_N));
+  const fleetDoc = buildFleetDocument(
+    rows,
+    estimateFleetCalls(SITES.length, FLEET_ARM_N),
+    "rebuild",
+    aggregationCommitSha,
+  );
   const path = fleetResultsPath();
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, `${JSON.stringify(fleetDoc, null, 2)}\n`);

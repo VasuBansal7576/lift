@@ -8,7 +8,12 @@ import {
   siteRowFromDocument,
   type SiteRow,
 } from "../../shared/aggregate.ts";
-import { ABANDONED_REASON, historicLists } from "../../shared/experiment-history.ts";
+import {
+  ABANDONED_EXPERIMENTS,
+  ABANDONED_REASON,
+  F1_RERUN_ABANDONED,
+  historicLists,
+} from "../../shared/experiment-history.ts";
 import { relativeLift } from "../../agent/src/stats.ts";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
@@ -24,13 +29,24 @@ function fleetFixtureNames(dir: string): string[] {
 describe("committed fleet fixtures", () => {
   it("matches results.json, sites/*.json, and recomputes median and pooled lifts", () => {
     const results = readJson<{
+      producedBy?: string;
+      dataCommitSha?: string;
+      aggregationCommitSha?: string;
       rows: SiteRow[];
       aggregate: {
         medianLift: number | null;
+        iqrLow: number | null;
+        iqrHigh: number | null;
+        liftMin: number | null;
+        liftMax: number | null;
         pooledLift: number | null;
         pooledControl: { visitors: number; conversions: number };
         pooledTreatment: { visitors: number; conversions: number };
-        secondary?: { medianLift: number | null; pooledLift: number | null; siteCount: number };
+        secondary?: {
+          medianLift: number | null;
+          pooledLift: number | null;
+          siteCount: number;
+        };
         siteCount: number;
       };
       headline: { source: string; copy: string };
@@ -102,9 +118,20 @@ describe("committed fleet fixtures", () => {
 
     const agg = aggregateSites(fromSites);
     expect(agg.medianLift).toBeCloseTo(results.aggregate.medianLift ?? NaN, 10);
+    expect(agg.iqrLow).toBeCloseTo(results.aggregate.iqrLow ?? NaN, 10);
+    expect(agg.iqrHigh).toBeCloseTo(results.aggregate.iqrHigh ?? NaN, 10);
+    expect(agg.liftMin).toBeCloseTo(results.aggregate.liftMin ?? NaN, 10);
+    expect(agg.liftMax).toBeCloseTo(results.aggregate.liftMax ?? NaN, 10);
     expect(agg.pooledLift).toBeCloseTo(results.aggregate.pooledLift ?? NaN, 10);
     expect(agg.pooledControl.visitors).toBe(results.aggregate.pooledControl.visitors);
     expect(agg.pooledTreatment.visitors).toBe(results.aggregate.pooledTreatment.visitors);
+    expect(agg.secondary.siteCount).toBe(8);
+    expect(agg.secondary.medianLift).toBeCloseTo(results.aggregate.secondary?.medianLift ?? NaN, 10);
+    expect(agg.secondary.pooledLift).toBeCloseTo(results.aggregate.secondary?.pooledLift ?? NaN, 10);
+    expect(results.producedBy).toMatch(/^(fleet|rebuild|experiment)$/);
+    expect(results.dataCommitSha).toBeTruthy();
+    expect(results.aggregationCommitSha).toBeTruthy();
+    expect(results.aggregationCommitSha).not.toMatch(/-dirty$/);
 
     const fixtureDir = resolve(ROOT, "tests/fixtures");
     const supersededDir = resolve(ROOT, "tests/fixtures/superseded");
@@ -160,6 +187,36 @@ describe("committed fleet fixtures", () => {
     }
     for (const row of historic.supersededExperiments) {
       expect(supersededIds.has(row.id), `superseded ${row.id}`).toBe(true);
+    }
+  });
+
+  it("lists every committed fixture experiment id as current, superseded, or abandoned", () => {
+    const results = readJson<{
+      rows: { experimentId?: number | null }[];
+      abandonedExperiments: { id: number }[];
+      supersededExperiments: { id: number }[];
+    }>(resolve(ROOT, "dashboard/results.json"));
+    const listed = new Set<number>([
+      ...results.rows.map((row) => row.experimentId).filter((id): id is number => typeof id === "number"),
+      ...results.abandonedExperiments.map((row) => row.id),
+      ...results.supersededExperiments.map((row) => row.id),
+    ]);
+    const dirs = [resolve(ROOT, "tests/fixtures"), resolve(ROOT, "tests/fixtures/superseded")];
+    for (const dir of dirs) {
+      for (const name of readdirSync(dir).filter((n) => n.endsWith(".json"))) {
+        const fleet = name.match(/^flagsmith-results-fleet-[a-z]+-(\d+)\.json$/);
+        const site1 = name.match(/^flagsmith-results-(\d+)\.json$/);
+        const id = Number(fleet?.[1] ?? site1?.[1] ?? NaN);
+        if (!Number.isFinite(id)) continue;
+        expect(listed.has(id), `${dir}/${name}`).toBe(true);
+      }
+    }
+  });
+
+  it("does not attribute 404 gap IDs to a site", () => {
+    for (const row of [...ABANDONED_EXPERIMENTS, ...F1_RERUN_ABANDONED]) {
+      expect(row.reason).toBe(ABANDONED_REASON);
+      expect(row.site === null || row.site.startsWith("adjacent to ")).toBe(true);
     }
   });
 });

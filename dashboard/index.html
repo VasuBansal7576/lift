@@ -138,17 +138,18 @@
         }
         const intro = document.getElementById("intro");
         if (intro) {
-          intro.textContent =
-            `Hypothesis: fixing accessibility barriers raises conversions. ${data.outcome || data.aggregate?.explanation || "The experiment outcome is in the headline."}`;
+          intro.textContent = isFleet
+            ? "Hypothesis: fixing accessibility barriers raises conversions. Flagsmith assigns arms, records exposures/conversions, and reports whether treatment rolled out, was pulled, or is still running."
+            : `Hypothesis: fixing accessibility barriers raises conversions. ${data.outcome || "The experiment outcome is in the headline."}`;
         }
         document.getElementById("mix").textContent = isFleet
           ? data.aggregate.explanation
           : `Assumed mix: ${data.personaMixLabel || ""}. Realised this run: ${data.realisedMixLabel || ""}. ${data.personaMixNote || ""}`;
         const provenance = data.producedBy
-          ? ` producedBy=${data.producedBy} commit=${data.commitSha || "unknown"}.`
+          ? ` producedBy=${data.producedBy} data=${data.dataCommitSha || data.commitSha || "unknown"} aggregation=${data.aggregationCommitSha || data.commitSha || "unknown"}.`
           : "";
         document.getElementById("meta").textContent =
-          `${data.label} Generated ${data.generatedAt}.${provenance} Headline source: ${data.headline?.source || "unknown"}. ${data.honesty || ""}`;
+          `${data.label} Generated ${data.generatedAt}.${provenance} Headline source: ${data.headline?.source || "unknown"}.`;
         const dash = document.getElementById("dashboard-link");
         clear(dash);
         if (!isFleet && data.flagsmithDashboard) {

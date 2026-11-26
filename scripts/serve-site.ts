@@ -79,3 +79,12 @@ const server = createServer(async (req, res) => {
 server.listen(port, "127.0.0.1", () => {
   process.stdout.write(`Serving ${siteRoot} on http://127.0.0.1:${port}\n`);
 });
+server.on("error", (err: NodeJS.ErrnoException) => {
+  if (err.code === "EADDRINUSE") {
+    process.stderr.write(
+      `Port ${port} already in use; reusing the existing ${dashboard ? "dashboard" : "sites"} server. If bots need URL override, start it with npm run site -- --allow-mock.\n`,
+    );
+    return;
+  }
+  throw err;
+});

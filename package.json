@@ -1,0 +1,36 @@
+{
+  "name": "lift",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Accessibility fixes shipped behind Flagsmith experiments, A/B tested on real conversions.",
+  "scripts": {
+    "flagsmith:up": "bash scripts/flagsmith-up.sh",
+    "flagsmith:down": "docker compose -f docker-compose.flagsmith.yml down",
+    "bootstrap": "tsx agent/src/bootstrap.ts",
+    "scan": "tsx agent/src/scan.ts",
+    "traffic": "tsx traffic/src/runner.ts",
+    "decide": "tsx agent/src/decide.ts",
+    "experiment": "tsx agent/src/run.ts",
+    "site": "node scripts/serve-site.mjs",
+    "dashboard": "node scripts/serve-site.mjs --dashboard",
+    "test": "vitest run",
+    "test:unit": "vitest run tests/unit",
+    "test:e2e": "playwright test",
+    "test:all": "vitest run tests/unit && playwright test"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@flagsmith/nodejs": "^9.1.0",
+    "dotenv": "^16.4.7"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.51.0",
+    "@types/node": "^22.13.10",
+    "tsx": "^4.19.3",
+    "typescript": "^5.8.2",
+    "vitest": "^3.0.8"
+  }
+}

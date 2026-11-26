@@ -6,7 +6,7 @@ Hackathon entry for WeMakeDevs Toggle Wars (Flagsmith), **Test Something Real** 
 
 An agent scans a **fixture** checkout (data-barrier markers plus axe-core on control), ships Kane-style WCAG fixes behind Flagsmith flags, runs a native Flagsmith experiment, sends simulated persona traffic, then auto-rolls out the winner through the Flagsmith Admin API **only when Flagsmith’s own `chance_to_win` is available**.
 
-Live humans are assigned by the Flagsmith JS SDK (`@flagsmith/flagsmith@12.4.0`). Playwright bots use a **URL override** (`?lift_variant=`) only when `config.allowMock` is true. Without Flagsmith, the live page will not bucket.
+Live humans are assigned by the Flagsmith JS SDK (`@flagsmith/flagsmith@12.4.0`). Playwright bots get their variant from the **Node SDK** (Flagsmith local evaluation). The checkout page is then forced to that arm with `?lift_variant=` so the bot exercises the same HTML the identity was enrolled in — that is why bot pages show **URL override (no Flagsmith)** in the footer. The query is honoured only when the server overlays `allowMock: true` on `/config.json` in memory (never written to disk). Without Flagsmith, the live page will not bucket.
 
 > **All traffic is simulated.** Playwright bots (mouse, keyboard-only, screen-reader, **contrast-threshold / low-vision**) attempt checkout. Numbers on the dashboard, identity traits, and this README are labelled **SIMULATED**. This demonstrates the pipeline; it is not evidence about real users.
 
@@ -37,7 +37,7 @@ The **bundled native experiment** is `checkout_a11y` (`control` vs keyed variant
 
 Mouse users still convert in control (they can hover, click the glyph, fill by position, check the box). That is the point: the lift is accessibility, not a new offer.
 
-The **low-vision / contrast-threshold persona (simulated)** uses a real 200% zoom (`deviceScaleFactor` + CSS zoom that affects layout) and applies WCAG 4.5:1 to **computed** colours. Unparsed colours throw; they are not skipped.
+The **low-vision / contrast-threshold persona (simulated)** uses a real 200% zoom (`deviceScaleFactor` + CSS zoom that affects layout) as a **realism step**. The **outcome is decided by the WCAG 4.5:1 contrast threshold** on computed colours, not by whether the zoom itself blocked the task. Unparsed colours throw; they are not skipped. Translucent colours are composited over the background or rejected.
 
 Fixes reuse Curb Cut’s repair ideas (`mirrorHoverToFocus`, `addLabel`, `makeFocusable` / native button, `setContrast`) in source rather than a runtime patch DSL.
 
@@ -45,7 +45,7 @@ The scanner looks for `data-barrier` markers in the fixture HTML. It does **not*
 
 ## Persona mix (assumption, not data)
 
-Default: **mouse 70%, keyboard 10%, screen-reader 10%, low-vision 10%** (`LIFT_PERSONA_MIX`). Chosen so a mouse majority remains while N=120 still gives minority personas enough treatment conversions to clear Flagsmith’s 5-conversion floor. This is a modelling assumption, not a measurement of the web. The mix is shown next to the dashboard headline.
+Default: **mouse 70%, keyboard 10%, screen-reader 10%, low-vision 10%** (`LIFT_PERSONA_MIX`). This is a modelling assumption, not a measurement of the web. **Lift is a function of the assumed share of keyboard, screen-reader and low-vision users** — those personas are blocked in control and succeed in treatment (subject to a seeded ~75% baseline completion probability that applies to both arms when unblocked). Flagsmith’s floors are **50 identities and 5 conversions per arm**, not a reason to pick 10% minority weights. The assumed mix and this run’s realised mix are shown next to the dashboard headline.
 
 ## Flagsmith features used
 
@@ -90,7 +90,7 @@ Org **Lift** (`42178`), project **Lift** (`56470`), environments Development and
 4. Put them in `.env` (see `.env.example`).
 5. `npm run bootstrap`
 6. `npm run experiment` (serves the checkout itself; reuses port 4174 if `npm run site` is already up). Then `npm run decide` is not required.
-7. `npm run dashboard` — banner says **SIMULATED TRAFFIC**. Headline source is `flagsmith` or `LOCAL ESTIMATE (not Flagsmith)`.
+7. `npm run dashboard` — banner says **SIMULATED TRAFFIC**. Headline source is `flagsmith` or `local_bayesian`.
 
 ### Self-host (local dev)
 
@@ -136,6 +136,6 @@ CI runs typecheck, unit, and Playwright. E2E uses `scripts/serve-site.mjs --allo
 
 - Bots, not humans. Every result surface says so.
 - First experiment is **one bundled flag**. Per-barrier flags are wired on the page but not concurrent Flagsmith experiments.
-- Flagsmith will show **Collecting data** until ~50 identities / 5 conversions per arm. Default `LIFT_TRAFFIC_N=120`.
+- Flagsmith will show **Collecting data** until **50 identities and 5 conversions per arm**. Default `LIFT_TRAFFIC_N=120`. Re-runs set `LIFT_RUN_ID` (and usually a new seed) so identities are new and a completed experiment is replaced.
 - Results refresh is at most once per 5 minutes. Lift polls with backoff until `chance_to_win` exists.
 - Completing from local math requires `LIFT_ALLOW_LOCAL_DECISION=true` and is labelled everywhere.

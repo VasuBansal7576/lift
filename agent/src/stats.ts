@@ -82,6 +82,17 @@ export function clampLift(lift: number | null): number | null {
   return Math.max(-10, Math.min(10, lift));
 }
 
+/** JSON-safe lift: Infinity must not become null. */
+export function serialiseLift(
+  lift: number | null,
+): number | "Infinity" | "-Infinity" | null {
+  if (lift === null) return null;
+  if (lift === Infinity) return "Infinity";
+  if (lift === -Infinity) return "-Infinity";
+  if (!Number.isFinite(lift)) return lift > 0 ? "Infinity" : "-Infinity";
+  return lift;
+}
+
 export function decideFromWinProbability(
   winProbabilityTreatment: number,
   threshold: number,

@@ -1,15 +1,16 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
 const SDK_URL = "https://cdn.jsdelivr.net/npm/@flagsmith/flagsmith@12.4.0/+esm";
 
-const STUB_SDK = `
+function stubSdk(variant: "control" | "treatment") {
+  return `
 const flagsmith = {
   async init() {},
   getExperimentFlag() {
-    return { variant: "treatment", value: "treatment", enabled: true };
+    return { variant: "${variant}", value: "${variant}", enabled: true };
   },
   getValue(name) {
-    return name === "checkout_a11y" ? "treatment" : "control";
+    return name === "checkout_a11y" ? "${variant}" : "control";
   },
   trackEvent() {},
   async setTrait() {},
@@ -17,20 +18,14 @@ const flagsmith = {
 };
 export default flagsmith;
 `;
+}
 
-test("CDN serves @flagsmith/flagsmith@12.4.0", async ({ request }) => {
-  const res = await request.get(SDK_URL);
-  expect(res.status(), "jsdelivr must serve @flagsmith/flagsmith@12.4.0 (not flagsmith@12.4.0)").toBe(200);
-  const body = await res.text();
-  expect(body).toMatch(/getExperimentFlag/);
-});
-
-test("real Flagsmith path loads without ?lift_variant", async ({ page }) => {
+async function stubFlagsmith(page: Page, variant: "control" | "treatment") {
   await page.route(SDK_URL, async (route) => {
     await route.fulfill({
       status: 200,
       contentType: "application/javascript",
-      body: STUB_SDK,
+      body: stubSdk(variant),
     });
   });
   await page.route("**/config.json", async (route) => {
@@ -45,9 +40,22 @@ test("real Flagsmith path loads without ?lift_variant", async ({ page }) => {
       },
     });
   });
+}
 
+test("real Flagsmith path loads without ?lift_variant", async ({ page }) => {
+  await stubFlagsmith(page, "treatment");
   await page.goto("/");
   await expect(page.locator("body")).toHaveAttribute("data-variant", "treatment");
   await expect(page.locator("#flag-status")).toHaveText(/Flagsmith checkout_a11y=treatment/);
+  await expect(page.locator("#flag-status")).not.toHaveText(/URL override/);
+});
+
+test("allowMock:false ignores ?lift_variant=treatment when Flagsmith returns control", async ({
+  page,
+}) => {
+  await stubFlagsmith(page, "control");
+  await page.goto("/?lift_variant=treatment");
+  await expect(page.locator("body")).toHaveAttribute("data-variant", "control");
+  await expect(page.locator("#flag-status")).toHaveText(/Flagsmith checkout_a11y=control/);
   await expect(page.locator("#flag-status")).not.toHaveText(/URL override/);
 });

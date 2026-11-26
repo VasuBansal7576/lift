@@ -72,15 +72,15 @@ function applyFixes(fixes, sourceLabel) {
   }
 
   const cart = document.getElementById("cart-icon");
-  if (fixes.unlabeled_icon && cart && cart.tagName !== "BUTTON") {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.id = "cart-icon";
-    button.className = "icon-btn";
-    button.setAttribute("aria-label", "View cart and check out");
-    button.textContent = "👜";
-    cart.replaceWith(button);
-    button.addEventListener("click", openCheckout);
+  if (fixes.unlabeled_icon && cart) {
+    if (!cart.getAttribute("aria-label")) {
+      cart.setAttribute("aria-label", "View cart and check out");
+      if (!cart.textContent) cart.textContent = "👜";
+    }
+    if (!cart.dataset.bound) {
+      cart.dataset.bound = "1";
+      cart.addEventListener("click", openCheckout);
+    }
   } else if (cart && !cart.dataset.bound) {
     cart.dataset.bound = "1";
     cart.addEventListener("click", openCheckout);

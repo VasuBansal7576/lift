@@ -62,6 +62,7 @@ body.fix-hover .hover-nav:focus-within .hover-menu { display: block; }
   font-size: 1.2rem;
   cursor: pointer;
 }
+#cart-icon:not([aria-label])::before { content: "👜"; }
 main { max-width: 40rem; margin: 0 auto; padding: 2rem 1.5rem 4rem; }
 .eyebrow { text-transform: uppercase; letter-spacing: 0.12em; font-size: 0.75rem; color: var(--muted); }
 .lede { font-size: 1.15rem; }

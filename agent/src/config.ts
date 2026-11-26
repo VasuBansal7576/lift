@@ -56,7 +56,9 @@ export function loadConfig() {
     siteUrl: env("LIFT_SITE_URL", "http://127.0.0.1:4174").replace(/\/$/, ""),
     trafficN: Math.max(8, Math.floor(envNumber("LIFT_TRAFFIC_N", 120))),
     trafficSeed: envNumber("LIFT_TRAFFIC_SEED", 20261126),
+    trafficRunId: env("LIFT_RUN_ID") || `r${envNumber("LIFT_TRAFFIC_SEED", 20261126)}`,
     winThreshold: envNumber("LIFT_WIN_THRESHOLD", 0.95),
+    baselineConvert: Math.min(1, Math.max(0, envNumber("LIFT_BASELINE_CONVERT", 0.75))),
     allowMock: env("LIFT_ALLOW_MOCK", "false") === "true",
     allowLocalDecision: env("LIFT_ALLOW_LOCAL_DECISION", "false") === "true",
     resultsWaitMs: Math.max(0, envNumber("LIFT_RESULTS_WAIT_MS", 420_000)),
@@ -70,7 +72,8 @@ export function loadConfig() {
 export type LiftConfig = ReturnType<typeof loadConfig>;
 
 export function statePath(): string {
-  return resolve(ROOT, "data/state.json");
+  const override = env("LIFT_STATE_PATH");
+  return override ? resolve(override) : resolve(ROOT, "data/state.json");
 }
 
 export function eventsPath(): string {

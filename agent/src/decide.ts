@@ -107,13 +107,13 @@ export function floorsMet(
   const treatment =
     variants.treatment ??
     Object.entries(variants).find(([key]) => key !== "control")?.[1];
-  if (!control || !treatment) return localOk;
-  const flagsmithOk =
+  if (!control || !treatment) return false;
+  return (
     (control.n ?? 0) >= IDENTITY_FLOOR &&
     (treatment.n ?? 0) >= IDENTITY_FLOOR &&
     (control.sum ?? 0) >= CONVERSION_FLOOR &&
-    (treatment.sum ?? 0) >= CONVERSION_FLOOR;
-  return localOk || flagsmithOk;
+    (treatment.sum ?? 0) >= CONVERSION_FLOOR
+  );
 }
 
 export function decideExperiment(input: {
@@ -350,8 +350,11 @@ export async function evaluateIdentityVariant(
   }
 }
 
-function variantMatches(got: { variant?: string; value?: unknown }, expected: Variant): boolean {
-  return got.variant === expected || got.value === expected;
+export function variantMatches(
+  got: { variant?: string; value?: unknown },
+  expected: Variant,
+): boolean {
+  return got.variant === expected && got.value === expected;
 }
 
 export async function applyDecision(
@@ -387,6 +390,11 @@ export async function applyDecision(
   const { data: completed } = await admin.get<ExperimentRecord>(
     `/environments/${cfg.environmentKey}/experiments/${state.experimentId}/`,
   );
+  if (completed.status !== "completed") {
+    throw new Error(
+      `complete/ did not mark experiment ${state.experimentId} completed (status=${completed.status})`,
+    );
+  }
   if (completed.rollout_decision !== body.rollout_decision) {
     throw new Error(
       `complete/ did not stick: rollout_decision=${completed.rollout_decision} expected ${body.rollout_decision}`,

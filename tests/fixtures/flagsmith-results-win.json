@@ -1,0 +1,23 @@
+{
+  "results": {
+    "as_of": "2026-11-26T00:00:00Z",
+    "is_final": false,
+    "last_error_at": null,
+    "payload": {
+      "srm_p_value": 0.82,
+      "metrics": [
+        {
+          "metric_id": 1,
+          "variants": {
+            "control": { "n": 60, "sum": 42, "sum_squares": 42, "mean": 0.7 },
+            "treatment": { "n": 60, "sum": 60, "sum_squares": 60, "mean": 1 }
+          },
+          "inference": {
+            "control": { "chance_to_win": 0.01, "lift": 0, "ci_low": 0, "ci_high": 0 },
+            "treatment": { "chance_to_win": 0.99, "lift": 0.43, "ci_low": 0.2, "ci_high": 0.7 }
+          }
+        }
+      ]
+    }
+  }
+}

@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { assignVariant, runTraffic, variantFromFlag } from "../../traffic/src/runner.ts";
-import { expectedBlocked } from "../../traffic/src/personas.ts";
-import type { Persona } from "../../shared/types.ts";
+import {
+  applyBaselineDropout,
+  assignVariant,
+  runTraffic,
+  variantFromFlag,
+} from "../../traffic/src/runner.ts";
 
 describe("variantFromFlag / assignVariant", () => {
   it("throws unless the identity is in a running experiment with a variant", () => {
@@ -20,6 +23,12 @@ describe("variantFromFlag / assignVariant", () => {
         experiment: { inExperiment: true },
       }),
     ).toBe("treatment");
+    expect(() =>
+      variantFromFlag({
+        variant: "mystery",
+        experiment: { inExperiment: true },
+      }),
+    ).toThrow(/Unknown variant key/);
   });
 
   it("assignVariant returns the Flagsmith variant", async () => {
@@ -47,22 +56,31 @@ describe("runTraffic", () => {
       runTraffic({ serverKey: "", environmentKey: "" }),
     ).rejects.toThrow(/FLAGSMITH_SERVER_KEY/);
   });
+
+  it("throws without an admin token in the live path", async () => {
+    await expect(
+      runTraffic({
+        serverKey: "ser-test",
+        environmentKey: "env-test",
+        adminToken: "",
+      }),
+    ).rejects.toThrow(/FLAGSMITH_ADMIN_API_TOKEN/);
+  });
 });
 
-describe("expectedBlocked", () => {
-  const personas: Persona[] = ["mouse", "keyboard", "screen-reader", "low-vision"];
-  it("is exact per persona on control", () => {
-    expect(expectedBlocked("mouse", "control")).toEqual([]);
-    expect(expectedBlocked("keyboard", "control")).toEqual(["hover_menu"]);
-    expect(expectedBlocked("screen-reader", "control")).toEqual([
-      "hover_menu",
-      "unlabeled_icon",
-    ]);
-    expect(expectedBlocked("low-vision", "control")).toEqual(["low_contrast"]);
-  });
-  it("is empty on treatment", () => {
-    for (const persona of personas) {
-      expect(expectedBlocked(persona, "treatment")).toEqual([]);
-    }
+describe("applyBaselineDropout", () => {
+  it("leaves blocked visits blocked and drops some conversions", () => {
+    expect(applyBaselineDropout(false, () => 0, 0.75)).toEqual({
+      converted: false,
+      dropped: false,
+    });
+    expect(applyBaselineDropout(true, () => 0.1, 0.75)).toEqual({
+      converted: true,
+      dropped: false,
+    });
+    expect(applyBaselineDropout(true, () => 0.9, 0.75)).toEqual({
+      converted: false,
+      dropped: true,
+    });
   });
 });

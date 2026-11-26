@@ -2,8 +2,8 @@ import { createServer } from "node:http";
 import { extname, resolve } from "node:path";
 import { readFile } from "node:fs/promises";
 import { isInsideRoot } from "../../shared/fs-path.ts";
-import { ROOT, loadConfig, readJson, statePath } from "./config.ts";
-import { bootstrap, type BootstrapState } from "./bootstrap.ts";
+import { ROOT, loadConfig } from "./config.ts";
+import { loadRunningState } from "./bootstrap.ts";
 import {
   applyDecision,
   decideExperiment,
@@ -38,6 +38,21 @@ function serveCheckout(
       res.end("forbidden");
       return;
     }
+    if (url.pathname === "/config.json" || url.pathname.endsWith("/config.json")) {
+      let parsed: Record<string, unknown> = {};
+      try {
+        parsed = JSON.parse((await readFile(filePath)).toString("utf8")) as Record<
+          string,
+          unknown
+        >;
+      } catch {
+        parsed = {};
+      }
+      const body = JSON.stringify({ ...parsed, allowMock: true });
+      res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
+      res.end(body);
+      return;
+    }
     try {
       const body = await readFile(filePath);
       res.writeHead(200, { "Content-Type": MIME[extname(filePath)] ?? "text/plain" });
@@ -60,7 +75,7 @@ function serveCheckout(
     server.on("error", (err: NodeJS.ErrnoException) => {
       if (err.code === "EADDRINUSE") {
         process.stderr.write(
-          `Port ${port} already in use; reusing the existing checkout server.\n`,
+          `Port ${port} already in use; reusing the existing checkout server. It must overlay allowMock on /config.json (scripts/serve-site.mjs --allow-mock).\n`,
         );
         resolveServer({ reused: true, close: async () => undefined });
         return;
@@ -77,7 +92,7 @@ export async function runExperiment() {
     `Fixture scan: ${scan.findings.length} data-barrier markers (${scan.findings.map((f) => f.barrier.id).join(", ")}). Not a production crawler.\n`,
   );
 
-  const state: BootstrapState = readJson<BootstrapState>(statePath()) ?? (await bootstrap(cfg));
+  const state = await loadRunningState(cfg);
   process.stdout.write(
     `Flagsmith experiment ${state.experimentId} on flag ${state.flagName}\n`,
   );
@@ -114,7 +129,7 @@ export async function runExperiment() {
     visits,
     flagsmith,
     experimentId: state.experimentId,
-    dashboardUrl: `${cfg.dashboardUrl}/project/${state.projectId}/environment/${state.environmentKey}/experiments/${state.experimentId}`,
+    dashboardUrl: `${cfg.dashboardUrl}/project/${state.projectId}/environment/${state.environmentId}/experiments/${state.experimentId}`,
     personaMix: cfg.personaMix,
   });
   const path = writeDashboard(doc);

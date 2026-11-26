@@ -37,17 +37,25 @@
       if (!arm || !arm.visitors) return "0/0";
       return `${arm.conversions}/${arm.visitors} (${pct(arm.conversions / arm.visitors)})`;
     }
+    function td(text) {
+      const cell = document.createElement("td");
+      cell.textContent = text;
+      return cell;
+    }
+    function clear(node) {
+      while (node.firstChild) node.removeChild(node.firstChild);
+    }
     fetch("./results.json")
       .then((r) => r.json())
       .then((data) => {
         document.getElementById("headline").textContent = data.headline.copy;
         document.getElementById("mix").textContent =
-          `Persona mix (assumption, not data): ${data.personaMixLabel || ""}. ${data.personaMixNote || ""}`;
+          `Assumed mix: ${data.personaMixLabel || ""}. Realised this run: ${data.realisedMixLabel || ""}. ${data.personaMixNote || ""}`;
         document.getElementById("meta").textContent =
           `${data.label} Generated ${data.generatedAt}. Flag ${data.flag}. Headline source: ${data.headline?.source || "unknown"}. ${data.honesty || ""}`;
         const dash = document.getElementById("dashboard-link");
+        clear(dash);
         if (data.flagsmithDashboard) {
-          dash.innerHTML = "";
           const a = document.createElement("a");
           a.href = data.flagsmithDashboard;
           a.textContent = "Flagsmith experiment dashboard";
@@ -57,23 +65,38 @@
         const body = document.querySelector("#flag-table tbody");
         for (const flag of experiment) {
           const tr = document.createElement("tr");
-          tr.innerHTML = `<td>${flag.name} <span class="pill">${flag.decision}</span></td>
-            <td>${rate(flag.control)}</td>
-            <td>${rate(flag.treatment)}</td>
-            <td>${pct(flag.winProbabilityTreatment)} (${flag.source})</td>
-            <td>${flag.decision}</td>`;
+          const name = document.createElement("td");
+          name.appendChild(document.createTextNode(flag.name + " "));
+          const pill = document.createElement("span");
+          pill.className = "pill";
+          pill.textContent = flag.decision;
+          name.appendChild(pill);
+          tr.appendChild(name);
+          tr.appendChild(td(rate(flag.control)));
+          tr.appendChild(td(rate(flag.treatment)));
+          tr.appendChild(td(`${pct(flag.winProbabilityTreatment)} (${flag.source})`));
+          tr.appendChild(td(flag.decision));
           body.appendChild(tr);
         }
         const personas = document.querySelector("#persona-table tbody");
         for (const [name, arms] of Object.entries(data.personas || {})) {
           const tr = document.createElement("tr");
-          tr.innerHTML = `<td>${name}</td><td>${rate(arms.control)}</td><td>${rate(arms.treatment)}</td>`;
+          tr.appendChild(td(name));
+          tr.appendChild(td(rate(arms.control)));
+          tr.appendChild(td(rate(arms.treatment)));
           personas.appendChild(tr);
         }
         const list = document.getElementById("barriers");
         for (const barrier of data.barriers || []) {
           const li = document.createElement("li");
-          li.innerHTML = `<strong>${barrier.flag}</strong> — ${barrier.title} (${barrier.wcag}). Blocks ${barrier.blocks.join(", ")}.`;
+          const strong = document.createElement("strong");
+          strong.textContent = barrier.flag;
+          li.appendChild(strong);
+          li.appendChild(
+            document.createTextNode(
+              ` — ${barrier.title} (${barrier.wcag}). Blocks ${barrier.blocks.join(", ")}.`,
+            ),
+          );
           list.appendChild(li);
         }
         document.getElementById("source").textContent = (data.decision?.notes || []).join(" ");

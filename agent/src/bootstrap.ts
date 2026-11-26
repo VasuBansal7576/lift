@@ -7,6 +7,7 @@ import {
   type LiftConfig,
   ROOT,
   loadConfig,
+  readJson,
   statePath,
 } from "./config.ts";
 import {
@@ -33,7 +34,6 @@ export interface BootstrapState {
   projectId: number | string;
   environmentId: number | string;
   environmentKey: string;
-  serverKey?: string;
   flagName: string;
   flagId: number;
   treatmentOptionId: number;
@@ -258,6 +258,7 @@ async function ensureExperiment(
   flag: FeatureRecord,
   treatmentId: number,
   metricId: number,
+  name: string,
 ): Promise<ExperimentRecord> {
   const { data } = await admin.get<unknown>(
     `/environments/${envKey}/experiments/?q=${encodeURIComponent(flag.name)}`,
@@ -272,6 +273,7 @@ async function ensureExperiment(
     featureId: flag.id,
     treatmentId,
     metricId,
+    name,
     hypothesis:
       "Fixing WCAG barriers (hover-only menu, unlabeled icon, non-focusable Place order, missing labels, unnamed terms checkbox, low-contrast terms) increases checkout completion for keyboard, screen-reader, and low-vision visitors. Traffic is simulated.",
   });
@@ -310,17 +312,14 @@ async function startExperiment(
   return started.data;
 }
 
-export function writeCheckoutConfig(
-  cfg: LiftConfig,
-  extras?: { allowMock?: boolean },
-) {
+export function writeCheckoutConfig(cfg: LiftConfig) {
   const config = {
     flagsmithApiUrl: cfg.apiUrl,
     flagsmithEventsUrl: cfg.eventsUrl,
     flagsmithEnvironmentKey: cfg.environmentKey,
     flagName: cfg.flagName,
     metricEvent: cfg.metricEvent,
-    allowMock: extras?.allowMock ?? cfg.allowMock,
+    allowMock: cfg.allowMock,
     simulatedTrafficLabel: "SIMULATED TRAFFIC",
     barrierFlags: (barriersCatalog as Barrier[]).map((b) => b.flag),
   };
@@ -390,6 +389,7 @@ export async function bootstrap(cfg = loadConfig()): Promise<BootstrapState> {
     combined,
     treatment.id,
     metric.id,
+    `Checkout accessibility lift (${cfg.trafficRunId})`,
   );
   const running = await startExperiment(admin, envKey, experiment);
   if (running.status !== "running") {
@@ -401,7 +401,6 @@ export async function bootstrap(cfg = loadConfig()): Promise<BootstrapState> {
     projectId: cfg.projectId,
     environmentId,
     environmentKey: envKey,
-    serverKey: cfg.serverKey || undefined,
     flagName: combined.name,
     flagId: combined.id,
     treatmentOptionId: treatment.id,
@@ -417,6 +416,33 @@ export async function bootstrap(cfg = loadConfig()): Promise<BootstrapState> {
   writeFileSync(statePath(), `${JSON.stringify(state, null, 2)}\n`);
   writeCheckoutConfig(cfg);
   return state;
+}
+
+/** Reuse a running experiment from disk; bootstrap a new one if it is missing or completed. */
+export async function loadRunningState(cfg = loadConfig()): Promise<BootstrapState> {
+  const existing = readJson<BootstrapState>(statePath());
+  if (!existing) return bootstrap(cfg);
+  if (!cfg.adminToken || !cfg.environmentKey) {
+    throw new Error(
+      "FLAGSMITH_ADMIN_API_TOKEN and FLAGSMITH_ENVIRONMENT_KEY are required to load experiment state.",
+    );
+  }
+  const admin = new FlagsmithAdmin(cfg);
+  try {
+    const { data } = await admin.get<ExperimentRecord>(
+      `/environments/${cfg.environmentKey}/experiments/${existing.experimentId}/`,
+    );
+    if (data.status === "running") return existing;
+    process.stderr.write(
+      `Stored experiment ${existing.experimentId} is ${data.status}; creating a new experiment.\n`,
+    );
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    process.stderr.write(
+      `Stored experiment ${existing.experimentId} is not readable (${detail.slice(0, 160)}); bootstrapping.\n`,
+    );
+  }
+  return bootstrap(cfg);
 }
 
 async function main() {

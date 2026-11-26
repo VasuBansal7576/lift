@@ -16,6 +16,12 @@ describe("parseCssColor", () => {
     expect(() => parseCssColor("transparent")).toThrow(/transparent/);
   });
 
+  it("composites alpha over a background or throws", () => {
+    expect(parseCssColor("rgba(0, 0, 0, 0.5)", [255, 255, 255])).toEqual([128, 128, 128]);
+    expect(() => parseCssColor("rgba(0, 0, 0, 0.5)")).toThrow(/alpha/);
+    expect(() => parseCssColor("#00000000")).toThrow(/transparent/);
+  });
+
   it("flags grey-on-grey below 4.5:1", () => {
     const ratio = contrastRatio(
       parseCssColor("#b9bec6"),

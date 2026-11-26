@@ -5,6 +5,7 @@ import {
   clampLift,
   decideFromWinProbability,
   relativeLift,
+  serialiseLift,
 } from "../../agent/src/stats.ts";
 
 describe("bayesianWinProbability", () => {
@@ -63,5 +64,12 @@ describe("armStats / lift", () => {
     expect(clampLift(-Infinity)).toBe(-10);
     expect(clampLift(0.43)).toBe(0.43);
     expect(clampLift(null)).toBeNull();
+  });
+
+  it("serialises Infinity instead of null", () => {
+    expect(serialiseLift(Infinity)).toBe("Infinity");
+    expect(serialiseLift(-Infinity)).toBe("-Infinity");
+    expect(serialiseLift(0.34)).toBe(0.34);
+    expect(serialiseLift(null)).toBeNull();
   });
 });

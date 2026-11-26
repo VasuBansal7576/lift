@@ -105,8 +105,10 @@ describe("decideExperiment", () => {
       flagsmith: fixture,
     });
     expect(decision.source).toBe("flagsmith");
-    expect(decision.decision).toBe("rollout_treatment");
-    expect(decision.winProbabilityTreatment).toBe(0.9995436631926699);
+    expect(decision.winProbabilityTreatment).toBe(
+      fixture.results.payload.metrics[0].inference.treatment.chance_to_win,
+    );
+    expect(decision.decision).toBe("keep_running");
     expect(decision.notes.some((n) => n.includes("SIMULATED"))).toBe(true);
   });
 

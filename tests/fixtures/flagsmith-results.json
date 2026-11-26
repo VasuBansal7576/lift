@@ -1,29 +1,29 @@
 {
   "results": {
-    "as_of": "2026-11-26T09:22:08.551795Z",
+    "as_of": "2026-11-26T09:41:20.473305Z",
     "last_error_at": null,
-    "refresh_requested_at": "2026-11-26T09:22:08.425963Z",
+    "refresh_requested_at": "2026-11-26T09:41:20.345266Z",
     "payload": {
       "metrics": [
         {
           "variants": {
             "control": {
-              "n": 59,
-              "sum": 44,
-              "sum_squares": 44
+              "n": 62,
+              "sum": 34,
+              "sum_squares": 34
             },
             "treatment": {
-              "n": 61,
-              "sum": 61,
-              "sum_squares": 61
+              "n": 58,
+              "sum": 40,
+              "sum_squares": 40
             }
           },
           "inference": {
             "treatment": {
-              "lift": 0.3409090909090909,
-              "ci_low": 0.13941945101902764,
-              "ci_high": 0.5423987307991541,
-              "chance_to_win": 0.9995436631926699
+              "lift": 0.25760649087221116,
+              "ci_low": -0.10293166198874898,
+              "ci_high": 0.6181446437331712,
+              "chance_to_win": 0.9193039683201796
             }
           },
           "metric_id": 580,
@@ -32,8 +32,8 @@
               {
                 "bucket": "2026-11-26T09:00:00+00:00",
                 "converted_identities": {
-                  "control": 44,
-                  "treatment": 61
+                  "control": 34,
+                  "treatment": 40
                 }
               }
             ],
@@ -47,8 +47,8 @@
           {
             "bucket": "2026-11-26T09:00:00+00:00",
             "new_identities": {
-              "control": 59,
-              "treatment": 61
+              "control": 62,
+              "treatment": 58
             }
           }
         ],

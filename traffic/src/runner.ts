@@ -13,14 +13,24 @@ import {
   statePath,
   type LiftConfig,
 } from "../../agent/src/config.ts";
-import { writeCheckoutConfig, type BootstrapState } from "../../agent/src/bootstrap.ts";
+import type { BootstrapState } from "../../agent/src/bootstrap.ts";
 import { FlagsmithAdmin, type ExperimentRecord } from "../../agent/src/flagsmith-admin.ts";
 import { mulberry32 } from "../../shared/rng.ts";
 import { pickPersona } from "../../shared/mix.ts";
 import { runPersona } from "./personas.ts";
 
-function identityFor(seed: number, index: number): string {
-  return `lift-sim-${seed}-${String(index).padStart(4, "0")}`;
+function identityFor(runId: string, seed: number, index: number): string {
+  return `lift-sim-${runId}-${seed}-${String(index).padStart(4, "0")}`;
+}
+
+export function applyBaselineDropout(
+  converted: boolean,
+  rand: () => number,
+  probability: number,
+): { converted: boolean; dropped: boolean } {
+  if (!converted) return { converted: false, dropped: false };
+  if (rand() < probability) return { converted: true, dropped: false };
+  return { converted: false, dropped: true };
 }
 
 export function variantFromFlag(flag: {
@@ -37,7 +47,10 @@ export function variantFromFlag(flag: {
   if (flag.variant === undefined || flag.variant === null || flag.variant === "") {
     throw new Error("Experiment flag has no variant key; exposures cannot be recorded.");
   }
-  return flag.variant === "treatment" ? "treatment" : "control";
+  if (flag.variant === "treatment" || flag.variant === "control") {
+    return flag.variant;
+  }
+  throw new Error(`Unknown variant key "${flag.variant}"; expected control or treatment.`);
 }
 
 export async function assignVariant(
@@ -56,9 +69,22 @@ export async function assignVariant(
 }
 
 async function assertExperimentRunning(cfg: LiftConfig) {
-  if (!cfg.adminToken || !cfg.environmentKey) return;
+  if (!cfg.adminToken) {
+    throw new Error(
+      "FLAGSMITH_ADMIN_API_TOKEN is required to verify the experiment is running before sending traffic.",
+    );
+  }
+  if (!cfg.environmentKey) {
+    throw new Error(
+      "FLAGSMITH_ENVIRONMENT_KEY is required to verify the experiment is running before sending traffic.",
+    );
+  }
   const state = readJson<BootstrapState>(statePath());
-  if (!state) return;
+  if (!state) {
+    throw new Error(
+      "Missing bootstrap state. Run npm run bootstrap before sending traffic.",
+    );
+  }
   const admin = new FlagsmithAdmin(cfg);
   const { data } = await admin.get<ExperimentRecord>(
     `/environments/${cfg.environmentKey}/experiments/${state.experimentId}/`,
@@ -89,7 +115,6 @@ export async function runTraffic(overrides?: Partial<LiftConfig>) {
   }
 
   await assertExperimentRunning(cfg);
-  writeCheckoutConfig(cfg, { allowMock: true });
 
   const flagsmith = new Flagsmith({
     environmentKey: cfg.serverKey || cfg.environmentKey,
@@ -112,7 +137,7 @@ export async function runTraffic(overrides?: Partial<LiftConfig>) {
   try {
     for (let i = 0; i < cfg.trafficN; i += 1) {
       const persona = pickPersona(rand, cfg.personaMix);
-      const identity = identityFor(cfg.trafficSeed, i);
+      const identity = identityFor(cfg.trafficRunId, cfg.trafficSeed, i);
       const { variant } = await assignVariant(
         flagsmith,
         cfg.flagName,
@@ -132,9 +157,18 @@ export async function runTraffic(overrides?: Partial<LiftConfig>) {
         { timeout: 10_000 },
       );
       const attempt = await runPersona(page, persona);
+      const dropout = applyBaselineDropout(
+        attempt.converted,
+        rand,
+        cfg.baselineConvert,
+      );
+      const converted = dropout.converted;
+      const reason = dropout.dropped
+        ? "baseline drop-off (seeded; independent of barriers)"
+        : attempt.reason;
       await context.close();
 
-      if (attempt.converted) {
+      if (converted) {
         flagsmith.trackEvent(cfg.metricEvent, {
           identifier: identity,
           traits: {
@@ -150,15 +184,15 @@ export async function runTraffic(overrides?: Partial<LiftConfig>) {
         identity,
         persona,
         variant,
-        converted: attempt.converted,
-        blockedBy: attempt.blockedBy,
-        reason: attempt.reason,
+        converted,
+        blockedBy: dropout.dropped ? [] : attempt.blockedBy,
+        reason,
         simulated: true,
       };
       visits.push(visit);
       appendFileSync(visitsPath, `${JSON.stringify(visit)}\n`);
       process.stdout.write(
-        `${identity} ${persona} ${variant} ${attempt.converted ? "converted" : "blocked"} ${attempt.reason}\n`,
+        `${identity} ${persona} ${variant} ${converted ? "converted" : "blocked"} ${reason}\n`,
       );
     }
   } finally {

@@ -253,8 +253,8 @@ export async function runLowVision(page: Page): Promise<AttemptResult> {
     const parent = el.parentElement ? getComputedStyle(el.parentElement) : style;
     return { color: style.color, background: parent.backgroundColor };
   });
-  const fg = parseCssColor(contrast.color);
   const bg = parseCssColor(contrast.background);
+  const fg = parseCssColor(contrast.color, bg);
   const ratio = contrastRatio(fg, bg);
   if (ratio < CONTRAST_FLOOR) {
     return {

@@ -1,16 +1,19 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { mkdirSync, writeFileSync, rmSync } from "node:fs";
-import { resolve } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   applyDecision,
   decideExperiment,
+  floorsMet,
   shouldApplyDecision,
+  variantMatches,
   waitForFlagsmithResults,
 } from "../../agent/src/decide.ts";
-import { ROOT } from "../../agent/src/config.ts";
 import { completeBody } from "../../agent/src/payloads.ts";
 import type { VisitRecord } from "../../shared/types.ts";
 import fixture from "../fixtures/flagsmith-results.json" with { type: "json" };
+import winner from "../fixtures/flagsmith-results-win.json" with { type: "json" };
 
 function visits(n = 50): VisitRecord[] {
   return [
@@ -35,15 +38,39 @@ function visits(n = 50): VisitRecord[] {
   ];
 }
 
+function loserVisits(n = 50): VisitRecord[] {
+  return [
+    ...Array.from({ length: n }, (_, i) => ({
+      identity: `c${i}`,
+      persona: "mouse" as const,
+      variant: "control" as const,
+      converted: true,
+      blockedBy: [],
+      reason: "fixture",
+      simulated: true as const,
+    })),
+    ...Array.from({ length: n }, (_, i) => ({
+      identity: `t${i}`,
+      persona: "keyboard" as const,
+      variant: "treatment" as const,
+      converted: i < 5,
+      blockedBy: [],
+      reason: "fixture",
+      simulated: true as const,
+    })),
+  ];
+}
+
 describe("shouldApplyDecision", () => {
   it("applies Flagsmith decisions and refuses local unless allowed", () => {
     const flagsmith = decideExperiment({
       flag: "checkout_a11y",
       visits: visits(),
       threshold: 0.95,
-      flagsmith: fixture,
+      flagsmith: winner,
     });
     expect(flagsmith.source).toBe("flagsmith");
+    expect(flagsmith.decision).toBe("rollout_treatment");
     expect(shouldApplyDecision(flagsmith, false)).toBe(true);
 
     const local = decideExperiment({
@@ -69,16 +96,23 @@ describe("shouldApplyDecision", () => {
   });
 });
 
-describe("applyDecision", () => {
-  afterEach(() => {
-    vi.unstubAllGlobals();
-    vi.unstubAllEnvs();
+describe("variantMatches", () => {
+  it("requires both variant and value", () => {
+    expect(variantMatches({ variant: "control", value: "control" }, "control")).toBe(true);
+    expect(variantMatches({ variant: "treatment", value: "control" }, "control")).toBe(false);
+    expect(variantMatches({ variant: undefined, value: "control" }, "control")).toBe(false);
+    expect(variantMatches({ variant: "treatment", value: "treatment" }, "treatment")).toBe(true);
   });
+});
 
-  it("POSTs the complete body only when running and verifies rollout_decision", async () => {
-    mkdirSync(resolve(ROOT, "data"), { recursive: true });
+describe("applyDecision", () => {
+  let dir: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "lift-state-"));
+    vi.stubEnv("LIFT_STATE_PATH", join(dir, "state.json"));
     writeFileSync(
-      resolve(ROOT, "data/state.json"),
+      join(dir, "state.json"),
       JSON.stringify({
         experimentId: 7,
         treatmentOptionId: 99,
@@ -89,7 +123,15 @@ describe("applyDecision", () => {
     vi.stubEnv("FLAGSMITH_ADMIN_API_TOKEN", "token");
     vi.stubEnv("FLAGSMITH_ENVIRONMENT_KEY", "env-key");
     vi.stubEnv("FLAGSMITH_API_URL", "https://api.flagsmith.com/api/v1/");
+  });
 
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+  });
+
+  it("POSTs the complete body only when running and verifies rollout_decision", async () => {
     const calls: { method: string; url: string; body: unknown }[] = [];
     vi.stubGlobal(
       "fetch",
@@ -122,7 +164,7 @@ describe("applyDecision", () => {
       flag: "checkout_a11y",
       visits: visits(),
       threshold: 0.95,
-      flagsmith: fixture,
+      flagsmith: winner,
     });
     await applyDecision(decision, {
       evaluateIdentity: async () => ({ variant: "treatment", value: "treatment" }),
@@ -131,14 +173,6 @@ describe("applyDecision", () => {
   });
 
   it("refuses to complete when the experiment is not running", async () => {
-    mkdirSync(resolve(ROOT, "data"), { recursive: true });
-    writeFileSync(
-      resolve(ROOT, "data/state.json"),
-      JSON.stringify({ experimentId: 7, treatmentOptionId: 99, flagName: "checkout_a11y", flagId: 10 }),
-    );
-    vi.stubEnv("FLAGSMITH_ADMIN_API_TOKEN", "token");
-    vi.stubEnv("FLAGSMITH_ENVIRONMENT_KEY", "env-key");
-    vi.stubEnv("FLAGSMITH_API_URL", "https://api.flagsmith.com/api/v1/");
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => {
@@ -152,9 +186,59 @@ describe("applyDecision", () => {
       flag: "checkout_a11y",
       visits: visits(),
       threshold: 0.95,
-      flagsmith: fixture,
+      flagsmith: winner,
     });
     await expect(applyDecision(decision)).rejects.toThrow(/expected running/);
+  });
+
+  it("completes pull_to_control and falls back to setDefault when variant and value disagree", async () => {
+    const calls: { method: string; url: string }[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        const method = init?.method ?? "GET";
+        calls.push({ method, url });
+        if (url.endsWith("/experiments/7/") && method === "GET") {
+          const completed = calls.some((c) => c.url.includes("/complete/"));
+          return new Response(
+            JSON.stringify({
+              id: 7,
+              status: completed ? "completed" : "running",
+              rollout_decision: completed ? "control" : null,
+              rollout_variant: null,
+            }),
+            { status: 200 },
+          );
+        }
+        if (url.includes("/complete/") && method === "POST") {
+          const body = JSON.parse(String(init?.body));
+          expect(body).toEqual(completeBody("pull_to_control", 99));
+          return new Response("{}", { status: 200 });
+        }
+        return new Response("no", { status: 404 });
+      }),
+    );
+    const decision = decideExperiment({
+      flag: "checkout_a11y",
+      visits: loserVisits(),
+      threshold: 0.95,
+      flagsmith: null,
+      allowLocalDecision: true,
+    });
+    expect(decision.decision).toBe("pull_to_control");
+    let evals = 0;
+    const setDefault = vi.fn(async () => undefined);
+    await applyDecision(decision, {
+      evaluateIdentity: async () => {
+        evals += 1;
+        if (evals === 1) return { variant: "treatment", value: "control" };
+        return { variant: "control", value: "control" };
+      },
+      setDefault,
+    });
+    expect(setDefault).toHaveBeenCalledTimes(1);
+    expect(evals).toBe(2);
   });
 });
 
@@ -197,7 +281,37 @@ describe("waitForFlagsmithResults", () => {
       })(),
     });
     expect(result?.results?.payload?.metrics?.[0]?.inference?.treatment?.chance_to_win).toBe(
-      0.9995436631926699,
+      fixture.results.payload.metrics[0].inference.treatment.chance_to_win,
     );
+  });
+});
+
+describe("floorsMet", () => {
+  it("ignores local counts when a Flagsmith payload exists and is under the floor", () => {
+    const local = visits(60);
+    const under = {
+      results: {
+        payload: {
+          metrics: [
+            {
+              variants: {
+                control: { n: 10, sum: 8 },
+                treatment: { n: 12, sum: 12 },
+              },
+              inference: { treatment: { chance_to_win: 0.99, lift: 0.4 } },
+            },
+          ],
+        },
+      },
+    };
+    expect(floorsMet(local, null)).toBe(true);
+    expect(floorsMet(local, under)).toBe(false);
+    const decision = decideExperiment({
+      flag: "checkout_a11y",
+      visits: local,
+      threshold: 0.95,
+      flagsmith: under,
+    });
+    expect(decision.source).toBe("local_bayesian");
   });
 });

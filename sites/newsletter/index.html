@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Field Post — Subscribe</title>
+  <link rel="stylesheet" href="../shared/styles.css">
+</head>
+<body data-site="newsletter">
+  <p class="sim-banner" role="note">Demo publication. Experiment traffic is simulated.</p>
+  <header class="masthead">
+    <a class="wordmark" href="./">Field Post</a>
+  </header>
+  <main>
+    <p class="eyebrow">Sunday letter</p>
+    <h1>Notes from the trail</h1>
+    <p class="lede">One short dispatch a week. No ads, no drip sequence.</p>
+    <form id="lift-form" data-lift-flow="newsletter" novalidate>
+      <div class="field-grid" data-barrier="missing_labels">
+        <p>
+          <span class="visible-hint">Email</span>
+          <input id="email" name="email" type="email" placeholder="you@cabin.test" data-unlabeled data-lift-field data-lift-label="Email">
+        </p>
+      </div>
+      <p class="terms contrast-fail" data-barrier="low_contrast">
+        <span id="terms-copy" data-lift-contrast>We will not share your address. Unsubscribe in one click.</span>
+      </p>
+      <button type="button" id="subscribe" class="icon-btn" data-barrier="unlabeled_icon" data-lift-submit data-lift-name="Subscribe to the newsletter" data-lift-glyph="✉"></button>
+      <p id="form-error" role="alert" hidden></p>
+    </form>
+    <p id="confirmation" data-lift-confirm hidden>You are on the list. See you Sunday.</p>
+  </main>
+  <footer>
+    <p>Field Post — accessibility experiment fixture.</p>
+    <p id="flag-status">Waiting for Flagsmith…</p>
+  </footer>
+  <script type="module" src="../shared/lift-sdk.js"></script>
+</body>
+</html>

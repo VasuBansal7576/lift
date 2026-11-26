@@ -17,13 +17,17 @@ export const DECISIONS = [
 ] as const;
 export type Decision = (typeof DECISIONS)[number];
 
-export type BarrierId =
-  | "hover_menu"
-  | "unlabeled_icon"
-  | "div_button"
-  | "missing_labels"
-  | "unlabeled_terms"
-  | "low_contrast";
+export const BARRIER_IDS = [
+  "hover_menu",
+  "unlabeled_icon",
+  "div_button",
+  "missing_labels",
+  "unlabeled_terms",
+  "low_contrast",
+  "autocomplete_off",
+  "extra_confirm",
+] as const;
+export type BarrierId = (typeof BARRIER_IDS)[number];
 
 export interface Barrier {
   id: BarrierId;

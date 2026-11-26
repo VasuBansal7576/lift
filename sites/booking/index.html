@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>North Clinic — Book</title>
+  <link rel="stylesheet" href="../shared/styles.css">
+</head>
+<body data-site="booking">
+  <p class="sim-banner" role="note">Demo clinic. Experiment traffic is simulated.</p>
+  <header class="masthead">
+    <a class="wordmark" href="./">North Clinic</a>
+    <nav aria-label="Primary">
+      <div class="hover-nav" data-barrier="hover_menu">
+        <span class="hover-trigger" id="book-trigger">Appointments</span>
+        <div class="hover-menu" id="book-menu">
+          <a href="#book" id="book-link" data-lift-open>Book a visit</a>
+        </div>
+      </div>
+    </nav>
+  </header>
+  <main>
+    <p class="eyebrow">Primary care</p>
+    <h1>Same-week visits</h1>
+    <p class="lede">Reserve a 20-minute slot. Bring your insurance card if you have one.</p>
+    <section id="lift-panel" class="panel" hidden>
+      <h2>Reserve</h2>
+      <form id="lift-form" data-lift-flow="booking" novalidate>
+        <div class="field-grid" data-barrier="missing_labels">
+          <p>
+            <span class="visible-hint">Full name</span>
+            <input id="name" name="name" type="text" placeholder="Ada Lovelace" data-unlabeled data-lift-field data-lift-label="Full name">
+          </p>
+          <p>
+            <span class="visible-hint">Email</span>
+            <input id="email" name="email" type="email" placeholder="ada@clinic.test" data-unlabeled data-lift-field data-lift-label="Email">
+          </p>
+          <p>
+            <span class="visible-hint">Preferred date</span>
+            <input id="date" name="date" type="date" data-unlabeled data-lift-field data-lift-label="Preferred date">
+          </p>
+        </div>
+        <div id="place-order" class="div-pay" data-barrier="div_button" data-lift-submit-label="Reserve">Reserve</div>
+        <p id="form-error" role="alert" hidden></p>
+      </form>
+    </section>
+    <p id="confirmation" data-lift-confirm hidden>Appointment reserved. We will email a reminder.</p>
+  </main>
+  <footer>
+    <p>North Clinic — accessibility experiment fixture.</p>
+    <p id="flag-status">Waiting for Flagsmith…</p>
+  </footer>
+  <script type="module" src="../shared/lift-sdk.js"></script>
+</body>
+</html>

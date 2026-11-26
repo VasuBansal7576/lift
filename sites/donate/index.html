@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>River Keep — Donate</title>
+  <link rel="stylesheet" href="../shared/styles.css">
+</head>
+<body data-site="donate">
+  <p class="sim-banner" role="note">Demo nonprofit. Experiment traffic is simulated.</p>
+  <header class="masthead">
+    <a class="wordmark" href="./">River Keep</a>
+    <button type="button" id="give-icon" class="icon-btn" data-barrier="unlabeled_icon" data-lift-open data-lift-name="Give to River Keep" data-lift-glyph="❤"></button>
+  </header>
+  <main>
+    <p class="eyebrow">Spring appeal</p>
+    <h1>Keep the oxbow wild</h1>
+    <p class="lede">A one-time gift funds weekend water testing.</p>
+    <section id="lift-panel" class="panel" hidden>
+      <h2>Give once</h2>
+      <form id="lift-form" data-lift-flow="donate" novalidate>
+        <div class="field-grid" data-barrier="missing_labels">
+          <p>
+            <span class="visible-hint">Amount</span>
+            <input id="amount" name="amount" type="number" placeholder="40" data-unlabeled data-lift-field data-lift-label="Amount">
+          </p>
+          <p>
+            <span class="visible-hint">Email for receipt</span>
+            <input id="email" name="email" type="email" placeholder="you@river.test" data-unlabeled data-lift-field data-lift-label="Email for receipt">
+          </p>
+        </div>
+        <p class="terms contrast-fail" data-barrier="low_contrast">
+          <span id="terms-copy" data-lift-contrast>Receipts go out the same day. This gift is not tax advice.</span>
+        </p>
+        <div id="place-order" class="div-pay" data-barrier="div_button" data-lift-submit-label="Give">Give</div>
+        <p id="form-error" role="alert" hidden></p>
+      </form>
+    </section>
+    <p id="confirmation" data-lift-confirm hidden>Thank you. Your gift is recorded.</p>
+  </main>
+  <footer>
+    <p>River Keep — accessibility experiment fixture.</p>
+    <p id="flag-status">Waiting for Flagsmith…</p>
+  </footer>
+  <script type="module" src="../shared/lift-sdk.js"></script>
+</body>
+</html>

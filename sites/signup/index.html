@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Harbor Notes — Create account</title>
+  <link rel="stylesheet" href="../shared/styles.css">
+</head>
+<body data-site="signup">
+  <p class="sim-banner" role="note">Demo product. Experiment traffic is simulated.</p>
+  <header class="masthead">
+    <a class="wordmark" href="./">Harbor Notes</a>
+  </header>
+  <main>
+    <p class="eyebrow">Free plan</p>
+    <h1>Create your notebook</h1>
+    <p class="lede">One workspace for field notes. No card required.</p>
+    <form id="lift-form" data-lift-flow="signup" novalidate>
+      <div class="field-grid" data-barrier="missing_labels">
+        <p>
+          <span class="visible-hint">Work email</span>
+          <input id="email" name="email" type="email" placeholder="you@studio.test" autocomplete="off" data-barrier="autocomplete_off" data-unlabeled data-lift-field data-lift-label="Work email" data-lift-autocomplete="email">
+        </p>
+        <p>
+          <span class="visible-hint">Password</span>
+          <input id="password" name="password" type="password" placeholder="••••••••" autocomplete="off" data-unlabeled data-lift-field data-lift-label="Password" data-lift-autocomplete="new-password">
+        </p>
+      </div>
+      <p class="terms contrast-fail" data-barrier="low_contrast">
+        <input id="terms" name="terms" type="checkbox" data-barrier="unlabeled_terms" data-lift-terms>
+        <span id="terms-copy" data-lift-terms-copy data-lift-contrast>I agree to the Harbor Notes terms and privacy notice.</span>
+      </p>
+      <div id="place-order" class="div-pay" data-barrier="div_button" data-lift-submit-label="Create account">Create account</div>
+      <p id="form-error" role="alert" hidden></p>
+    </form>
+    <p id="confirmation" data-lift-confirm hidden>Account created. Your first notebook is ready.</p>
+  </main>
+  <footer>
+    <p>Harbor Notes — accessibility experiment fixture.</p>
+    <p id="flag-status">Waiting for Flagsmith…</p>
+  </footer>
+  <script type="module" src="../shared/lift-sdk.js"></script>
+</body>
+</html>

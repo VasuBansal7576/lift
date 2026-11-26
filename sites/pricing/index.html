@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Lumen Cloud — Pricing</title>
+  <link rel="stylesheet" href="../shared/styles.css">
+</head>
+<body data-site="pricing">
+  <p class="sim-banner" role="note">Demo product. Experiment traffic is simulated.</p>
+  <header class="masthead">
+    <a class="wordmark" href="./">Lumen Cloud</a>
+    <nav aria-label="Primary">
+      <div class="hover-nav" data-barrier="hover_menu">
+        <span class="hover-trigger" id="plans-trigger">Plans</span>
+        <div class="hover-menu" id="plans-menu">
+          <a href="#trial" id="trial-link" data-lift-open>Start trial</a>
+        </div>
+      </div>
+    </nav>
+  </header>
+  <main>
+    <p class="eyebrow">Teams</p>
+    <h1>Build without the invoice shock</h1>
+    <p class="lede">14-day trial of the Team plan. One workspace, 10 seats.</p>
+    <article class="plan-card">
+      <h2>Team · $29 / seat</h2>
+      <p>Audit log, SSO later, flags included.</p>
+    </article>
+    <section id="lift-panel" class="panel" hidden>
+      <h2>Start a Team trial</h2>
+      <form id="lift-form" data-lift-flow="pricing" novalidate>
+        <div class="field-grid" data-barrier="missing_labels">
+          <p>
+            <span class="visible-hint">Workspace name</span>
+            <input id="company" name="company" type="text" placeholder="Acme Labs" data-unlabeled data-lift-field data-lift-label="Workspace name">
+          </p>
+        </div>
+        <div id="place-order" class="div-pay" data-barrier="div_button" data-lift-submit-label="Start trial">Start trial</div>
+        <p id="form-error" role="alert" hidden></p>
+      </form>
+    </section>
+    <p id="confirmation" data-lift-confirm hidden>Trial started. Your Team workspace is live.</p>
+  </main>
+  <div id="friction" class="friction" data-friction-step hidden>
+    <div class="friction-card">
+      <h2>Confirm this trial</h2>
+      <p>Treatment adds this extra step so nobody starts a trial by accident. It is a plausible “fix” that adds friction.</p>
+      <button type="button" data-lift-friction-confirm>Start trial anyway</button>
+    </div>
+  </div>
+  <footer>
+    <p>Lumen Cloud — accessibility experiment fixture.</p>
+    <p id="flag-status">Waiting for Flagsmith…</p>
+  </footer>
+  <script type="module" src="../shared/lift-sdk.js"></script>
+</body>
+</html>

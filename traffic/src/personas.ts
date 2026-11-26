@@ -1,15 +1,14 @@
 import type { Page } from "@playwright/test";
 import type { BarrierId, Persona, Variant } from "../../shared/types.ts";
 import { contrastRatio, parseCssColor } from "./contrast.ts";
+import type { AttemptResult } from "./attempt.ts";
+import { expectedBlockedForSite, runGenericPersona } from "./generic-personas.ts";
+import { applyLowVisionZoom, CONTRAST_FLOOR } from "./vision.ts";
 
-export interface AttemptResult {
-  converted: boolean;
-  blockedBy: BarrierId[];
-  reason: string;
-}
+export type { AttemptResult };
+export { applyLowVisionZoom, CONTRAST_FLOOR };
 
 const CHECKOUT_TIMEOUT = 2500;
-export const CONTRAST_FLOOR = 4.5;
 
 async function waitForConversion(page: Page): Promise<boolean> {
   try {
@@ -26,21 +25,6 @@ async function fillKnownFields(page: Page) {
   await page.locator("#card-number").fill("4242424242424242");
   await page.locator("#card-exp").fill("12/28");
   await page.locator("#card-cvc").fill("123");
-}
-
-/** Contrast-threshold persona: 200% zoom that affects layout, then WCAG 4.5:1 on computed colours. */
-export async function applyLowVisionZoom(page: Page) {
-  const session = await page.context().newCDPSession(page);
-  const viewport = page.viewportSize() ?? { width: 1280, height: 720 };
-  await session.send("Emulation.setDeviceMetricsOverride", {
-    width: viewport.width,
-    height: viewport.height,
-    deviceScaleFactor: 2,
-    mobile: false,
-  });
-  await page.evaluate(() => {
-    document.documentElement.style.zoom = "2";
-  });
 }
 
 export async function runMouse(page: Page): Promise<AttemptResult> {
@@ -281,6 +265,8 @@ export async function runPersona(
   page: Page,
   persona: Persona,
 ): Promise<AttemptResult> {
+  const site = await page.evaluate(() => document.body.dataset.site || "checkout");
+  if (site !== "checkout") return runGenericPersona(page, persona);
   switch (persona) {
     case "mouse":
       return runMouse(page);
@@ -298,7 +284,12 @@ export async function runPersona(
 }
 
 /** Exact blockedBy the bot returns on the control/treatment fixtures. */
-export function expectedBlocked(persona: Persona, variant: Variant): BarrierId[] {
+export function expectedBlocked(
+  persona: Persona,
+  variant: Variant,
+  siteId = "checkout",
+): BarrierId[] {
+  if (siteId !== "checkout") return expectedBlockedForSite(siteId, persona, variant);
   if (variant === "treatment") return [];
   switch (persona) {
     case "mouse":

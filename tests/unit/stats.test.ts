@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   armStats,
   bayesianWinProbability,
+  clampLift,
   decideFromWinProbability,
   relativeLift,
 } from "../../agent/src/stats.ts";
@@ -55,5 +56,12 @@ describe("armStats / lift", () => {
   it("computes relative lift", () => {
     expect(relativeLift(0.5, 0.25)).toBe(1);
     expect(relativeLift(0.2, 0)).toBe(Infinity);
+  });
+
+  it("clamps Infinity for display", () => {
+    expect(clampLift(Infinity)).toBe(10);
+    expect(clampLift(-Infinity)).toBe(-10);
+    expect(clampLift(0.43)).toBe(0.43);
+    expect(clampLift(null)).toBeNull();
   });
 });

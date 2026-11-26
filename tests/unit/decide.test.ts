@@ -5,6 +5,7 @@ import {
   summariseVisits,
 } from "../../agent/src/decide.ts";
 import type { VisitRecord } from "../../shared/types.ts";
+import fixture from "../fixtures/flagsmith-results.json" with { type: "json" };
 
 function visit(
   partial: Pick<VisitRecord, "identity" | "persona" | "variant" | "converted">,
@@ -96,22 +97,16 @@ describe("decideExperiment", () => {
     ),
   ];
 
-  it("uses Flagsmith chance_to_win when sample floors are met", () => {
+  it("uses Flagsmith chance_to_win from the saved results fixture", () => {
     const decision = decideExperiment({
       flag: "checkout_a11y",
       visits: strongTreatment,
       threshold: 0.95,
-      flagsmith: {
-        results: {
-          payload: {
-            metrics: [{ inference: { treatment: { chance_to_win: 0.99, lift: 3 } } }],
-          },
-        },
-      },
+      flagsmith: fixture,
     });
     expect(decision.source).toBe("flagsmith");
     expect(decision.decision).toBe("rollout_treatment");
-    expect(decision.winProbabilityTreatment).toBe(0.99);
+    expect(decision.winProbabilityTreatment).toBe(0.9995436631926699);
     expect(decision.notes.some((n) => n.includes("SIMULATED"))).toBe(true);
   });
 

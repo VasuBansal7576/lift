@@ -26,9 +26,11 @@ function cfg(): LiftConfig {
     environmentName: "Development",
     bootstrapEmail: "",
     bootstrapPassword: "",
+    siteId: "checkout",
     flagName: "checkout_a11y",
     metricEvent: "checkout_completed",
     siteUrl: "http://127.0.0.1:4174",
+    frictionKeepRate: 0,
     trafficN: 120,
     trafficSeed: 1,
     trafficRunId: "test",
@@ -183,6 +185,15 @@ describe("ensureMetric", () => {
     const admin = new FlagsmithAdmin(cfg());
     const metric = await ensureMetric(admin, "env-key", "checkout_completed");
     expect(metric.id).toBe(2);
+  });
+});
+
+describe("v2 feature versioning URL", () => {
+  it("points at /api/__future__/environments/{key}/features/{id}/", () => {
+    const admin = new FlagsmithAdmin(cfg());
+    expect(admin.futureFeatureUrl("env-key", 305189)).toBe(
+      "https://api.flagsmith.com/api/__future__/environments/env-key/features/305189/",
+    );
   });
 });
 

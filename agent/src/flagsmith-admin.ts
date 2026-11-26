@@ -80,6 +80,42 @@ export class FlagsmithAdmin {
     return this.request<T>("DELETE", path);
   }
 
+  /** Experimental update-flag URL; works on v1 and v2 feature versioning. */
+  futureFeatureUrl(envKey: string, featureId: number): string {
+    const v1 = (this.cfg.adminApiUrl || this.cfg.apiUrl).replace(/\/+$/, "");
+    const apiRoot = v1.replace(/\/v1$/i, "");
+    return `${apiRoot}/__future__/environments/${encodeURIComponent(envKey)}/features/${featureId}/`;
+  }
+
+  async patchFutureFeature<T>(
+    envKey: string,
+    featureId: number,
+    body: unknown,
+  ): Promise<{ status: number; data: T }> {
+    const res = await fetch(this.futureFeatureUrl(envKey, featureId), {
+      method: "PATCH",
+      headers: this.headers(),
+      body: JSON.stringify(body),
+    });
+    const text = await res.text();
+    let data: T = null as T;
+    if (text) {
+      try {
+        data = JSON.parse(text) as T;
+      } catch {
+        data = text as T;
+      }
+    }
+    if (!res.ok) {
+      throw new FlagsmithAdminError(
+        `PATCH __future__ feature ${featureId} -> ${res.status}: ${text.slice(0, 800)}`,
+        res.status,
+        text,
+      );
+    }
+    return { status: res.status, data };
+  }
+
   async envKey(): Promise<string> {
     if (!this.cfg.environmentKey) {
       throw new Error("FLAGSMITH_ENVIRONMENT_KEY is required");

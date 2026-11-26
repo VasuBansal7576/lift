@@ -8,16 +8,16 @@ import running from "../fixtures/flagsmith-results.json" with { type: "json" };
 
 function visits(): VisitRecord[] {
   return [
-    ...Array.from({ length: 50 }, (_, i) => ({
+    ...Array.from({ length: 60 }, (_, i) => ({
       identity: `c${i}`,
       persona: "mouse" as const,
       variant: "control" as const,
-      converted: i < 12,
+      converted: i < 42,
       blockedBy: [],
       reason: "fixture",
       simulated: true as const,
     })),
-    ...Array.from({ length: 50 }, (_, i) => ({
+    ...Array.from({ length: 60 }, (_, i) => ({
       identity: `t${i}`,
       persona: "keyboard" as const,
       variant: "treatment" as const,
@@ -61,12 +61,74 @@ describe("buildResultsDocument", () => {
     expect(experimentFlag && "armSource" in experimentFlag && experimentFlag.armSource).toBe(
       "flagsmith",
     );
-    expect(doc.decision.notes.some((n) => n.includes("Local visit counts differ"))).toBe(true);
+    expect(doc.decision.notes.some((n) => n.includes("Local visit counts differ"))).toBe(false);
     expect(doc.decision.control.visitors).toBe(60);
     expect(doc.decision.treatment.visitors).toBe(60);
-    expect(doc.localArms.control.visitors).toBe(50);
-    expect(doc.localArms.treatment.visitors).toBe(50);
-    expect(doc.personasNote).toBe("local visit log, n=100; Flagsmith counted n=120");
+    expect(doc.localArms.control.visitors).toBe(60);
+    expect(doc.localArms.treatment.visitors).toBe(60);
+    expect(doc.personasNote).toBe("local visit log, n=120; Flagsmith counted n=120");
+    expect(doc.decision.notes.some((n) => n.includes("is_final is false"))).toBe(true);
+    expect(doc.rolloutVerification).toBeNull();
+  });
+
+  it("records 20-identity rollout verification and formats P(win) ≥ 0.999 as >99.9%", () => {
+    const decision = decideExperiment({
+      flag: "checkout_a11y",
+      visits: visits(),
+      threshold: 0.95,
+      flagsmith: {
+        ...fixture,
+        results: {
+          ...fixture.results,
+          is_final: false,
+          payload: {
+            ...fixture.results.payload,
+            metrics: [
+              {
+                ...fixture.results.payload.metrics[0],
+                inference: {
+                  ...fixture.results.payload.metrics[0].inference,
+                  treatment: {
+                    ...fixture.results.payload.metrics[0].inference.treatment,
+                    chance_to_win: 0.9994,
+                  },
+                },
+              },
+            ],
+          },
+        },
+      },
+    });
+    const doc = buildResultsDocument({
+      decision,
+      visits: visits(),
+      flagsmith: fixture,
+      personaMix: DEFAULT_PERSONA_MIX,
+      verification: {
+        applied: true,
+        n: 20,
+        matched: 20,
+        expected: "treatment",
+        usedFallback: false,
+        environmentDefaultPath: null,
+      },
+    });
+    expect(doc.headline.copy).toMatch(/P\(win\) >99\.9%/);
+    expect(doc.producedBy).toBe("fleet");
+    expect(doc.commitSha).toBeTruthy();
+    expect(doc.expectedLift).toBeCloseTo(1 / 0.7 - 1);
+    expect(doc.blockedShare).toBeCloseTo(0.3);
+    expect(doc.designedToLose).toBe(false);
+    expect(doc.decision.srmSource).toMatch(/^(flagsmith|lift)$/);
+    expect(typeof doc.decision.srmPValue).toBe("number");
+    expect(doc.rolloutVerification).toEqual({
+      applied: true,
+      n: 20,
+      matched: 20,
+      expected: "treatment",
+      usedFallback: false,
+      environmentDefaultPath: null,
+    });
   });
 
   it("serialises infinite lift as Infinity, not null", () => {

@@ -1,8 +1,5 @@
-import { createServer } from "node:http";
-import { extname, resolve } from "node:path";
-import { readFile } from "node:fs/promises";
-import { isInsideRoot } from "../../shared/fs-path.ts";
-import { ROOT, loadConfig } from "./config.ts";
+import { loadConfig } from "./config.ts";
+import { rebuildFleetFromSiteDocs } from "./fleet-document.ts";
 import { loadRunningState } from "./bootstrap.ts";
 import {
   applyDecision,
@@ -13,84 +10,17 @@ import {
   loadVisits,
 } from "./decide.ts";
 import { buildResultsDocument, flagsmithArmCounts, writeDashboard } from "./dashboard.ts";
-import { scanCheckoutSite } from "./scan.ts";
+import { scanSite } from "./scan.ts";
+import { serveSites } from "./serve.ts";
 import { runTraffic } from "../../traffic/src/runner.ts";
-
-const MIME: Record<string, string> = {
-  ".html": "text/html; charset=utf-8",
-  ".css": "text/css; charset=utf-8",
-  ".js": "text/javascript; charset=utf-8",
-  ".json": "application/json; charset=utf-8",
-  ".svg": "image/svg+xml",
-};
-
-function serveCheckout(
-  port: number,
-): Promise<{ close: () => Promise<void>; reused: boolean }> {
-  const root = resolve(ROOT, "sites/checkout");
-  const server = createServer(async (req, res) => {
-    const url = new URL(req.url ?? "/", `http://127.0.0.1:${port}`);
-    const filePath = resolve(
-      root,
-      url.pathname === "/" ? "index.html" : url.pathname.slice(1),
-    );
-    if (!isInsideRoot(root, filePath)) {
-      res.writeHead(403);
-      res.end("forbidden");
-      return;
-    }
-    if (url.pathname === "/config.json" || url.pathname.endsWith("/config.json")) {
-      let parsed: Record<string, unknown> = {};
-      try {
-        parsed = JSON.parse((await readFile(filePath)).toString("utf8")) as Record<
-          string,
-          unknown
-        >;
-      } catch {
-        parsed = {};
-      }
-      const body = JSON.stringify({ ...parsed, allowMock: true });
-      res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
-      res.end(body);
-      return;
-    }
-    try {
-      const body = await readFile(filePath);
-      res.writeHead(200, { "Content-Type": MIME[extname(filePath)] ?? "text/plain" });
-      res.end(body);
-    } catch {
-      res.writeHead(404);
-      res.end("not found");
-    }
-  });
-  return new Promise((resolveServer, reject) => {
-    server.listen(port, "127.0.0.1", () => {
-      resolveServer({
-        reused: false,
-        close: () =>
-          new Promise((resClose, rejClose) => {
-            server.close((err) => (err ? rejClose(err) : resClose()));
-          }),
-      });
-    });
-    server.on("error", (err: NodeJS.ErrnoException) => {
-      if (err.code === "EADDRINUSE") {
-        process.stderr.write(
-          `Port ${port} already in use; reusing the existing checkout server. It must overlay allowMock on /config.json (scripts/serve-site.mjs --allow-mock).\n`,
-        );
-        resolveServer({ reused: true, close: async () => undefined });
-        return;
-      }
-      reject(err);
-    });
-  });
-}
+import { getSite } from "../../shared/catalog.ts";
 
 export async function runExperiment() {
   const cfg = loadConfig();
-  const scan = scanCheckoutSite();
+  const site = getSite(cfg.siteId);
+  const scan = scanSite(cfg.siteId);
   process.stdout.write(
-    `Fixture scan: ${scan.findings.length} data-barrier markers (${scan.findings.map((f) => f.barrier.id).join(", ")}). Not a production crawler.\n`,
+    `Fixture scan (${site.id}): ${scan.findings.length} data-barrier markers (${scan.findings.map((f) => f.barrier.id).join(", ")}). Not a production crawler.\n`,
   );
 
   const state = await loadRunningState(cfg);
@@ -99,7 +29,7 @@ export async function runExperiment() {
   );
 
   const sitePort = Number(new URL(cfg.siteUrl).port || 4174);
-  const server = await serveCheckout(sitePort);
+  const server = await serveSites(sitePort);
   try {
     if (cfg.continueUntilDecision) {
       process.stderr.write(
@@ -175,7 +105,7 @@ export async function runExperiment() {
         continue;
       }
 
-      await applyDecision(decision);
+      const verification = await applyDecision(decision);
       const doc = buildResultsDocument({
         decision,
         visits,
@@ -183,12 +113,20 @@ export async function runExperiment() {
         experimentId: state.experimentId,
         dashboardUrl: `${cfg.dashboardUrl}/project/${state.projectId}/environment/${state.environmentId}/experiments/${state.experimentId}`,
         personaMix: cfg.personaMix,
+        site: site.id,
+        verification,
+        producedBy: process.env.LIFT_FLEET === "true" ? "fleet" : "experiment",
       });
       const path = writeDashboard(doc);
+      if (process.env.LIFT_FLEET !== "true") {
+        rebuildFleetFromSiteDocs();
+        process.stdout.write(`Wrote ${path} and rebuilt dashboard/results.json from sites/*.json\n`);
+      } else {
+        process.stdout.write(`Wrote ${path}\n`);
+      }
       process.stdout.write(
         `${decision.decision} (${decision.source}, P(treatment>control)=${decision.winProbabilityTreatment.toFixed(3)})\n`,
       );
-      process.stdout.write(`Wrote ${path}\n`);
       return doc;
     }
     throw new Error("experiment loop exited without a decision");
@@ -207,3 +145,4 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     process.exit(1);
   });
 }
+

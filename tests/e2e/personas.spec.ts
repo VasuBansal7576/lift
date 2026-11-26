@@ -5,7 +5,7 @@ import type { Persona } from "../../shared/types.ts";
 const personas: Persona[] = ["mouse", "keyboard", "screen-reader", "low-vision"];
 
 async function openUrlOverride(page: Page, variant: "control" | "treatment") {
-  await page.goto(`/?lift_variant=${variant}`);
+  await page.goto(`/checkout/?lift_variant=${variant}`);
   await expect(page.locator("body")).toHaveAttribute("data-variant", variant);
   await expect(page.locator("#flag-status")).toHaveText("URL override (no Flagsmith)");
 }

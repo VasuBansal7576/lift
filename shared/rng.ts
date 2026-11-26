@@ -18,7 +18,7 @@ export function mixSeed(
   trafficSeed: number,
   runId: string,
   batch: number,
-  stream: "persona" | "dropout",
+  stream: "persona" | "dropout" | "friction",
 ): number {
   const s = `${trafficSeed >>> 0}:${runId}:${batch >>> 0}:${stream}`;
   let h = 2166136261;

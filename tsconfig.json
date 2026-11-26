@@ -12,5 +12,5 @@
     "noEmit": true,
     "types": ["node"]
   },
-  "include": ["agent/**/*.ts", "traffic/**/*.ts", "tests/**/*.ts", "shared/**/*.ts"]
+  "include": ["agent/**/*.ts", "traffic/**/*.ts", "tests/**/*.ts", "shared/**/*.ts", "scripts/**/*.ts"]
 }

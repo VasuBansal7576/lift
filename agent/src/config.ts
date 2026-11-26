@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { config as loadEnv } from "dotenv";
 import { DEFAULT_PERSONA_MIX, type PersonaMix } from "../../shared/types.ts";
 import { parsePersonaMix } from "../../shared/mix.ts";
+import { getSite } from "../../shared/catalog.ts";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 loadEnv({ path: resolve(root, ".env") });
@@ -44,6 +45,8 @@ export function loadConfig() {
     "FLAGSMITH_EVENTS_URL",
     cloud ? "https://events.api.flagsmith.com/" : "http://localhost:8000/api/",
   ).replace(/\/?$/, "/");
+  const siteId = env("LIFT_SITE", "checkout");
+  const site = getSite(siteId);
   const targetArmN = Math.max(50, Math.floor(envNumber("LIFT_TARGET_ARM_N", 300)));
   const trafficNRaw = env("LIFT_TRAFFIC_N");
   const trafficN = Math.max(
@@ -51,6 +54,7 @@ export function loadConfig() {
     Math.floor(trafficNRaw ? envNumber("LIFT_TRAFFIC_N", 2 * targetArmN) : 2 * targetArmN),
   );
   return {
+    siteId,
     apiUrl,
     adminApiUrl,
     eventsUrl,
@@ -67,9 +71,13 @@ export function loadConfig() {
     environmentName: env("FLAGSMITH_ENVIRONMENT_NAME", "Development"),
     bootstrapEmail: env("FLAGSMITH_BOOTSTRAP_EMAIL", "admin@lift.local"),
     bootstrapPassword: env("FLAGSMITH_BOOTSTRAP_PASSWORD", "lift-dev-password"),
-    flagName: env("LIFT_FLAG_NAME", "checkout_a11y"),
-    metricEvent: env("LIFT_METRIC_EVENT", "checkout_completed"),
-    siteUrl: env("LIFT_SITE_URL", "http://127.0.0.1:4174").replace(/\/$/, ""),
+    flagName: env("LIFT_FLAG_NAME", site.flagName),
+    metricEvent: env("LIFT_METRIC_EVENT", site.metricEvent),
+    siteUrl: env(
+      "LIFT_SITE_URL",
+      siteId === "checkout" ? "http://127.0.0.1:4174" : `http://127.0.0.1:4174/${siteId}`,
+    ).replace(/\/$/, ""),
+    frictionKeepRate: site.harmfulFix?.frictionKeepRate ?? 0,
     trafficN,
     trafficSeed: envNumber("LIFT_TRAFFIC_SEED", 20261126),
     trafficRunId: env("LIFT_RUN_ID") || defaultRunId(),
@@ -92,16 +100,23 @@ export function loadConfig() {
 
 export type LiftConfig = ReturnType<typeof loadConfig>;
 
-export function statePath(): string {
+export function statePath(siteId = env("LIFT_SITE", "checkout")): string {
   const override = env("LIFT_STATE_PATH");
-  return override ? resolve(override) : resolve(ROOT, "data/state.json");
+  if (override) return resolve(override);
+  if (siteId === "checkout") return resolve(ROOT, "data/state.json");
+  return resolve(ROOT, `data/state-${siteId}.json`);
 }
 
-export function eventsPath(): string {
-  return resolve(ROOT, "data/visits.jsonl");
+export function eventsPath(siteId = env("LIFT_SITE", "checkout")): string {
+  if (siteId === "checkout") return resolve(ROOT, "data/visits.jsonl");
+  return resolve(ROOT, `data/visits-${siteId}.jsonl`);
 }
 
-export function resultsPath(): string {
+export function resultsPath(siteId = env("LIFT_SITE", "checkout")): string {
+  return resolve(ROOT, `dashboard/sites/${siteId}.json`);
+}
+
+export function fleetResultsPath(): string {
   return resolve(ROOT, "dashboard/results.json");
 }
 

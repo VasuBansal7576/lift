@@ -68,6 +68,47 @@ describe("parseFlagsmithWin", () => {
     expect(parsed?.rejectReason).toBe("error");
   });
 
+  it("runs a Lift-side chi-square SRM check when Flagsmith srm_p_value is null", () => {
+    const balanced = parseFlagsmithWin({
+      results: {
+        payload: {
+          srm_p_value: null,
+          metrics: [
+            {
+              variants: {
+                control: { n: 150, sum: 80 },
+                treatment: { n: 150, sum: 90 },
+              },
+              inference: { treatment: { chance_to_win: 0.9, lift: 0.1 } },
+            },
+          ],
+        },
+      },
+    });
+    expect(balanced?.usable).toBe(true);
+    expect(balanced?.srmSource).toBe("lift");
+    expect(balanced?.srmPValue).toBeGreaterThan(0.5);
+
+    const skewed = parseFlagsmithWin({
+      results: {
+        payload: {
+          metrics: [
+            {
+              variants: {
+                control: { n: 270, sum: 80 },
+                treatment: { n: 30, sum: 20 },
+              },
+              inference: { treatment: { chance_to_win: 0.99, lift: 0.4 } },
+            },
+          ],
+        },
+      },
+    });
+    expect(skewed?.usable).toBe(false);
+    expect(skewed?.rejectReason).toBe("srm");
+    expect(skewed?.srmPValue).toBeLessThan(0.01);
+  });
+
   it("declines to decide when srm_p_value is below 0.01", () => {
     const parsed = parseFlagsmithWin({
       results: {
@@ -79,6 +120,7 @@ describe("parseFlagsmithWin", () => {
     });
     expect(parsed?.usable).toBe(false);
     expect(parsed?.rejectReason).toBe("srm");
+    expect(parsed?.srmSource).toBe("flagsmith");
   });
 
   it("treats as_of before traffic ended as stale even when n is caught up", () => {
@@ -108,7 +150,7 @@ describe("parseFlagsmithWin", () => {
     expect(parsed?.rejectReason).toBe("stale");
   });
 
-  it("rejects ingestion when either arm is below 95% of local n", () => {
+  it("rejects ingestion unless Flagsmith n exactly matches local n", () => {
     const envelope = {
       results: {
         as_of: "2026-11-26T02:00:00Z",
@@ -131,6 +173,55 @@ describe("parseFlagsmithWin", () => {
     });
     expect(parsed?.usable).toBe(false);
     expect(parsed?.rejectReason).toBe("ingestion");
+
+    const almost = parseFlagsmithWin(
+      {
+        results: {
+          as_of: "2026-11-26T02:00:00Z",
+          payload: {
+            metrics: [
+              {
+                variants: {
+                  control: { n: 50, sum: 20 },
+                  treatment: { n: 51, sum: 30 },
+                },
+                inference: { treatment: { chance_to_win: 0.9, lift: 0.2 } },
+              },
+            ],
+          },
+        },
+      },
+      {
+        localArms: { control: 50, treatment: 50 },
+        trafficEndedAt: "2026-11-26T01:00:00Z",
+      },
+    );
+    expect(almost?.usable).toBe(false);
+    expect(almost?.rejectReason).toBe("ingestion");
+
+    const exact = parseFlagsmithWin(
+      {
+        results: {
+          as_of: "2026-11-26T02:00:00Z",
+          payload: {
+            metrics: [
+              {
+                variants: {
+                  control: { n: 50, sum: 20 },
+                  treatment: { n: 50, sum: 30 },
+                },
+                inference: { treatment: { chance_to_win: 0.9, lift: 0.2 } },
+              },
+            ],
+          },
+        },
+      },
+      {
+        localArms: { control: 50, treatment: 50 },
+        trafficEndedAt: "2026-11-26T01:00:00Z",
+      },
+    );
+    expect(exact?.usable).toBe(true);
   });
 
   it("returns null when Flagsmith has not computed yet", () => {
@@ -297,7 +388,57 @@ describe("decideExperiment", () => {
     });
     expect(decision.source).toBe("flagsmith");
     expect(decision.decision).toBe("keep_running");
-    expect(decision.notes.some((n) => n.includes("srm_p_value"))).toBe(true);
+    expect(decision.srmSource).toBe("flagsmith");
+    expect(decision.srmPValue).toBe(0.001);
+    expect(decision.notes.some((n) => n.includes("Flagsmith srm_p_value"))).toBe(true);
+  });
+
+  it("labels a Lift-side SRM rejection when Flagsmith srm_p_value is null", () => {
+    const skewedVisits: VisitRecord[] = [
+      ...Array.from({ length: 270 }, (_, i) =>
+        visit({
+          identity: `c${i}`,
+          persona: "mouse",
+          variant: "control",
+          converted: i < 80,
+        }),
+      ),
+      ...Array.from({ length: 30 }, (_, i) =>
+        visit({
+          identity: `t${i}`,
+          persona: "keyboard",
+          variant: "treatment",
+          converted: i < 20,
+        }),
+      ),
+    ];
+    const decision = decideExperiment({
+      flag: "checkout_a11y",
+      visits: skewedVisits,
+      threshold: 0.95,
+      flagsmith: {
+        results: {
+          payload: {
+            srm_p_value: null,
+            metrics: [
+              {
+                variants: {
+                  control: { n: 270, sum: 80 },
+                  treatment: { n: 30, sum: 20 },
+                },
+                inference: { treatment: { chance_to_win: 0.99, lift: 0.4 } },
+              },
+            ],
+          },
+        },
+      },
+    });
+    expect(decision.decision).toBe("keep_running");
+    expect(decision.srmSource).toBe("lift");
+    expect(decision.srmPValue).toBeLessThan(0.01);
+    expect(decision.notes.some((n) => n.includes("Lift-side chi-square SRM p-value"))).toBe(
+      true,
+    );
   });
 
   it("does not decide when Flagsmith n lags local counts even if as_of is after traffic", () => {

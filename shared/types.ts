@@ -17,13 +17,17 @@ export const DECISIONS = [
 ] as const;
 export type Decision = (typeof DECISIONS)[number];
 
-export type BarrierId =
-  | "hover_menu"
-  | "unlabeled_icon"
-  | "div_button"
-  | "missing_labels"
-  | "unlabeled_terms"
-  | "low_contrast";
+export const BARRIER_IDS = [
+  "hover_menu",
+  "unlabeled_icon",
+  "div_button",
+  "missing_labels",
+  "unlabeled_terms",
+  "low_contrast",
+  "autocomplete_off",
+  "extra_confirm",
+] as const;
+export type BarrierId = (typeof BARRIER_IDS)[number];
 
 export interface Barrier {
   id: BarrierId;
@@ -52,6 +56,8 @@ export interface ArmStats {
   rate: number;
 }
 
+export type SrmSource = "flagsmith" | "lift";
+
 export interface ExperimentDecision {
   flag: string;
   decision: Decision;
@@ -60,6 +66,8 @@ export interface ExperimentDecision {
   lift: number | null;
   ciLow: number | null;
   ciHigh: number | null;
+  srmPValue: number | null;
+  srmSource: SrmSource | null;
   control: ArmStats;
   treatment: ArmStats;
   threshold: number;

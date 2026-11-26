@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Northline Market — Search</title>
+  <link rel="stylesheet" href="../shared/styles.css">
+</head>
+<body data-site="search">
+  <p class="sim-banner" role="note">Demo store. Experiment traffic is simulated.</p>
+  <header class="masthead">
+    <a class="wordmark" href="./">Northline Market</a>
+  </header>
+  <main>
+    <p class="eyebrow">Catalog</p>
+    <h1>Find a kit</h1>
+    <form id="search-form" novalidate>
+      <div class="field-grid" data-barrier="missing_labels">
+        <p>
+          <span class="visible-hint">Search</span>
+          <input id="query" name="query" type="search" placeholder="waxed jacket" data-unlabeled data-lift-field data-lift-query data-lift-label="Search">
+        </p>
+      </div>
+      <button type="button" id="search-btn" class="icon-btn" data-barrier="unlabeled_icon" data-lift-search data-lift-name="Search the catalog" data-lift-glyph="⌕"></button>
+    </form>
+    <section id="lift-panel" class="panel" hidden>
+      <div id="result" class="result-card" data-lift-result hidden>
+        <h2>Ridge canvas jacket</h2>
+        <p class="price">$148.00</p>
+        <p class="terms contrast-fail" data-barrier="low_contrast">
+          <span id="terms-copy" data-lift-contrast>In stock. Ships in two days. Returns within 30 days.</span>
+        </p>
+        <form id="lift-form" data-lift-flow="search">
+          <div id="place-order" class="div-pay" data-barrier="div_button" data-lift-submit-label="Add to cart">Add to cart</div>
+          <p id="form-error" role="alert" hidden></p>
+        </form>
+      </div>
+    </section>
+    <p id="confirmation" data-lift-confirm hidden>Added to cart. Jacket is waiting in your bag.</p>
+  </main>
+  <footer>
+    <p>Northline Market — accessibility experiment fixture.</p>
+    <p id="flag-status">Waiting for Flagsmith…</p>
+  </footer>
+  <script type="module" src="../shared/lift-sdk.js"></script>
+</body>
+</html>

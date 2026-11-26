@@ -15,6 +15,7 @@ import {
   bayesianWinProbability,
   decideFromWinProbability,
   relativeLift,
+  srmPValue as chiSquareSrm,
 } from "./stats.ts";
 
 export interface FlagsmithResultsPayload {
@@ -49,7 +50,8 @@ export interface FlagsmithResultsEnvelope {
 const IDENTITY_FLOOR = 50;
 const CONVERSION_FLOOR = 5;
 const REFRESH_THROTTLE_MS = 5 * 60 * 1000;
-export const INGESTION_RATIO = 0.95;
+/** After the enrollment probe stopped inventing identities, Flagsmith n must equal local n. */
+export const INGESTION_RATIO = 1;
 export const VERIFY_IDENTITIES = 20;
 
 export function loadVisits(path = eventsPath()): VisitRecord[] {
@@ -85,6 +87,7 @@ export interface ParsedFlagsmithWin {
   flagsmithControlN: number | null;
   flagsmithTreatmentN: number | null;
   srmPValue: number | null;
+  srmSource: "flagsmith" | "lift" | null;
   usable: boolean;
   rejectReason?: "error" | "stale" | "srm" | "ingestion";
 }
@@ -96,6 +99,7 @@ export function parseFlagsmithWin(
     localN?: number;
     localArms?: { control: number; treatment: number };
     trafficEndedAt?: string | number | Date;
+    expectedControlShare?: number;
   },
 ): ParsedFlagsmithWin | null {
   const payload = envelope?.results?.payload;
@@ -119,6 +123,8 @@ export function parseFlagsmithWin(
       ? controlN + (treatment?.n ?? 0)
       : null;
 
+  const flagsmithSrm =
+    typeof payload?.srm_p_value === "number" ? payload.srm_p_value : null;
   const parsed: ParsedFlagsmithWin = {
     chanceToWin: arm.chance_to_win,
     lift: typeof arm.lift === "number" ? arm.lift : null,
@@ -128,7 +134,8 @@ export function parseFlagsmithWin(
     flagsmithN,
     flagsmithControlN: variants?.control ? controlN : null,
     flagsmithTreatmentN: treatment?.n ?? null,
-    srmPValue: typeof payload?.srm_p_value === "number" ? payload.srm_p_value : null,
+    srmPValue: flagsmithSrm,
+    srmSource: flagsmithSrm !== null ? "flagsmith" : null,
     usable: true,
   };
 
@@ -156,21 +163,36 @@ export function parseFlagsmithWin(
   const localArms = opts?.localArms;
   const localN = opts?.localN ?? 0;
   if (localArms && (localArms.control > 0 || localArms.treatment > 0)) {
-    const controlOk =
-      parsed.flagsmithControlN !== null &&
-      parsed.flagsmithControlN >= INGESTION_RATIO * localArms.control;
-    const treatmentOk =
-      parsed.flagsmithTreatmentN !== null &&
-      parsed.flagsmithTreatmentN >= INGESTION_RATIO * localArms.treatment;
+    const controlOk = parsed.flagsmithControlN === localArms.control;
+    const treatmentOk = parsed.flagsmithTreatmentN === localArms.treatment;
     if (!controlOk || !treatmentOk) {
       parsed.usable = false;
       parsed.rejectReason = "ingestion";
       return parsed;
     }
-  } else if (localN > 0 && (flagsmithN === null || flagsmithN < INGESTION_RATIO * localN)) {
+  } else if (localN > 0 && (flagsmithN === null || flagsmithN !== localN)) {
     parsed.usable = false;
     parsed.rejectReason = "ingestion";
     return parsed;
+  }
+
+  if (
+    parsed.srmPValue === null &&
+    parsed.flagsmithControlN !== null &&
+    parsed.flagsmithTreatmentN !== null
+  ) {
+    const liftSrm = chiSquareSrm(
+      parsed.flagsmithControlN,
+      parsed.flagsmithTreatmentN,
+      opts?.expectedControlShare ?? 0.5,
+    );
+    parsed.srmPValue = liftSrm;
+    parsed.srmSource = "lift";
+    if (liftSrm < 0.01) {
+      parsed.usable = false;
+      parsed.rejectReason = "srm";
+      return parsed;
+    }
   }
   return parsed;
 }
@@ -272,9 +294,7 @@ export function decideExperiment(input: {
     lift = parsed.lift ?? null;
     ciLow = parsed.ciLow;
     ciHigh = parsed.ciHigh;
-    notes.push(
-      `Flagsmith srm_p_value=${parsed.srmPValue} is below 0.01; declining to decide (sample-ratio mismatch).`,
-    );
+    notes.push(srmRejectNote(parsed));
   } else if (parsed?.rejectReason === "ingestion") {
     source = "flagsmith";
     winProbabilityTreatment = parsed.chanceToWin;
@@ -282,7 +302,7 @@ export function decideExperiment(input: {
     ciLow = parsed.ciLow;
     ciHigh = parsed.ciHigh;
     notes.push(
-      "awaiting ingestion: Flagsmith n is below 95% of local counts on at least one arm. Not deciding.",
+      "awaiting ingestion: Flagsmith n does not exactly match local counts on at least one arm. Not deciding.",
     );
   } else if (parsed && !parsed.usable) {
     notes.push(
@@ -336,6 +356,13 @@ export function decideExperiment(input: {
     }
   }
 
+  let decisionSrm = parsed?.srmPValue ?? null;
+  let decisionSrmSource = parsed?.srmSource ?? null;
+  if (decisionSrm === null) {
+    decisionSrm = chiSquareSrm(control.visitors, treatment.visitors);
+    decisionSrmSource = "lift";
+  }
+
   return {
     flag: input.flag,
     decision,
@@ -344,11 +371,20 @@ export function decideExperiment(input: {
     lift,
     ciLow,
     ciHigh,
+    srmPValue: decisionSrm,
+    srmSource: decisionSrmSource,
     control,
     treatment,
     threshold: input.threshold,
     notes,
   };
+}
+
+function srmRejectNote(parsed: ParsedFlagsmithWin): string {
+  if (parsed.srmSource === "lift") {
+    return `Lift-side chi-square SRM p-value=${parsed.srmPValue} is below 0.01; declining to decide (sample-ratio mismatch).`;
+  }
+  return `Flagsmith srm_p_value=${parsed.srmPValue} is below 0.01; declining to decide (sample-ratio mismatch).`;
 }
 
 export function shouldApplyDecision(
@@ -437,13 +473,40 @@ export interface FeatureStateRecord {
   }>;
 }
 
+export type EnvironmentDefaultPath = "v2_unicode" | "v2_string" | "v1_featurestates";
+
+export type EnvironmentDefaultClient = Pick<
+  FlagsmithAdmin,
+  "patchFutureFeature" | "get" | "patch"
+>;
+
 export async function setEnvironmentDefault(
-  admin: FlagsmithAdmin,
+  admin: EnvironmentDefaultClient,
   envKey: string,
   flagId: number,
   treatmentOptionId: number,
   variant: Variant,
-): Promise<void> {
+): Promise<EnvironmentDefaultPath> {
+  const allocation = variant === "treatment" ? 100 : 0;
+  const value = variant === "treatment" ? "treatment" : "control";
+  for (const type of ["unicode", "string"] as const) {
+    try {
+      await admin.patchFutureFeature(envKey, flagId, {
+        environment_default: {
+          enabled: true,
+          value: { type, value },
+          variants: [{ id: treatmentOptionId, weight: allocation }],
+        },
+      });
+      return type === "unicode" ? "v2_unicode" : "v2_string";
+    } catch (err) {
+      const retry =
+        err instanceof FlagsmithAdminError &&
+        (err.status === 400 || err.status === 404 || err.status === 422);
+      if (!retry) throw err;
+    }
+  }
+
   const { data } = await admin.get<unknown>(
     `/environments/${envKey}/featurestates/?feature=${flagId}`,
   );
@@ -452,7 +515,6 @@ export async function setEnvironmentDefault(
   if (!state) {
     throw new Error(`No environment feature state for feature ${flagId}`);
   }
-  const allocation = variant === "treatment" ? 100 : 0;
   const mv = (state.multivariate_feature_state_values ?? []).map((row) => {
     const optionId =
       typeof row.multivariate_feature_option === "number"
@@ -469,6 +531,7 @@ export async function setEnvironmentDefault(
     feature_state_value: variant === "treatment" ? "treatment" : "control",
     multivariate_feature_state_values: mv,
   });
+  return "v1_featurestates";
 }
 
 export async function evaluateIdentityVariant(
@@ -504,26 +567,57 @@ export function variantMatches(
   return got.variant === expected && got.value === expected;
 }
 
+export interface RolloutVerification {
+  applied: boolean;
+  n: number;
+  matched: number;
+  expected: Variant | null;
+  usedFallback: boolean;
+  environmentDefaultPath: EnvironmentDefaultPath | null;
+}
+
 export async function applyDecision(
   decision: ExperimentDecision,
   deps?: {
     evaluateIdentity?: typeof evaluateIdentityVariant;
-    setDefault?: typeof setEnvironmentDefault;
+    setDefault?: (
+      admin: EnvironmentDefaultClient,
+      envKey: string,
+      flagId: number,
+      treatmentOptionId: number,
+      variant: Variant,
+    ) => Promise<EnvironmentDefaultPath | void>;
     allowLocalDecision?: boolean;
   },
-): Promise<void> {
+): Promise<RolloutVerification> {
   const cfg = loadConfig();
   const state = readJson<BootstrapState>(statePath());
   if (!state || !cfg.adminToken || !cfg.environmentKey) {
     throw new Error("Bootstrap state and Flagsmith admin credentials are required to roll out");
   }
-  if (decision.decision === "keep_running") return;
+  if (decision.decision === "keep_running") {
+    return {
+      applied: false,
+      n: 0,
+      matched: 0,
+      expected: null,
+      usedFallback: false,
+      environmentDefaultPath: null,
+    };
+  }
   const allowLocal = deps?.allowLocalDecision ?? cfg.allowLocalDecision;
   if (decision.source !== "flagsmith" && !allowLocal) {
     process.stderr.write(
       "Not completing: source is local_bayesian. Set LIFT_ALLOW_LOCAL_DECISION=true to apply local math.\n",
     );
-    return;
+    return {
+      applied: false,
+      n: 0,
+      matched: 0,
+      expected: null,
+      usedFallback: false,
+      environmentDefaultPath: null,
+    };
   }
 
   const admin = new FlagsmithAdmin(cfg);
@@ -575,32 +669,52 @@ export async function applyDecision(
     `lift-verify-${stamp}`,
     VERIFY_IDENTITIES,
   );
-  if (first.every((got) => variantMatches(got, expected))) return;
+  if (first.every((got) => variantMatches(got, expected))) {
+    return {
+      applied: true,
+      n: VERIFY_IDENTITIES,
+      matched: first.length,
+      expected,
+      usedFallback: false,
+      environmentDefaultPath: null,
+    };
+  }
 
   const sample = first.find((got) => !variantMatches(got, expected)) ?? first[0];
   process.stderr.write(
     `Fresh identities failed rollout check (e.g. variant=${sample?.variant} value=${String(sample?.value)}, expected ${expected}). Falling back to environment default PATCH.\n`,
   );
   const setDefault = deps?.setDefault ?? setEnvironmentDefault;
-  await setDefault(
-    admin,
-    cfg.environmentKey,
-    state.flagId,
-    state.treatmentOptionId,
-    expected,
-  );
+  const environmentDefaultPath =
+    (await setDefault(
+      admin,
+      cfg.environmentKey,
+      state.flagId,
+      state.treatmentOptionId,
+      expected,
+    )) ?? "v2_unicode";
   const second = await evaluateMany(
     evaluate,
     state.flagName,
     `lift-verify-fallback-${stamp}`,
     VERIFY_IDENTITIES,
   );
-  if (!second.every((got) => variantMatches(got, expected))) {
+  const matched = second.filter((got) => variantMatches(got, expected)).length;
+  if (matched !== VERIFY_IDENTITIES) {
     const bad = second.find((got) => !variantMatches(got, expected)) ?? second[0];
     throw new Error(
       `Environment default fallback failed: identity still sees variant=${bad?.variant} value=${String(bad?.value)}, expected ${expected}`,
     );
   }
+  process.stderr.write(`Environment default path used: ${environmentDefaultPath}\n`);
+  return {
+    applied: true,
+    n: VERIFY_IDENTITIES,
+    matched,
+    expected,
+    usedFallback: true,
+    environmentDefaultPath,
+  };
 }
 
 async function evaluateMany(

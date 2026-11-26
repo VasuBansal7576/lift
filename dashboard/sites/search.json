@@ -1,0 +1,304 @@
+{
+  "traffic": "simulated",
+  "label": "SIMULATED TRAFFIC — Playwright persona bots, not humans. Demonstration of the pipeline; outcomes follow the persona model, not evidence about real users. Lift is a function of the assumed share of keyboard, screen-reader and low-vision users.",
+  "generatedAt": "2026-11-26T13:15:49.730Z",
+  "producedBy": "fleet",
+  "commitSha": "837d329b0d117b1fa522bd633f9fff29d0b71030",
+  "site": "search",
+  "sites": 1,
+  "flag": "search_a11y",
+  "frictionDisclosure": null,
+  "experimentId": 651,
+  "flagsmithDashboard": "https://app.flagsmith.com/project/56470/environment/120798/experiments/651",
+  "personaMix": {
+    "mouse": 0.7,
+    "keyboard": 0.1,
+    "screen-reader": 0.1,
+    "low-vision": 0.1
+  },
+  "personaMixLabel": "mouse 70%, keyboard 10%, screen-reader 10%, low-vision 10%",
+  "realisedMix": {
+    "mouse": 0.6825,
+    "keyboard": 0.105,
+    "screen-reader": 0.1,
+    "low-vision": 0.1125
+  },
+  "realisedMixLabel": "mouse 68%, keyboard 11%, screen-reader 10%, low-vision 11%",
+  "personaMixNote": "Assumed mix is a modelling choice (mouse 70%, keyboard 10%, screen-reader 10%, low-vision 10%), not measured traffic. realisedMix is this run's actual draws. Win threshold is 95%.",
+  "localArms": {
+    "control": {
+      "conversions": 110,
+      "visitors": 192
+    },
+    "treatment": {
+      "conversions": 154,
+      "visitors": 208
+    }
+  },
+  "personasNote": "local visit log, n=400; Flagsmith counted n=400",
+  "outcome": "Flagsmith completed the experiment and rolled out treatment.",
+  "honesty": "Barrier flags are wired on the site; this run used the bundled search_a11y native experiment. Sequential per-barrier experiments are the attribution path.",
+  "headline": {
+    "conversionLift": 0.29230769230769243,
+    "displayLift": 0.29230769230769243,
+    "source": "flagsmith",
+    "copy": "Flagsmith lift (SIMULATED traffic, assumed mix 70/10/10/10): 29.2%, P(win) 99.9%, 95% CI +10.3% to +48.2%, rolled out",
+    "ciLow": 0.1028176886716563,
+    "ciHigh": 0.48179769594372857
+  },
+  "decision": {
+    "flag": "search_a11y",
+    "decision": "rollout_treatment",
+    "source": "flagsmith",
+    "winProbabilityTreatment": 0.9987504265482114,
+    "lift": 0.29230769230769243,
+    "ciLow": 0.1028176886716563,
+    "ciHigh": 0.48179769594372857,
+    "control": {
+      "visitors": 192,
+      "conversions": 110,
+      "rate": 0.5729166666666666
+    },
+    "treatment": {
+      "visitors": 208,
+      "conversions": 154,
+      "rate": 0.7403846153846154
+    },
+    "threshold": 0.95,
+    "notes": [
+      "All traffic is SIMULATED (Playwright persona bots, not humans). Outcomes follow the persona model, not evidence about real users.",
+      "Win probability from Flagsmith Experimentation (chance_to_win on the results payload).",
+      "Flagsmith results as of 2026-11-26T13:15:40.078098Z.",
+      "Treatment wins under the 95% chance-to-be-best rule.",
+      "Embedded Flagsmith snapshot was taken before completion (results.is_final is false)."
+    ],
+    "srmPValue": 0.4237106771800861,
+    "srmSource": "lift"
+  },
+  "flags": [
+    {
+      "name": "search_a11y",
+      "role": "experiment",
+      "control": {
+        "visitors": 192,
+        "conversions": 110
+      },
+      "treatment": {
+        "visitors": 208,
+        "conversions": 154
+      },
+      "armSource": "flagsmith",
+      "winProbabilityTreatment": 0.9987504265482114,
+      "ciLow": 0.1028176886716563,
+      "ciHigh": 0.48179769594372857,
+      "source": "flagsmith",
+      "decision": "rollout_treatment"
+    },
+    {
+      "name": "search_unlabeled_icon",
+      "role": "barrier",
+      "title": "Unlabeled search glyph",
+      "wcag": "4.1.2",
+      "blocks": [
+        "screen-reader"
+      ],
+      "note": "Wired on the search page. Bundled experiment search_a11y is the native-Experiments path; per-barrier flags stay at 0% treatment until a sequential run."
+    },
+    {
+      "name": "search_missing_labels",
+      "role": "barrier",
+      "title": "Query field without a label",
+      "wcag": "1.3.1 / 3.3.2",
+      "blocks": [
+        "screen-reader"
+      ],
+      "note": "Wired on the search page. Bundled experiment search_a11y is the native-Experiments path; per-barrier flags stay at 0% treatment until a sequential run."
+    },
+    {
+      "name": "search_div_button",
+      "role": "barrier",
+      "title": "Non-focusable Add to cart",
+      "wcag": "2.1.1 / 4.1.2",
+      "blocks": [
+        "keyboard",
+        "screen-reader"
+      ],
+      "note": "Wired on the search page. Bundled experiment search_a11y is the native-Experiments path; per-barrier flags stay at 0% treatment until a sequential run."
+    },
+    {
+      "name": "search_low_contrast",
+      "role": "barrier",
+      "title": "Low-contrast stock note",
+      "wcag": "1.4.3",
+      "blocks": [
+        "low-vision"
+      ],
+      "note": "Wired on the search page. Bundled experiment search_a11y is the native-Experiments path; per-barrier flags stay at 0% treatment until a sequential run."
+    }
+  ],
+  "personas": {
+    "mouse": {
+      "control": {
+        "visitors": 147,
+        "conversions": 110
+      },
+      "treatment": {
+        "visitors": 126,
+        "conversions": 95
+      }
+    },
+    "keyboard": {
+      "control": {
+        "visitors": 11,
+        "conversions": 0
+      },
+      "treatment": {
+        "visitors": 31,
+        "conversions": 23
+      }
+    },
+    "screen-reader": {
+      "control": {
+        "visitors": 14,
+        "conversions": 0
+      },
+      "treatment": {
+        "visitors": 26,
+        "conversions": 18
+      }
+    },
+    "low-vision": {
+      "control": {
+        "visitors": 20,
+        "conversions": 0
+      },
+      "treatment": {
+        "visitors": 25,
+        "conversions": 18
+      }
+    }
+  },
+  "barriers": [
+    {
+      "id": "unlabeled_icon",
+      "flag": "search_unlabeled_icon",
+      "siteFlag": "search_unlabeled_icon",
+      "wcag": "4.1.2",
+      "title": "Unlabeled search glyph",
+      "control": "Search button has no accessible name.",
+      "treatment": "aria-label=\"Search the catalog\".",
+      "blocks": [
+        "screen-reader"
+      ]
+    },
+    {
+      "id": "missing_labels",
+      "flag": "search_missing_labels",
+      "siteFlag": "search_missing_labels",
+      "wcag": "1.3.1 / 3.3.2",
+      "title": "Query field without a label",
+      "control": "Placeholder only.",
+      "treatment": "Visible associated label.",
+      "blocks": [
+        "screen-reader"
+      ]
+    },
+    {
+      "id": "div_button",
+      "flag": "search_div_button",
+      "siteFlag": "search_div_button",
+      "wcag": "2.1.1 / 4.1.2",
+      "title": "Non-focusable Add to cart",
+      "control": "Add to cart is a clickable div.",
+      "treatment": "Native button.",
+      "blocks": [
+        "keyboard",
+        "screen-reader"
+      ]
+    },
+    {
+      "id": "low_contrast",
+      "flag": "search_low_contrast",
+      "siteFlag": "search_low_contrast",
+      "wcag": "1.4.3",
+      "title": "Low-contrast stock note",
+      "control": "Grey-on-grey shipping copy (~1.4:1).",
+      "treatment": "Near-black on white.",
+      "blocks": [
+        "low-vision"
+      ]
+    }
+  ],
+  "visits": 400,
+  "flagsmithResults": {
+    "results": {
+      "as_of": "2026-11-26T13:15:40.078098Z",
+      "last_error_at": null,
+      "refresh_requested_at": "2026-11-26T13:15:39.998767Z",
+      "payload": {
+        "metrics": [
+          {
+            "variants": {
+              "control": {
+                "n": 192,
+                "sum": 110,
+                "sum_squares": 110
+              },
+              "treatment": {
+                "n": 208,
+                "sum": 154,
+                "sum_squares": 154
+              }
+            },
+            "inference": {
+              "treatment": {
+                "lift": 0.29230769230769243,
+                "ci_low": 0.1028176886716563,
+                "ci_high": 0.48179769594372857,
+                "chance_to_win": 0.9987504265482114
+              }
+            },
+            "metric_id": 618,
+            "conversions_timeseries": {
+              "points": [
+                {
+                  "bucket": "2026-11-26T13:00:00+00:00",
+                  "converted_identities": {
+                    "control": 110,
+                    "treatment": 154
+                  }
+                }
+              ],
+              "granularity": "hour"
+            }
+          }
+        ],
+        "srm_p_value": null,
+        "exposures_timeseries": {
+          "points": [
+            {
+              "bucket": "2026-11-26T13:00:00+00:00",
+              "new_identities": {
+                "control": 192,
+                "treatment": 208
+              }
+            }
+          ],
+          "granularity": "hour"
+        }
+      },
+      "is_final": false
+    }
+  },
+  "rolloutVerification": {
+    "applied": true,
+    "n": 20,
+    "matched": 20,
+    "expected": "treatment",
+    "usedFallback": false,
+    "environmentDefaultPath": null
+  },
+  "expectedLift": 0.4285714285714286,
+  "blockedShare": 0.30000000000000004,
+  "designedToLose": false
+}

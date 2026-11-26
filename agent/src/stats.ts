@@ -93,6 +93,48 @@ export function serialiseLift(
   return lift;
 }
 
+/** Complementary error function (Abramowitz & Stegun 7.1.26). */
+function erfc(x: number): number {
+  const z = Math.abs(x);
+  const t = 1 / (1 + 0.3275911 * z);
+  const y =
+    t *
+    (0.254829592 +
+      t *
+        (-0.284496736 +
+          t * (1.421413741 + t * (-1.453152027 + t * 1.061405429)))) *
+    Math.exp(-z * z);
+  return x >= 0 ? y : 2 - y;
+}
+
+/** Survival function of chi-square with 1 df. */
+export function chiSquareDf1P(chi: number): number {
+  if (!Number.isFinite(chi) || chi <= 0) return 1;
+  return erfc(Math.sqrt(chi / 2));
+}
+
+/** Pearson SRM p-value for two arms vs expected allocation (default 50/50). */
+export function srmPValue(
+  nControl: number,
+  nTreatment: number,
+  expectedControlShare = 0.5,
+): number {
+  const n = nControl + nTreatment;
+  if (n <= 0) return 1;
+  const p = Math.min(0.999, Math.max(0.001, expectedControlShare));
+  const eC = n * p;
+  const eT = n * (1 - p);
+  const chi = (nControl - eC) ** 2 / eC + (nTreatment - eT) ** 2 / eT;
+  return chiSquareDf1P(chi);
+}
+
+export function formatPWin(p: number): string {
+  if (!Number.isFinite(p)) return "n/a";
+  if (p > 0.999) return ">99.9%";
+  if (p < 0.001) return "<0.1%";
+  return `${(p * 100).toFixed(1)}%`;
+}
+
 export function decideFromWinProbability(
   winProbabilityTreatment: number,
   threshold: number,

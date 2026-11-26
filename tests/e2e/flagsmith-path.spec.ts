@@ -44,7 +44,7 @@ async function stubFlagsmith(page: Page, variant: "control" | "treatment") {
 
 test("stubbed Flagsmith SDK path loads without ?lift_variant", async ({ page }) => {
   await stubFlagsmith(page, "treatment");
-  await page.goto("/");
+  await page.goto("/checkout/");
   await expect(page.locator("body")).toHaveAttribute("data-variant", "treatment");
   await expect(page.locator("#flag-status")).toHaveText(/Flagsmith checkout_a11y=treatment/);
   await expect(page.locator("#flag-status")).not.toHaveText(/URL override/);
@@ -54,7 +54,7 @@ test("stubbed Flagsmith SDK: allowMock:false ignores ?lift_variant=treatment whe
   page,
 }) => {
   await stubFlagsmith(page, "control");
-  await page.goto("/?lift_variant=treatment");
+  await page.goto("/checkout/?lift_variant=treatment");
   await expect(page.locator("body")).toHaveAttribute("data-variant", "control");
   await expect(page.locator("#flag-status")).toHaveText(/Flagsmith checkout_a11y=control/);
   await expect(page.locator("#flag-status")).not.toHaveText(/URL override/);
@@ -96,7 +96,7 @@ export default flagsmith;
       },
     });
   });
-  await page.goto("/");
+  await page.goto("/checkout/");
   await expect(page.locator("body")).toHaveAttribute("data-variant", "control");
   await expect(page.locator("#flag-status")).toHaveText(/Flagsmith checkout_a11y=control/);
   await expect(page.locator("#cart-icon")).toHaveAttribute(

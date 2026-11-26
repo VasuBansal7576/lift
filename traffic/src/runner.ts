@@ -33,6 +33,30 @@ export function applyBaselineDropout(
   return { converted: false, dropped: true };
 }
 
+/**
+ * Extra seeded keep/drop when treatment added a friction step.
+ * `keepRate` is P(keep): rand() < keepRate keeps the conversion.
+ * Not a hard-coded loser — pricing's 0.4 keep rate is a designed-to-lose
+ * pipeline check of pull_to_control.
+ */
+export function applyFrictionKeep(
+  converted: boolean,
+  rand: () => number,
+  hasFriction: boolean,
+  keepRate: number,
+): { converted: boolean; dropped: boolean } {
+  if (!converted || !hasFriction) {
+    return { converted, dropped: false };
+  }
+  if (keepRate <= 0) return { converted: false, dropped: true };
+  if (keepRate >= 1) return { converted: true, dropped: false };
+  if (rand() < keepRate) return { converted: true, dropped: false };
+  return { converted: false, dropped: true };
+}
+
+/** @deprecated Use applyFrictionKeep. Same keep-rate semantics. */
+export const applyFrictionDropout = applyFrictionKeep;
+
 export function variantFromFlag(flag: {
   value?: unknown;
   variant?: string | null;
@@ -58,14 +82,55 @@ export async function assignVariant(
   flagName: string,
   identity: string,
   persona: Persona,
+  site = "checkout",
 ): Promise<{ variant: Variant; flag: Flag }> {
   const flag = await flagsmith.getExperimentFlag(flagName, identity, {
     simulated: true,
     persona,
-    site: "checkout",
+    site,
   });
   const variant = variantFromFlag(flag);
   return { variant, flag: flag as Flag };
+}
+
+/**
+ * Poll local eval until visitor #0 would enroll. Events stay off so this
+ * records zero fake exposures. The traffic loop then uses the same identity.
+ */
+async function waitUntilEnrolled(cfg: LiftConfig, timeoutMs = 120_000) {
+  const identity = identityFor(cfg.trafficRunId, cfg.trafficSeed, 0);
+  const deadline = Date.now() + timeoutMs;
+  let last = "not tried";
+  while (Date.now() < deadline) {
+    const flagsmith = new Flagsmith({
+      environmentKey: cfg.serverKey || cfg.environmentKey,
+      apiUrl: cfg.adminApiUrl || cfg.apiUrl,
+      enableLocalEvaluation: Boolean(cfg.serverKey),
+      enableEvents: false,
+      environmentRefreshIntervalSeconds: 1,
+    });
+    try {
+      const flags = await flagsmith.getIdentityFlags(identity, {
+        simulated: true,
+        site: cfg.siteId,
+      });
+      const flag = flags.getFlag(cfg.flagName) as Flag;
+      if (
+        flag.experiment?.inExperiment &&
+        (flag.variant === "control" || flag.variant === "treatment")
+      ) {
+        return;
+      }
+      last = `inExperiment=${Boolean(flag.experiment?.inExperiment)} variant=${String(flag.variant)}`;
+    } catch (err) {
+      last = err instanceof Error ? err.message : String(err);
+    } finally {
+      await flagsmith.close(2000);
+    }
+    process.stderr.write(`Waiting for ${cfg.flagName} enrollment (${last})\n`);
+    await new Promise((resolve) => setTimeout(resolve, 4000));
+  }
+  throw new Error(`Identities not enrolled in ${cfg.flagName} after ${timeoutMs}ms (${last})`);
 }
 
 async function assertExperimentRunning(cfg: LiftConfig) {
@@ -79,7 +144,7 @@ async function assertExperimentRunning(cfg: LiftConfig) {
       "FLAGSMITH_ENVIRONMENT_KEY is required to verify the experiment is running before sending traffic.",
     );
   }
-  const state = readJson<BootstrapState>(statePath());
+  const state = readJson<BootstrapState>(statePath(cfg.siteId));
   if (!state) {
     throw new Error(
       "Missing bootstrap state. Run npm run bootstrap before sending traffic.",
@@ -115,6 +180,7 @@ export async function runTraffic(overrides?: Partial<LiftConfig>) {
   }
 
   await assertExperimentRunning(cfg);
+  await waitUntilEnrolled(cfg);
 
   const flagsmith = new Flagsmith({
     environmentKey: cfg.serverKey || cfg.environmentKey,
@@ -132,7 +198,10 @@ export async function runTraffic(overrides?: Partial<LiftConfig>) {
   const dropoutRand = mulberry32(
     mixSeed(cfg.trafficSeed, cfg.trafficRunId, cfg.trafficBatch, "dropout"),
   );
-  const visitsPath = eventsPath();
+  const frictionRand = mulberry32(
+    mixSeed(cfg.trafficSeed, cfg.trafficRunId, cfg.trafficBatch, "friction"),
+  );
+  const visitsPath = eventsPath(cfg.siteId);
   mkdirSync(dirname(visitsPath), { recursive: true });
   if (!cfg.appendVisits) {
     writeFileSync(visitsPath, "");
@@ -150,6 +219,7 @@ export async function runTraffic(overrides?: Partial<LiftConfig>) {
         cfg.flagName,
         identity,
         persona,
+        cfg.siteId,
       );
 
       const context = await browser.newContext(
@@ -173,7 +243,7 @@ export async function runTraffic(overrides?: Partial<LiftConfig>) {
       }));
       if (seen.variant !== variant) {
         throw new Error(
-          `Checkout dataset.variant=${seen.variant} does not match assigned ${variant}`,
+          `${cfg.siteId} dataset.variant=${seen.variant} does not match assigned ${variant}`,
         );
       }
       if (!seen.status.includes("URL override")) {
@@ -182,15 +252,26 @@ export async function runTraffic(overrides?: Partial<LiftConfig>) {
         );
       }
       const attempt = await runPersona(page, persona);
-      const dropout = applyBaselineDropout(
+      const hasFriction = await page.evaluate(
+        () => document.body.dataset.friction === "true",
+      );
+      const baseline = applyBaselineDropout(
         attempt.converted,
         dropoutRand,
         cfg.baselineConvert,
       );
-      const converted = dropout.converted;
-      const reason = dropout.dropped
-        ? "baseline drop-off (seeded; independent of barriers)"
-        : attempt.reason;
+      const friction = applyFrictionKeep(
+        baseline.converted,
+        frictionRand,
+        hasFriction,
+        cfg.frictionKeepRate,
+      );
+      const converted = friction.converted;
+      const reason = friction.dropped
+        ? "friction step drop-off (seeded; treatment extra confirm)"
+        : baseline.dropped
+          ? "baseline drop-off (seeded; independent of barriers)"
+          : attempt.reason;
       await context.close();
 
       if (converted) {
@@ -200,7 +281,7 @@ export async function runTraffic(overrides?: Partial<LiftConfig>) {
             converted: true,
             simulated: true,
             persona,
-            site: "checkout",
+            site: cfg.siteId,
           },
         });
       }
@@ -210,7 +291,7 @@ export async function runTraffic(overrides?: Partial<LiftConfig>) {
         persona,
         variant,
         converted,
-        blockedBy: dropout.dropped ? [] : attempt.blockedBy,
+        blockedBy: baseline.dropped || friction.dropped ? [] : attempt.blockedBy,
         reason,
         simulated: true,
         at: new Date().toISOString(),
@@ -229,7 +310,7 @@ export async function runTraffic(overrides?: Partial<LiftConfig>) {
 
   writeFileSync(
     resolve(ROOT, "data/traffic-summary.json"),
-    `${JSON.stringify({ traffic: "simulated", seed: cfg.trafficSeed, mix: cfg.personaMix, visits }, null, 2)}\n`,
+    `${JSON.stringify({ traffic: "simulated", site: cfg.siteId, seed: cfg.trafficSeed, mix: cfg.personaMix, visits }, null, 2)}\n`,
   );
   return visits;
 }

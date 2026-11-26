@@ -1,10 +1,16 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import barriersCatalog from "../../shared/barriers.json" with { type: "json" };
+import {
+  blockedPersonaShare,
+  expectedLiftByConstruction,
+  getSite,
+  PRICING_FRICTION_DISCLOSURE,
+} from "../../shared/catalog.ts";
+import { gitCommitSha } from "../../shared/git.ts";
+import type { ProducedBy } from "../../shared/aggregate.ts";
 import {
   assertNever,
   DEFAULT_PERSONA_MIX,
-  type Barrier,
   type Decision,
   type ExperimentDecision,
   type Persona,
@@ -13,9 +19,12 @@ import {
 } from "../../shared/types.ts";
 import { compactMix, mixLabel, realisedMix } from "../../shared/mix.ts";
 import { resultsPath } from "./config.ts";
-import type { FlagsmithResultsEnvelope } from "./decide.ts";
-import { summariseVisits } from "./decide.ts";
-import { armStats, clampLift, serialiseLift } from "./stats.ts";
+import {
+  summariseVisits,
+  type EnvironmentDefaultPath,
+  type FlagsmithResultsEnvelope,
+} from "./decide.ts";
+import { armStats, clampLift, formatPWin, serialiseLift } from "./stats.ts";
 
 function personaBreakdown(visits: VisitRecord[]) {
   const out: Record<
@@ -100,7 +109,7 @@ export function buildHeadlineCopy(input: {
     input.source === "flagsmith"
       ? `Flagsmith lift (SIMULATED traffic, assumed mix ${mixCompact}): ${input.pct}`
       : `local_bayesian lift (SIMULATED traffic, assumed mix ${mixCompact}, not Flagsmith): ${input.pct}`;
-  const pWin = `P(win) ${(input.winProbability * 100).toFixed(1)}%`;
+  const pWin = `P(win) ${formatPWin(input.winProbability)}`;
   const ciLow = formatSignedPct(input.ciLow);
   const ciHigh = formatSignedPct(input.ciHigh);
   const ci = ciLow && ciHigh ? `95% CI ${ciLow} to ${ciHigh}` : null;
@@ -123,6 +132,17 @@ export function buildResultsDocument(input: {
   experimentId?: number;
   dashboardUrl?: string;
   personaMix?: PersonaMix;
+  site?: string;
+  verification?: {
+    applied: boolean;
+    n: number;
+    matched: number;
+    expected: string | null;
+    usedFallback: boolean;
+    environmentDefaultPath?: EnvironmentDefaultPath | null;
+  } | null;
+  producedBy?: ProducedBy;
+  commitSha?: string;
 }) {
   const localByVariant = summariseVisits(input.visits);
   const mix = input.personaMix ?? DEFAULT_PERSONA_MIX;
@@ -145,6 +165,25 @@ export function buildResultsDocument(input: {
         `Local visit counts differ from Flagsmith n/sum (local control ${localByVariant.control.conversions}/${localByVariant.control.visitors}, treatment ${localByVariant.treatment.conversions}/${localByVariant.treatment.visitors}; Flagsmith control ${flagsmithArms.control.conversions}/${flagsmithArms.control.visitors}, treatment ${flagsmithArms.treatment.conversions}/${flagsmithArms.treatment.visitors}). Using Flagsmith n/sum.`,
       );
     }
+  }
+  if (input.flagsmith?.results?.is_final === false) {
+    notes.push(
+      "Embedded Flagsmith snapshot was taken before completion (results.is_final is false).",
+    );
+  }
+  const siteDef = getSite(input.site ?? "checkout");
+  const expectedLift = expectedLiftByConstruction(siteDef, mix);
+  const blockedShare = blockedPersonaShare(siteDef, mix);
+  if (siteDef.harmfulFix?.designedToLose) {
+    notes.push(siteDef.harmfulFix.note);
+  }
+  notes.push(
+    `Expected lift by construction is ${formatSignedPct(expectedLift) ?? "n/a"} at ${(blockedShare * 100).toFixed(0)}% blocked (blocked personas convert 0% in control; mouse users are never blocked).`,
+  );
+  if (input.verification?.usedFallback && input.verification.environmentDefaultPath) {
+    notes.push(
+      `Rollout verification used environment default path ${input.verification.environmentDefaultPath}.`,
+    );
   }
   const rawLift = fromFlagsmith
     ? input.decision.lift
@@ -194,9 +233,16 @@ export function buildResultsDocument(input: {
     label:
       "SIMULATED TRAFFIC — Playwright persona bots, not humans. Demonstration of the pipeline; outcomes follow the persona model, not evidence about real users. Lift is a function of the assumed share of keyboard, screen-reader and low-vision users.",
     generatedAt: new Date().toISOString(),
-    site: "checkout",
+    producedBy: input.producedBy ?? "fleet",
+    commitSha: input.commitSha ?? gitCommitSha(),
+    site: input.site ?? "checkout",
     sites: 1,
     flag: input.decision.flag,
+    expectedLift,
+    blockedShare,
+    designedToLose: Boolean(siteDef.harmfulFix?.designedToLose),
+    frictionDisclosure:
+      siteDef.harmfulFix?.designedToLose ? PRICING_FRICTION_DISCLOSURE : null,
     experimentId: input.experimentId ?? null,
     flagsmithDashboard: input.dashboardUrl ?? null,
     personaMix: mix,
@@ -210,7 +256,7 @@ export function buildResultsDocument(input: {
       : `local visit log, n=${localTotal}`,
     outcome: outcomeIntro(input.decision.decision, input.decision.source),
     honesty:
-      "Barrier flags are wired on the site; this run used the bundled checkout_a11y native experiment. Sequential per-barrier experiments are the attribution path.",
+      `Barrier flags are wired on the site; this run used the bundled ${input.decision.flag} native experiment. Sequential per-barrier experiments are the attribution path.`,
     headline: {
       conversionLift,
       displayLift,
@@ -233,24 +279,28 @@ export function buildResultsDocument(input: {
         source: input.decision.source,
         decision: input.decision.decision,
       },
-      ...(barriersCatalog as Barrier[]).map((barrier) => ({
+      ...getSite(input.site ?? "checkout").barriers.map((barrier) => ({
         name: barrier.flag,
         role: "barrier",
         title: barrier.title,
         wcag: barrier.wcag,
         blocks: barrier.blocks,
-        note: "Wired on the checkout page. Bundled experiment checkout_a11y is the native-Experiments path; per-barrier flags stay at 0% treatment until a sequential run.",
+        note: `Wired on the ${input.site ?? "checkout"} page. Bundled experiment ${input.decision.flag} is the native-Experiments path; per-barrier flags stay at 0% treatment until a sequential run.`,
       })),
     ],
     personas: personaBreakdown(input.visits),
-    barriers: barriersCatalog,
+    barriers: getSite(input.site ?? "checkout").barriers,
     visits: input.visits.length,
     flagsmithResults: input.flagsmith,
+    rolloutVerification: input.verification ?? null,
   };
 }
 
-export function writeDashboard(doc: ReturnType<typeof buildResultsDocument>) {
-  mkdirSync(dirname(resultsPath()), { recursive: true });
-  writeFileSync(resultsPath(), `${JSON.stringify(doc, null, 2)}\n`);
-  return resultsPath();
+export function writeDashboard(
+  doc: ReturnType<typeof buildResultsDocument>,
+  path = resultsPath(String(doc.site ?? "checkout")),
+) {
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, `${JSON.stringify(doc, null, 2)}\n`);
+  return path;
 }

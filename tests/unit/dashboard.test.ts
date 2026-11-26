@@ -67,6 +67,59 @@ describe("buildResultsDocument", () => {
     expect(doc.localArms.control.visitors).toBe(50);
     expect(doc.localArms.treatment.visitors).toBe(50);
     expect(doc.personasNote).toBe("local visit log, n=100; Flagsmith counted n=120");
+    expect(doc.decision.notes.some((n) => n.includes("is_final is false"))).toBe(true);
+    expect(doc.rolloutVerification).toBeNull();
+  });
+
+  it("records 20-identity rollout verification and formats P(win) ≥ 0.999 as >99.9%", () => {
+    const decision = decideExperiment({
+      flag: "checkout_a11y",
+      visits: visits(),
+      threshold: 0.95,
+      flagsmith: {
+        ...fixture,
+        results: {
+          ...fixture.results,
+          is_final: false,
+          payload: {
+            ...fixture.results.payload,
+            metrics: [
+              {
+                ...fixture.results.payload.metrics[0],
+                inference: {
+                  ...fixture.results.payload.metrics[0].inference,
+                  treatment: {
+                    ...fixture.results.payload.metrics[0].inference.treatment,
+                    chance_to_win: 0.9994,
+                  },
+                },
+              },
+            ],
+          },
+        },
+      },
+    });
+    const doc = buildResultsDocument({
+      decision,
+      visits: visits(),
+      flagsmith: fixture,
+      personaMix: DEFAULT_PERSONA_MIX,
+      verification: {
+        applied: true,
+        n: 20,
+        matched: 20,
+        expected: "treatment",
+        usedFallback: false,
+      },
+    });
+    expect(doc.headline.copy).toMatch(/P\(win\) >99\.9%/);
+    expect(doc.rolloutVerification).toEqual({
+      applied: true,
+      n: 20,
+      matched: 20,
+      expected: "treatment",
+      usedFallback: false,
+    });
   });
 
   it("serialises infinite lift as Infinity, not null", () => {

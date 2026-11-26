@@ -34,6 +34,12 @@
   <p class="note" id="source"></p>
   <script>
     function pct(n) { return `${(n * 100).toFixed(1)}%`; }
+    function pWin(n) {
+      if (typeof n !== "number" || !Number.isFinite(n)) return "n/a";
+      if (n >= 0.999) return ">99.9%";
+      if (n <= 0.001) return "<0.1%";
+      return pct(n);
+    }
     function rate(arm) {
       if (!arm || !arm.visitors) return "0/0";
       return `${arm.conversions}/${arm.visitors} (${pct(arm.conversions / arm.visitors)})`;
@@ -80,7 +86,7 @@
           tr.appendChild(name);
           tr.appendChild(td(rate(flag.control)));
           tr.appendChild(td(rate(flag.treatment)));
-          tr.appendChild(td(`${pct(flag.winProbabilityTreatment)} (${flag.source})`));
+          tr.appendChild(td(`${pWin(flag.winProbabilityTreatment)} (${flag.source})`));
           const ciLow = flag.ciLow;
           const ciHigh = flag.ciHigh;
           const ci =

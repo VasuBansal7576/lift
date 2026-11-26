@@ -15,6 +15,7 @@ import {
   bayesianWinProbability,
   decideFromWinProbability,
   relativeLift,
+  srmPValue,
 } from "./stats.ts";
 
 export interface FlagsmithResultsPayload {
@@ -96,6 +97,7 @@ export function parseFlagsmithWin(
     localN?: number;
     localArms?: { control: number; treatment: number };
     trafficEndedAt?: string | number | Date;
+    expectedControlShare?: number;
   },
 ): ParsedFlagsmithWin | null {
   const payload = envelope?.results?.payload;
@@ -171,6 +173,24 @@ export function parseFlagsmithWin(
     parsed.usable = false;
     parsed.rejectReason = "ingestion";
     return parsed;
+  }
+
+  if (
+    parsed.srmPValue === null &&
+    parsed.flagsmithControlN !== null &&
+    parsed.flagsmithTreatmentN !== null
+  ) {
+    const liftSrm = srmPValue(
+      parsed.flagsmithControlN,
+      parsed.flagsmithTreatmentN,
+      opts?.expectedControlShare ?? 0.5,
+    );
+    parsed.srmPValue = liftSrm;
+    if (liftSrm < 0.01) {
+      parsed.usable = false;
+      parsed.rejectReason = "srm";
+      return parsed;
+    }
   }
   return parsed;
 }
@@ -504,6 +524,14 @@ export function variantMatches(
   return got.variant === expected && got.value === expected;
 }
 
+export interface RolloutVerification {
+  applied: boolean;
+  n: number;
+  matched: number;
+  expected: Variant | null;
+  usedFallback: boolean;
+}
+
 export async function applyDecision(
   decision: ExperimentDecision,
   deps?: {
@@ -511,19 +539,21 @@ export async function applyDecision(
     setDefault?: typeof setEnvironmentDefault;
     allowLocalDecision?: boolean;
   },
-): Promise<void> {
+): Promise<RolloutVerification> {
   const cfg = loadConfig();
   const state = readJson<BootstrapState>(statePath());
   if (!state || !cfg.adminToken || !cfg.environmentKey) {
     throw new Error("Bootstrap state and Flagsmith admin credentials are required to roll out");
   }
-  if (decision.decision === "keep_running") return;
+  if (decision.decision === "keep_running") {
+    return { applied: false, n: 0, matched: 0, expected: null, usedFallback: false };
+  }
   const allowLocal = deps?.allowLocalDecision ?? cfg.allowLocalDecision;
   if (decision.source !== "flagsmith" && !allowLocal) {
     process.stderr.write(
       "Not completing: source is local_bayesian. Set LIFT_ALLOW_LOCAL_DECISION=true to apply local math.\n",
     );
-    return;
+    return { applied: false, n: 0, matched: 0, expected: null, usedFallback: false };
   }
 
   const admin = new FlagsmithAdmin(cfg);
@@ -575,7 +605,15 @@ export async function applyDecision(
     `lift-verify-${stamp}`,
     VERIFY_IDENTITIES,
   );
-  if (first.every((got) => variantMatches(got, expected))) return;
+  if (first.every((got) => variantMatches(got, expected))) {
+    return {
+      applied: true,
+      n: VERIFY_IDENTITIES,
+      matched: first.length,
+      expected,
+      usedFallback: false,
+    };
+  }
 
   const sample = first.find((got) => !variantMatches(got, expected)) ?? first[0];
   process.stderr.write(
@@ -595,12 +633,20 @@ export async function applyDecision(
     `lift-verify-fallback-${stamp}`,
     VERIFY_IDENTITIES,
   );
-  if (!second.every((got) => variantMatches(got, expected))) {
+  const matched = second.filter((got) => variantMatches(got, expected)).length;
+  if (matched !== VERIFY_IDENTITIES) {
     const bad = second.find((got) => !variantMatches(got, expected)) ?? second[0];
     throw new Error(
       `Environment default fallback failed: identity still sees variant=${bad?.variant} value=${String(bad?.value)}, expected ${expected}`,
     );
   }
+  return {
+    applied: true,
+    n: VERIFY_IDENTITIES,
+    matched,
+    expected,
+    usedFallback: true,
+  };
 }
 
 async function evaluateMany(

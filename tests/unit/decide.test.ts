@@ -68,6 +68,46 @@ describe("parseFlagsmithWin", () => {
     expect(parsed?.rejectReason).toBe("error");
   });
 
+  it("runs a Lift-side chi-square SRM check when Flagsmith srm_p_value is null", () => {
+    const balanced = parseFlagsmithWin({
+      results: {
+        payload: {
+          srm_p_value: null,
+          metrics: [
+            {
+              variants: {
+                control: { n: 150, sum: 80 },
+                treatment: { n: 150, sum: 90 },
+              },
+              inference: { treatment: { chance_to_win: 0.9, lift: 0.1 } },
+            },
+          ],
+        },
+      },
+    });
+    expect(balanced?.usable).toBe(true);
+    expect(balanced?.srmPValue).toBeGreaterThan(0.5);
+
+    const skewed = parseFlagsmithWin({
+      results: {
+        payload: {
+          metrics: [
+            {
+              variants: {
+                control: { n: 270, sum: 80 },
+                treatment: { n: 30, sum: 20 },
+              },
+              inference: { treatment: { chance_to_win: 0.99, lift: 0.4 } },
+            },
+          ],
+        },
+      },
+    });
+    expect(skewed?.usable).toBe(false);
+    expect(skewed?.rejectReason).toBe("srm");
+    expect(skewed?.srmPValue).toBeLessThan(0.01);
+  });
+
   it("declines to decide when srm_p_value is below 0.01", () => {
     const parsed = parseFlagsmithWin({
       results: {

@@ -166,10 +166,17 @@ describe("applyDecision", () => {
       threshold: 0.95,
       flagsmith: winner,
     });
-    await applyDecision(decision, {
+    const verification = await applyDecision(decision, {
       evaluateIdentity: async () => ({ variant: "treatment", value: "treatment" }),
     });
     expect(calls.some((c) => c.url.includes("/complete/"))).toBe(true);
+    expect(verification).toEqual({
+      applied: true,
+      n: 20,
+      matched: 20,
+      expected: "treatment",
+      usedFallback: false,
+    });
   });
 
   it("refuses to complete when the experiment is not running", async () => {

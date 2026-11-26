@@ -10,7 +10,7 @@ Live humans are assigned by the Flagsmith JS SDK (`@flagsmith/flagsmith@12.4.0`)
 
 > **All traffic is simulated.** Playwright bots (mouse, keyboard-only, screen-reader, **contrast-threshold / low-vision**) attempt checkout. Numbers on the dashboard, identity traits, and this README are labelled **SIMULATED**. This demonstrates the pipeline; it is not evidence about real users.
 
-Hard deadline 29 Nov 2026 20:00 IST. This branch is **one site, end to end**.
+Hard deadline 29 Nov 2026 20:00 IST. This branch is the **fleet**: one checkout plus additional demo sites, each with its own Flagsmith experiment.
 
 ## What this branch contains
 
@@ -118,7 +118,7 @@ CI runs typecheck, unit, and Playwright. E2E uses `scripts/serve-site.mjs --allo
 | `npm run site` | Serve the checkout at :4174 |
 | `npm run traffic` | Seeded N visitors, local eval, persona bots, events to Flagsmith |
 | `npm run decide` | Poll Flagsmith results; complete if `source=flagsmith`, or if `LIFT_ALLOW_LOCAL_DECISION=true` |
-| `npm run verify:pull` | Throwaway Development probe: complete to control and record Node SDK eval |
+| `npm run verify:pull` | Recorded probe output: throwaway complete-to-control, then Node SDK eval |
 | `npm run experiment` | scan → bootstrap if needed → traffic → decide → `dashboard/results.json` |
 | `npm run dashboard` | Serve the results page at :4173 |
 | `npm run typecheck` | `tsc --noEmit` |

@@ -15,7 +15,7 @@ import { compactMix, mixLabel, realisedMix } from "../../shared/mix.ts";
 import { resultsPath } from "./config.ts";
 import type { FlagsmithResultsEnvelope } from "./decide.ts";
 import { summariseVisits } from "./decide.ts";
-import { armStats, clampLift, serialiseLift } from "./stats.ts";
+import { armStats, clampLift, formatPWin, serialiseLift } from "./stats.ts";
 
 function personaBreakdown(visits: VisitRecord[]) {
   const out: Record<
@@ -100,7 +100,7 @@ export function buildHeadlineCopy(input: {
     input.source === "flagsmith"
       ? `Flagsmith lift (SIMULATED traffic, assumed mix ${mixCompact}): ${input.pct}`
       : `local_bayesian lift (SIMULATED traffic, assumed mix ${mixCompact}, not Flagsmith): ${input.pct}`;
-  const pWin = `P(win) ${(input.winProbability * 100).toFixed(1)}%`;
+  const pWin = `P(win) ${formatPWin(input.winProbability)}`;
   const ciLow = formatSignedPct(input.ciLow);
   const ciHigh = formatSignedPct(input.ciHigh);
   const ci = ciLow && ciHigh ? `95% CI ${ciLow} to ${ciHigh}` : null;
@@ -123,6 +123,14 @@ export function buildResultsDocument(input: {
   experimentId?: number;
   dashboardUrl?: string;
   personaMix?: PersonaMix;
+  site?: string;
+  verification?: {
+    applied: boolean;
+    n: number;
+    matched: number;
+    expected: string | null;
+    usedFallback: boolean;
+  } | null;
 }) {
   const localByVariant = summariseVisits(input.visits);
   const mix = input.personaMix ?? DEFAULT_PERSONA_MIX;
@@ -145,6 +153,11 @@ export function buildResultsDocument(input: {
         `Local visit counts differ from Flagsmith n/sum (local control ${localByVariant.control.conversions}/${localByVariant.control.visitors}, treatment ${localByVariant.treatment.conversions}/${localByVariant.treatment.visitors}; Flagsmith control ${flagsmithArms.control.conversions}/${flagsmithArms.control.visitors}, treatment ${flagsmithArms.treatment.conversions}/${flagsmithArms.treatment.visitors}). Using Flagsmith n/sum.`,
       );
     }
+  }
+  if (input.flagsmith?.results?.is_final === false) {
+    notes.push(
+      "Embedded Flagsmith snapshot was taken before completion (results.is_final is false).",
+    );
   }
   const rawLift = fromFlagsmith
     ? input.decision.lift
@@ -194,7 +207,7 @@ export function buildResultsDocument(input: {
     label:
       "SIMULATED TRAFFIC — Playwright persona bots, not humans. Demonstration of the pipeline; outcomes follow the persona model, not evidence about real users. Lift is a function of the assumed share of keyboard, screen-reader and low-vision users.",
     generatedAt: new Date().toISOString(),
-    site: "checkout",
+    site: input.site ?? "checkout",
     sites: 1,
     flag: input.decision.flag,
     experimentId: input.experimentId ?? null,
@@ -246,6 +259,7 @@ export function buildResultsDocument(input: {
     barriers: barriersCatalog,
     visits: input.visits.length,
     flagsmithResults: input.flagsmith,
+    rolloutVerification: input.verification ?? null,
   };
 }
 

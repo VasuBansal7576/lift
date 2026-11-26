@@ -175,7 +175,7 @@ export async function runExperiment() {
         continue;
       }
 
-      await applyDecision(decision);
+      const verification = await applyDecision(decision);
       const doc = buildResultsDocument({
         decision,
         visits,
@@ -183,6 +183,7 @@ export async function runExperiment() {
         experimentId: state.experimentId,
         dashboardUrl: `${cfg.dashboardUrl}/project/${state.projectId}/environment/${state.environmentId}/experiments/${state.experimentId}`,
         personaMix: cfg.personaMix,
+        verification,
       });
       const path = writeDashboard(doc);
       process.stdout.write(

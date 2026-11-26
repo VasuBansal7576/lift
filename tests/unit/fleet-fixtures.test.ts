@@ -44,7 +44,13 @@ describe("committed fleet fixtures", () => {
         pooledTreatment: { visitors: number; conversions: number };
         secondary?: {
           medianLift: number | null;
+          iqrLow: number | null;
+          iqrHigh: number | null;
+          liftMin: number | null;
+          liftMax: number | null;
           pooledLift: number | null;
+          pooledControl: { visitors: number; conversions: number };
+          pooledTreatment: { visitors: number; conversions: number };
           siteCount: number;
         };
         siteCount: number;
@@ -127,11 +133,28 @@ describe("committed fleet fixtures", () => {
     expect(agg.pooledTreatment.visitors).toBe(results.aggregate.pooledTreatment.visitors);
     expect(agg.secondary.siteCount).toBe(8);
     expect(agg.secondary.medianLift).toBeCloseTo(results.aggregate.secondary?.medianLift ?? NaN, 10);
+    expect(agg.secondary.iqrLow).toBeCloseTo(results.aggregate.secondary?.iqrLow ?? NaN, 10);
+    expect(agg.secondary.iqrHigh).toBeCloseTo(results.aggregate.secondary?.iqrHigh ?? NaN, 10);
+    expect(agg.secondary.liftMin).toBeCloseTo(results.aggregate.secondary?.liftMin ?? NaN, 10);
+    expect(agg.secondary.liftMax).toBeCloseTo(results.aggregate.secondary?.liftMax ?? NaN, 10);
     expect(agg.secondary.pooledLift).toBeCloseTo(results.aggregate.secondary?.pooledLift ?? NaN, 10);
+    expect(results.aggregate.pooledControl.conversions).toBe(766);
+    expect(results.aggregate.pooledTreatment.conversions).toBe(1092);
+    expect(results.aggregate.secondary?.pooledControl.conversions).toBe(895);
+    expect(results.aggregate.secondary?.pooledTreatment.conversions).toBe(1155);
+    expect(agg.pooledControl.conversions).toBe(766);
+    expect(agg.pooledTreatment.conversions).toBe(1092);
+    expect(agg.secondary.pooledControl.conversions).toBe(895);
+    expect(agg.secondary.pooledTreatment.conversions).toBe(1155);
     expect(results.producedBy).toMatch(/^(fleet|rebuild|experiment)$/);
     expect(results.dataCommitSha).toBeTruthy();
     expect(results.aggregationCommitSha).toBeTruthy();
     expect(results.aggregationCommitSha).not.toMatch(/-dirty$/);
+    const shaRe = /^[0-9a-f]{40}$/;
+    for (const part of (results.dataCommitSha ?? "").split(",")) {
+      expect(part.trim()).toMatch(shaRe);
+    }
+    expect(results.aggregationCommitSha).toMatch(shaRe);
 
     const fixtureDir = resolve(ROOT, "tests/fixtures");
     const supersededDir = resolve(ROOT, "tests/fixtures/superseded");

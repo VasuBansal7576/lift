@@ -209,7 +209,7 @@ export const FLEET_F1_EXPERIMENTS: HistoricExperiment[] = [
   },
 ];
 
-/** ID gaps; cause unknown. F1-fix re-run bootstrap (unicode/string create retries). */
+/** ID gaps; cause unknown. F1-fix re-run bootstrap. */
 export const F1_RERUN_ABANDONED_IDS = [
   626, 627, 628, 629, 630, 631, 633, 634, 636, 638, 639, 641, 643, 645, 646, 648,
   649, 650,

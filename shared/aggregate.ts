@@ -12,8 +12,8 @@ export type ProducedBy = "fleet" | "snapshot" | "reused" | "experiment" | "rebui
 
 /**
  * When false (default), the headline uses the 7 real fixes and shows pricing
- * as a designed-to-lose pipeline check. Set HEADLINE_INCLUDE_DESIGNED_TO_LOSE=true
- * to count all 8 sites in the headline.
+ * as a designed-to-lose pipeline check. Change this constant to true to count
+ * all 8 sites.
  */
 export const HEADLINE_INCLUDE_DESIGNED_TO_LOSE = false;
 

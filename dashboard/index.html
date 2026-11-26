@@ -96,6 +96,10 @@
         : "";
       return `${obs} (expected ${signedPct(row.expectedLift)}${blocked})`;
     }
+    function flagsmithHref(url) {
+      if (!url) return url;
+      return url.endsWith("/") ? url : `${url}/`;
+    }
     function historyList(title, rows) {
       const wrap = document.createElement("div");
       const h = document.createElement("p");
@@ -154,7 +158,7 @@
         clear(dash);
         if (!isFleet && data.flagsmithDashboard) {
           const a = document.createElement("a");
-          a.href = data.flagsmithDashboard;
+          a.href = flagsmithHref(data.flagsmithDashboard);
           a.textContent = "Flagsmith experiment dashboard";
           dash.appendChild(a);
         }
@@ -186,7 +190,7 @@
             const linkCell = document.createElement("td");
             if (row.flagsmithDashboard) {
               const a = document.createElement("a");
-              a.href = row.flagsmithDashboard;
+              a.href = flagsmithHref(row.flagsmithDashboard);
               a.textContent = row.experimentId ? String(row.experimentId) : "open";
               linkCell.appendChild(a);
             } else {

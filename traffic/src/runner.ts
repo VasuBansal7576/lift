@@ -91,6 +91,7 @@ async function waitUntilEnrolled(cfg: LiftConfig, timeoutMs = 120_000) {
       environmentKey: cfg.serverKey || cfg.environmentKey,
       apiUrl: cfg.adminApiUrl || cfg.apiUrl,
       enableLocalEvaluation: Boolean(cfg.serverKey),
+      enableEvents: true,
       environmentRefreshIntervalSeconds: 1,
     });
     try {

@@ -15,7 +15,7 @@ import { compactMix, mixLabel, realisedMix } from "../../shared/mix.ts";
 import { resultsPath } from "./config.ts";
 import type { FlagsmithResultsEnvelope } from "./decide.ts";
 import { summariseVisits } from "./decide.ts";
-import { clampLift, serialiseLift } from "./stats.ts";
+import { armStats, clampLift, serialiseLift } from "./stats.ts";
 
 function personaBreakdown(visits: VisitRecord[]) {
   const out: Record<
@@ -62,10 +62,21 @@ export function outcomeIntro(
   decision: Decision,
   source: "flagsmith" | "local_bayesian" = "flagsmith",
 ): string {
-  if (source !== "flagsmith" || decision === "keep_running") {
-    return "The experiment is still running; Flagsmith has not called a winner.";
+  if (source === "local_bayesian") {
+    switch (decision) {
+      case "keep_running":
+        return "Local Beta-Binomial math is inconclusive; the experiment is still running.";
+      case "rollout_treatment":
+        return "Local Beta-Binomial math favours treatment. Flagsmith has not called this winner unless LIFT_ALLOW_LOCAL_DECISION was set.";
+      case "pull_to_control":
+        return "Local Beta-Binomial math favours control. Flagsmith has not called this winner unless LIFT_ALLOW_LOCAL_DECISION was set.";
+      default:
+        return assertNever(decision, "unknown decision");
+    }
   }
   switch (decision) {
+    case "keep_running":
+      return "The experiment is still running; Flagsmith has not called a winner.";
     case "rollout_treatment":
       return "Flagsmith completed the experiment and rolled out treatment.";
     case "pull_to_control":
@@ -159,9 +170,22 @@ export function buildResultsDocument(input: {
     ciHigh: input.decision.ciHigh,
   });
 
+  const flagsmithTotal = flagsmithArms
+    ? flagsmithArms.control.visitors + flagsmithArms.treatment.visitors
+    : null;
+  const localTotal =
+    localByVariant.control.visitors + localByVariant.treatment.visitors;
   const serialisedDecision = {
     ...input.decision,
     lift: serialiseLift(input.decision.lift),
+    control:
+      fromFlagsmith && flagsmithArms
+        ? armStats(flagsmithArms.control.conversions, flagsmithArms.control.visitors)
+        : input.decision.control,
+    treatment:
+      fromFlagsmith && flagsmithArms
+        ? armStats(flagsmithArms.treatment.conversions, flagsmithArms.treatment.visitors)
+        : input.decision.treatment,
     notes,
   };
 
@@ -180,6 +204,10 @@ export function buildResultsDocument(input: {
     realisedMix: realised,
     realisedMixLabel: mixLabel(realised),
     personaMixNote: `Assumed mix is a modelling choice (${mixLabel(mix)}), not measured traffic. realisedMix is this run's actual draws. Win threshold is ${(input.decision.threshold * 100).toFixed(0)}%.`,
+    localArms: localByVariant,
+    personasNote: flagsmithTotal !== null
+      ? `local visit log, n=${localTotal}; Flagsmith counted n=${flagsmithTotal}`
+      : `local visit log, n=${localTotal}`,
     outcome: outcomeIntro(input.decision.decision, input.decision.source),
     honesty:
       "Barrier flags are wired on the site; this run used the bundled checkout_a11y native experiment. Sequential per-barrier experiments are the attribution path.",

@@ -4,7 +4,7 @@ Hackathon entry for WeMakeDevs Toggle Wars (Flagsmith), **Test Something Real** 
 
 **Hypothesis:** fixing accessibility barriers raises conversions.
 
-An agent scans a **fixture** checkout (data-barrier markers plus axe-core on control), ships Kane-style WCAG fixes behind Flagsmith flags, runs a native Flagsmith experiment, sends simulated persona traffic, then auto-rolls out the winner through the Flagsmith Admin API **only when Flagsmith’s own `chance_to_win` is available**.
+An agent scans a **fixture** checkout (data-barrier markers plus axe-core on control), ships WCAG fixes behind Flagsmith flags, runs a native Flagsmith experiment, sends simulated persona traffic, then auto-rolls out or pulls through the Flagsmith Admin API **when Flagsmith’s own `chance_to_win` is available**, or when `LIFT_ALLOW_LOCAL_DECISION=true`.
 
 Live humans are assigned by the Flagsmith JS SDK (`@flagsmith/flagsmith@12.4.0`). Playwright bots get their variant from the **Node SDK** (Flagsmith local evaluation). The checkout page is then forced to that arm with `?lift_variant=` so the bot exercises the same HTML the identity was enrolled in — that is why bot pages show **URL override (no Flagsmith)** in the footer. The query is honoured only when the server overlays `allowMock: true` on `/config.json` in memory (never written to disk). Without Flagsmith, the live page will not bucket.
 
@@ -117,7 +117,8 @@ CI runs typecheck, unit, and Playwright. E2E uses `scripts/serve-site.mjs --allo
 | `npm run bootstrap` | Management API: flags, warehouse, metric, experiment, start |
 | `npm run site` | Serve the checkout at :4174 |
 | `npm run traffic` | Seeded N visitors, local eval, persona bots, events to Flagsmith |
-| `npm run decide` | Poll Flagsmith results; complete only if `source=flagsmith` |
+| `npm run decide` | Poll Flagsmith results; complete if `source=flagsmith`, or if `LIFT_ALLOW_LOCAL_DECISION=true` |
+| `npm run verify:pull` | Throwaway Development probe: complete to control and record Node SDK eval |
 | `npm run experiment` | scan → bootstrap if needed → traffic → decide → `dashboard/results.json` |
 | `npm run dashboard` | Serve the results page at :4173 |
 | `npm run typecheck` | `tsc --noEmit` |
@@ -134,6 +135,9 @@ CI runs typecheck, unit, and Playwright. E2E uses `scripts/serve-site.mjs --allo
 
 - Bots, not humans. Every result surface says so.
 - First experiment is **one bundled flag**. Per-barrier flags are wired on the page but not concurrent Flagsmith experiments.
-- Lift waits for **50 identities and 5 conversions per arm** (Lift’s floors, not Flagsmith’s) before treating `chance_to_win` as a decision. Default `LIFT_TRAFFIC_N=120`. If `LIFT_RUN_ID` is unset, it defaults to a compact UTC timestamp so re-runs get fresh identities.
-- Results refresh is at most once per 5 minutes. Lift polls with backoff until `chance_to_win` exists.
-- Completing from local math requires `LIFT_ALLOW_LOCAL_DECISION=true` and is labelled everywhere.
+- Lift waits for **50 identities and 5 conversions per arm** (Lift’s floors, not Flagsmith’s) before treating `chance_to_win` as a decision. Default design is a **fixed horizon**: `LIFT_TARGET_ARM_N=300` (so ~600 visitors), one look at Flagsmith, then decide. If `LIFT_RUN_ID` is unset, it defaults to a compact UTC timestamp so re-runs get fresh identities.
+- `LIFT_CONTINUE_UNTIL=true` is **optional stopping** (add batches until P(win) crosses the threshold). It is off by default because peeking inflates false positives. `LIFT_MAX_ARM_N` (default 600) caps that path.
+- A Flagsmith snapshot is used only when **each arm’s n is at least 95% of the local visit log**. `as_of` after traffic is not enough on its own. If the warehouse is still short after the wait, the dashboard says **awaiting ingestion** and Lift does not complete.
+- Results refresh is at most once per 5 minutes. Lift polls with backoff until `chance_to_win` exists and ingestion holds.
+- Completing from local math requires `LIFT_ALLOW_LOCAL_DECISION=true` and is labelled everywhere. `npm run decide` completes in that case too.
+- Experiment **593** was an earlier sequential (optional-stopping) Development run. The dashboard is the latest fixed-horizon experiment.

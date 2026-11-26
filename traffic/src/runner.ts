@@ -15,7 +15,7 @@ import {
 } from "../../agent/src/config.ts";
 import type { BootstrapState } from "../../agent/src/bootstrap.ts";
 import { FlagsmithAdmin, type ExperimentRecord } from "../../agent/src/flagsmith-admin.ts";
-import { mulberry32 } from "../../shared/rng.ts";
+import { mixSeed, mulberry32 } from "../../shared/rng.ts";
 import { pickPersona } from "../../shared/mix.ts";
 import { runPersona } from "./personas.ts";
 
@@ -126,8 +126,12 @@ export async function runTraffic(overrides?: Partial<LiftConfig>) {
     },
   });
 
-  const personaRand = mulberry32(cfg.trafficSeed);
-  const dropoutRand = mulberry32(cfg.trafficSeed ^ 0x9e3779b9);
+  const personaRand = mulberry32(
+    mixSeed(cfg.trafficSeed, cfg.trafficRunId, cfg.trafficBatch, "persona"),
+  );
+  const dropoutRand = mulberry32(
+    mixSeed(cfg.trafficSeed, cfg.trafficRunId, cfg.trafficBatch, "dropout"),
+  );
   const visitsPath = eventsPath();
   mkdirSync(dirname(visitsPath), { recursive: true });
   if (!cfg.appendVisits) {
@@ -209,6 +213,7 @@ export async function runTraffic(overrides?: Partial<LiftConfig>) {
         blockedBy: dropout.dropped ? [] : attempt.blockedBy,
         reason,
         simulated: true,
+        at: new Date().toISOString(),
       };
       visits.push(visit);
       appendFileSync(visitsPath, `${JSON.stringify(visit)}\n`);

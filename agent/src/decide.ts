@@ -49,6 +49,8 @@ export interface FlagsmithResultsEnvelope {
 const IDENTITY_FLOOR = 50;
 const CONVERSION_FLOOR = 5;
 const REFRESH_THROTTLE_MS = 5 * 60 * 1000;
+export const INGESTION_RATIO = 0.95;
+export const VERIFY_IDENTITIES = 20;
 
 export function loadVisits(path = eventsPath()): VisitRecord[] {
   try {
@@ -80,9 +82,11 @@ export interface ParsedFlagsmithWin {
   ciHigh: number | null;
   asOf: string | null;
   flagsmithN: number | null;
+  flagsmithControlN: number | null;
+  flagsmithTreatmentN: number | null;
   srmPValue: number | null;
   usable: boolean;
-  rejectReason?: "error" | "stale" | "srm";
+  rejectReason?: "error" | "stale" | "srm" | "ingestion";
 }
 
 export function parseFlagsmithWin(
@@ -90,6 +94,7 @@ export function parseFlagsmithWin(
   opts?: {
     treatmentKey?: string;
     localN?: number;
+    localArms?: { control: number; treatment: number };
     trafficEndedAt?: string | number | Date;
   },
 ): ParsedFlagsmithWin | null {
@@ -121,6 +126,8 @@ export function parseFlagsmithWin(
     ciHigh: typeof arm.ci_high === "number" ? arm.ci_high : null,
     asOf: envelope?.results?.as_of ?? null,
     flagsmithN,
+    flagsmithControlN: variants?.control ? controlN : null,
+    flagsmithTreatmentN: treatment?.n ?? null,
     srmPValue: typeof payload?.srm_p_value === "number" ? payload.srm_p_value : null,
     usable: true,
   };
@@ -136,17 +143,34 @@ export function parseFlagsmithWin(
     return parsed;
   }
 
-  const localN = opts?.localN ?? 0;
   const asOfMs = parsed.asOf ? Date.parse(parsed.asOf) : NaN;
   const endedAt = opts?.trafficEndedAt
     ? new Date(opts.trafficEndedAt).getTime()
     : NaN;
-  const asOfAfterTraffic = Number.isFinite(asOfMs) && Number.isFinite(endedAt) && asOfMs >= endedAt;
-  if (localN > 0 && !asOfAfterTraffic) {
-    if (flagsmithN === null || flagsmithN < localN) {
+  if (Number.isFinite(asOfMs) && Number.isFinite(endedAt) && asOfMs < endedAt) {
+    parsed.usable = false;
+    parsed.rejectReason = "stale";
+    return parsed;
+  }
+
+  const localArms = opts?.localArms;
+  const localN = opts?.localN ?? 0;
+  if (localArms && (localArms.control > 0 || localArms.treatment > 0)) {
+    const controlOk =
+      parsed.flagsmithControlN !== null &&
+      parsed.flagsmithControlN >= INGESTION_RATIO * localArms.control;
+    const treatmentOk =
+      parsed.flagsmithTreatmentN !== null &&
+      parsed.flagsmithTreatmentN >= INGESTION_RATIO * localArms.treatment;
+    if (!controlOk || !treatmentOk) {
       parsed.usable = false;
-      parsed.rejectReason = "stale";
+      parsed.rejectReason = "ingestion";
+      return parsed;
     }
+  } else if (localN > 0 && (flagsmithN === null || flagsmithN < INGESTION_RATIO * localN)) {
+    parsed.usable = false;
+    parsed.rejectReason = "ingestion";
+    return parsed;
   }
   return parsed;
 }
@@ -188,11 +212,11 @@ export function decideExperiment(input: {
   trafficEndedAt?: string | number | Date;
 }): ExperimentDecision {
   const byVariant = summariseVisits(input.visits);
-  const control = armStats(
+  let control = armStats(
     byVariant.control.conversions,
     byVariant.control.visitors,
   );
-  const treatment = armStats(
+  let treatment = armStats(
     byVariant.treatment.conversions,
     byVariant.treatment.visitors,
   );
@@ -202,6 +226,10 @@ export function decideExperiment(input: {
 
   const parsed = parseFlagsmithWin(input.flagsmith ?? null, {
     localN: input.visits.length,
+    localArms: {
+      control: byVariant.control.visitors,
+      treatment: byVariant.treatment.visitors,
+    },
     trafficEndedAt: input.trafficEndedAt,
   });
   const collecting = !floorsMet(input.visits, input.flagsmith);
@@ -224,6 +252,16 @@ export function decideExperiment(input: {
     lift = parsed.lift ?? null;
     ciLow = parsed.ciLow;
     ciHigh = parsed.ciHigh;
+    const variants = input.flagsmith?.results?.payload?.metrics?.[0]?.variants;
+    if (variants?.control) {
+      const t =
+        variants.treatment ??
+        Object.entries(variants).find(([key]) => key !== "control")?.[1];
+      if (t) {
+        control = armStats(variants.control.sum ?? 0, variants.control.n ?? 0);
+        treatment = armStats(t.sum ?? 0, t.n ?? 0);
+      }
+    }
     notes.push(
       "Win probability from Flagsmith Experimentation (chance_to_win on the results payload).",
     );
@@ -237,11 +275,20 @@ export function decideExperiment(input: {
     notes.push(
       `Flagsmith srm_p_value=${parsed.srmPValue} is below 0.01; declining to decide (sample-ratio mismatch).`,
     );
+  } else if (parsed?.rejectReason === "ingestion") {
+    source = "flagsmith";
+    winProbabilityTreatment = parsed.chanceToWin;
+    lift = parsed.lift ?? null;
+    ciLow = parsed.ciLow;
+    ciHigh = parsed.ciHigh;
+    notes.push(
+      "awaiting ingestion: Flagsmith n is below 95% of local counts on at least one arm. Not deciding.",
+    );
   } else if (parsed && !parsed.usable) {
     notes.push(
       parsed.rejectReason === "error"
         ? "Flagsmith results snapshot has last_error_at set; treating it as unusable."
-        : "Flagsmith results look stale (n below local visits and as_of not after traffic ended). Using local Beta-Binomial.",
+        : "Flagsmith results as_of is before traffic ended; treating the snapshot as stale. Using local Beta-Binomial.",
     );
   } else if (parsed && collecting) {
     notes.push(
@@ -257,7 +304,7 @@ export function decideExperiment(input: {
     winProbabilityTreatment,
     input.threshold,
   );
-  if (parsed?.rejectReason === "srm") {
+  if (parsed?.rejectReason === "srm" || parsed?.rejectReason === "ingestion") {
     decision = "keep_running";
   }
 
@@ -361,8 +408,13 @@ export async function waitForFlagsmithResults(input: {
     const refresh = lastRefresh === 0 || t - lastRefresh >= REFRESH_THROTTLE_MS;
     latest = await fetchFlagsmithResults(input.experimentId, { refresh });
     if (refresh) lastRefresh = t;
+    const local = summariseVisits(input.visits);
     const parsed = parseFlagsmithWin(latest, {
       localN: input.visits.length,
+      localArms: {
+        control: local.control.visitors,
+        treatment: local.treatment.visitors,
+      },
       trafficEndedAt: input.trafficEndedAt,
     });
     if (parsed?.usable && floorsMet(input.visits, latest)) return latest;
@@ -516,11 +568,18 @@ export async function applyDecision(
   const expected: Variant =
     decision.decision === "rollout_treatment" ? "treatment" : "control";
   const evaluate = deps?.evaluateIdentity ?? evaluateIdentityVariant;
-  let got = await evaluate(state.flagName, `lift-verify-${Date.now()}`);
-  if (variantMatches(got, expected)) return;
+  const stamp = Date.now();
+  const first = await evaluateMany(
+    evaluate,
+    state.flagName,
+    `lift-verify-${stamp}`,
+    VERIFY_IDENTITIES,
+  );
+  if (first.every((got) => variantMatches(got, expected))) return;
 
+  const sample = first.find((got) => !variantMatches(got, expected)) ?? first[0];
   process.stderr.write(
-    `Fresh identity evaluated to variant=${got.variant} value=${String(got.value)}, expected ${expected}. Falling back to environment default PATCH.\n`,
+    `Fresh identities failed rollout check (e.g. variant=${sample?.variant} value=${String(sample?.value)}, expected ${expected}). Falling back to environment default PATCH.\n`,
   );
   const setDefault = deps?.setDefault ?? setEnvironmentDefault;
   await setDefault(
@@ -530,12 +589,31 @@ export async function applyDecision(
     state.treatmentOptionId,
     expected,
   );
-  got = await evaluate(state.flagName, `lift-verify-fallback-${Date.now()}`);
-  if (!variantMatches(got, expected)) {
+  const second = await evaluateMany(
+    evaluate,
+    state.flagName,
+    `lift-verify-fallback-${stamp}`,
+    VERIFY_IDENTITIES,
+  );
+  if (!second.every((got) => variantMatches(got, expected))) {
+    const bad = second.find((got) => !variantMatches(got, expected)) ?? second[0];
     throw new Error(
-      `Environment default fallback failed: identity still sees variant=${got.variant} value=${String(got.value)}, expected ${expected}`,
+      `Environment default fallback failed: identity still sees variant=${bad?.variant} value=${String(bad?.value)}, expected ${expected}`,
     );
   }
+}
+
+async function evaluateMany(
+  evaluate: typeof evaluateIdentityVariant,
+  flagName: string,
+  prefix: string,
+  n: number,
+): Promise<Array<{ variant: string | undefined; value: unknown }>> {
+  const out: Array<{ variant: string | undefined; value: unknown }> = [];
+  for (let i = 0; i < n; i += 1) {
+    out.push(await evaluate(flagName, `${prefix}-${i}`));
+  }
+  return out;
 }
 
 async function main() {
@@ -556,7 +634,7 @@ async function main() {
     threshold: cfg.winThreshold,
     allowLocalDecision: cfg.allowLocalDecision,
     statsSeed: cfg.trafficSeed,
-    trafficEndedAt: visits.at(-1) ? new Date().toISOString() : undefined,
+    trafficEndedAt: visits.at(-1)?.at,
   });
   await applyDecision(decision);
   process.stdout.write(`${JSON.stringify({ decision, flagsmith }, null, 2)}\n`);

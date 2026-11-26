@@ -62,6 +62,11 @@ describe("buildResultsDocument", () => {
       "flagsmith",
     );
     expect(doc.decision.notes.some((n) => n.includes("Local visit counts differ"))).toBe(true);
+    expect(doc.decision.control.visitors).toBe(60);
+    expect(doc.decision.treatment.visitors).toBe(60);
+    expect(doc.localArms.control.visitors).toBe(50);
+    expect(doc.localArms.treatment.visitors).toBe(50);
+    expect(doc.personasNote).toBe("local visit log, n=100; Flagsmith counted n=120");
   });
 
   it("serialises infinite lift as Infinity, not null", () => {
@@ -92,7 +97,7 @@ describe("buildResultsDocument", () => {
     expect(doc.headline.conversionLift).toBe("Infinity");
     expect(doc.decision.lift).toBe("Infinity");
     expect(doc.headline.copy).toMatch(/local_bayesian lift \(SIMULATED traffic/);
-    expect(doc.outcome).toMatch(/still running/);
+    expect(doc.outcome).toMatch(/Local Beta-Binomial math is inconclusive/);
   });
 
   it("says NOT significant when Flagsmith has not called a winner", () => {

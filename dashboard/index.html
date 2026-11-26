@@ -27,6 +27,7 @@
   <h2>Experiment flag</h2>
   <table id="flag-table"><thead><tr><th>Flag</th><th>Control</th><th>Treatment</th><th>Win P(treatment)</th><th>95% CI</th><th>Decision</th></tr></thead><tbody></tbody></table>
   <h2>Personas</h2>
+  <p id="personas-note" class="note"></p>
   <table id="persona-table"><thead><tr><th>Persona</th><th>Control</th><th>Treatment</th></tr></thead><tbody></tbody></table>
   <h2>Barriers shipped behind Flagsmith</h2>
   <ul id="barriers"></ul>
@@ -90,6 +91,8 @@
           tr.appendChild(td(flag.decision));
           body.appendChild(tr);
         }
+        const personasNote = document.getElementById("personas-note");
+        if (personasNote) personasNote.textContent = data.personasNote || "";
         const personas = document.querySelector("#persona-table tbody");
         for (const [name, arms] of Object.entries(data.personas || {})) {
           const tr = document.createElement("tr");

@@ -101,50 +101,43 @@ export async function runExperiment() {
   const sitePort = Number(new URL(cfg.siteUrl).port || 4174);
   const server = await serveCheckout(sitePort);
   try {
+    if (cfg.continueUntilDecision) {
+      process.stderr.write(
+        "LIFT_CONTINUE_UNTIL=true is optional stopping: extra batches are sent until P(win) crosses the threshold. Prefer a pre-registered fixed horizon (LIFT_TARGET_ARM_N).\n",
+      );
+    }
     let batch = 0;
     for (;;) {
-      const runId = cfg.continueUntilDecision
-        ? `${cfg.trafficRunId}-b${batch}`
-        : cfg.trafficRunId;
+      const runId = `${cfg.trafficRunId}-b${batch}`;
+      const n = cfg.continueUntilDecision
+        ? cfg.trafficN
+        : Math.max(cfg.trafficN, cfg.targetArmN * 2);
       await runTraffic({
         trafficRunId: runId,
-        appendVisits: cfg.appendVisits || cfg.continueUntilDecision,
+        trafficN: n,
+        trafficBatch: batch,
+        appendVisits: cfg.appendVisits || (cfg.continueUntilDecision && batch > 0),
       });
       batch += 1;
 
       const visits = loadVisits();
-      const trafficEndedAt = new Date().toISOString();
-      const waitMs = cfg.continueUntilDecision
-        ? Math.max(cfg.resultsWaitMs, 5 * 60 * 1000)
-        : cfg.resultsWaitMs;
-      let flagsmith = await waitForFlagsmithResults({
+      const trafficEndedAt = visits.at(-1)?.at ?? new Date().toISOString();
+      const waitMs = Math.max(cfg.resultsWaitMs, cfg.continueUntilDecision ? 5 * 60 * 1000 : 0);
+      const flagsmith = await waitForFlagsmithResults({
         experimentId: state.experimentId,
         visits,
         waitMs,
         trafficEndedAt,
       });
-      let parsed = parseFlagsmithWin(flagsmith, {
+      const local = summariseVisits(visits);
+      const parsed = parseFlagsmithWin(flagsmith, {
         localN: visits.length,
+        localArms: {
+          control: local.control.visitors,
+          treatment: local.treatment.visitors,
+        },
         trafficEndedAt,
       });
-      if (
-        cfg.continueUntilDecision &&
-        (parsed?.rejectReason === "stale" || parsed?.rejectReason === "error")
-      ) {
-        process.stdout.write(
-          "Flagsmith snapshot not usable yet; waiting another refresh window.\n",
-        );
-        flagsmith = await waitForFlagsmithResults({
-          experimentId: state.experimentId,
-          visits,
-          waitMs,
-          trafficEndedAt,
-        });
-        parsed = parseFlagsmithWin(flagsmith, {
-          localN: visits.length,
-          trafficEndedAt,
-        });
-      }
       const decision = decideExperiment({
         flag: cfg.flagName,
         visits,
@@ -155,7 +148,6 @@ export async function runExperiment() {
         trafficEndedAt,
       });
 
-      const local = summariseVisits(visits);
       const arms = flagsmithArmCounts(flagsmith);
       const maxArm = Math.max(
         arms?.control.visitors ?? 0,
@@ -171,17 +163,14 @@ export async function runExperiment() {
         !conclusive &&
         !atCap &&
         parsed?.rejectReason !== "srm" &&
-        (parsed?.rejectReason === "stale" ||
-          parsed?.rejectReason === "error" ||
-          parsed == null ||
-          decision.decision === "keep_running");
+        parsed?.rejectReason !== "ingestion";
       process.stdout.write(
         `batch=${batch} waitMs=${waitMs} visits=${visits.length} parsed=${parsed?.rejectReason ?? (flagsmithReady ? "usable" : "none")} source=${decision.source} decision=${decision.decision} maxArm=${maxArm} cap=${cfg.maxArmN} sendMore=${sendMore}\n`,
       );
 
       if (sendMore) {
         process.stdout.write(
-          `Not conclusive at maxArm=${maxArm} (cap ${cfg.maxArmN}); sending another batch with a new run id.\n`,
+          `Optional stopping: not conclusive at maxArm=${maxArm} (cap ${cfg.maxArmN}); sending another batch.\n`,
         );
         continue;
       }

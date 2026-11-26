@@ -233,13 +233,57 @@ describe("applyDecision", () => {
       allowLocalDecision: true,
       evaluateIdentity: async () => {
         evals += 1;
-        if (evals === 1) return { variant: "treatment", value: "control" };
+        if (evals <= 20) return { variant: "treatment", value: "control" };
         return { variant: "control", value: "control" };
       },
       setDefault,
     });
     expect(setDefault).toHaveBeenCalledTimes(1);
-    expect(evals).toBe(2);
+    expect(evals).toBe(40);
+  });
+
+  it("throws when complete/ rollout_decision does not stick", async () => {
+    let gets = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        const method = init?.method ?? "GET";
+        if (url.includes("/complete/") && method === "POST") {
+          return new Response("{}", { status: 200 });
+        }
+        if (url.endsWith("/experiments/7/") && method === "GET") {
+          gets += 1;
+          if (gets === 1) {
+            return new Response(
+              JSON.stringify({ id: 7, status: "running", rollout_decision: null }),
+              { status: 200 },
+            );
+          }
+          return new Response(
+            JSON.stringify({
+              id: 7,
+              status: "completed",
+              rollout_decision: "control",
+              rollout_variant: null,
+            }),
+            { status: 200 },
+          );
+        }
+        return new Response("no", { status: 404 });
+      }),
+    );
+    const decision = decideExperiment({
+      flag: "checkout_a11y",
+      visits: visits(),
+      threshold: 0.95,
+      flagsmith: winner,
+    });
+    await expect(
+      applyDecision(decision, {
+        evaluateIdentity: async () => ({ variant: "treatment", value: "treatment" }),
+      }),
+    ).rejects.toThrow(/did not stick/);
   });
 
   it("does not complete when the source is local_bayesian unless allowLocalDecision", async () => {
@@ -332,7 +376,45 @@ describe("floorsMet", () => {
       threshold: 0.95,
       flagsmith: under,
     });
-    expect(decision.source).toBe("local_bayesian");
+    expect(decision.decision).toBe("keep_running");
+    expect(decision.notes.some((n) => n.includes("awaiting ingestion"))).toBe(true);
+  });
+
+  it("returns false when a Flagsmith arm is missing", () => {
+    expect(
+      floorsMet(visits(60), {
+        results: {
+          payload: {
+            metrics: [
+              {
+                variants: { treatment: { n: 60, sum: 40 } },
+                inference: { treatment: { chance_to_win: 0.99, lift: 0.4 } },
+              },
+            ],
+          },
+        },
+      }),
+    ).toBe(false);
+  });
+
+  it("returns false when the control arm is under the identity floor", () => {
+    expect(
+      floorsMet(visits(60), {
+        results: {
+          payload: {
+            metrics: [
+              {
+                variants: {
+                  control: { n: 10, sum: 8 },
+                  treatment: { n: 60, sum: 40 },
+                },
+                inference: { treatment: { chance_to_win: 0.99, lift: 0.4 } },
+              },
+            ],
+          },
+        },
+      }),
+    ).toBe(false);
   });
 
   it("returns false when the payload has inference but no variants", () => {

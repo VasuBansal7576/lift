@@ -32,6 +32,7 @@ function cfg(): LiftConfig {
     trafficN: 120,
     trafficSeed: 1,
     trafficRunId: "test",
+    trafficBatch: 0,
     winThreshold: 0.95,
     baselineConvert: 0.75,
     allowMock: false,
@@ -39,6 +40,7 @@ function cfg(): LiftConfig {
     resultsWaitMs: 0,
     appendVisits: false,
     continueUntilDecision: false,
+    targetArmN: 300,
     maxArmN: 600,
     personaMix: {
       mouse: 0.7,

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { mixSeed } from "../../shared/rng.ts";
 import {
   applyBaselineDropout,
   assignVariant,
@@ -65,6 +66,16 @@ describe("runTraffic", () => {
         adminToken: "",
       }),
     ).rejects.toThrow(/FLAGSMITH_ADMIN_API_TOKEN/);
+  });
+});
+
+describe("mixSeed", () => {
+  it("derives independent streams from run id and batch", () => {
+    const a = mixSeed(20261126, "run-a", 0, "persona");
+    const b = mixSeed(20261126, "run-b", 0, "persona");
+    const c = mixSeed(20261126, "run-a", 1, "persona");
+    const d = mixSeed(20261126, "run-a", 0, "dropout");
+    expect(new Set([a, b, c, d]).size).toBe(4);
   });
 });
 

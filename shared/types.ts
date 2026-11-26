@@ -43,6 +43,7 @@ export interface VisitRecord {
   blockedBy: BarrierId[];
   reason: string;
   simulated: true;
+  at?: string;
 }
 
 export interface ArmStats {

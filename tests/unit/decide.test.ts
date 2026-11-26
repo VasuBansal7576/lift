@@ -81,33 +81,56 @@ describe("parseFlagsmithWin", () => {
     expect(parsed?.rejectReason).toBe("srm");
   });
 
-  it("treats Flagsmith n below local visits as stale unless as_of is after traffic ended", () => {
+  it("treats as_of before traffic ended as stale even when n is caught up", () => {
+    const parsed = parseFlagsmithWin(
+      {
+        results: {
+          as_of: "2026-11-26T00:00:00Z",
+          payload: {
+            metrics: [
+              {
+                variants: {
+                  control: { n: 50, sum: 20 },
+                  treatment: { n: 50, sum: 30 },
+                },
+                inference: { treatment: { chance_to_win: 0.9, lift: 0.2 } },
+              },
+            ],
+          },
+        },
+      },
+      {
+        localArms: { control: 50, treatment: 50 },
+        trafficEndedAt: "2026-11-26T01:00:00Z",
+      },
+    );
+    expect(parsed?.usable).toBe(false);
+    expect(parsed?.rejectReason).toBe("stale");
+  });
+
+  it("rejects ingestion when either arm is below 95% of local n", () => {
     const envelope = {
       results: {
-        as_of: "2026-11-26T00:00:00Z",
+        as_of: "2026-11-26T02:00:00Z",
         payload: {
           metrics: [
             {
               variants: {
                 control: { n: 10, sum: 5 },
-                treatment: { n: 10, sum: 6 },
+                treatment: { n: 50, sum: 30 },
               },
-              inference: { treatment: { chance_to_win: 0.8, lift: 0.1, ci_low: -0.1, ci_high: 0.3 } },
+              inference: { treatment: { chance_to_win: 0.9, lift: 0.2, ci_low: 0, ci_high: 0.4 } },
             },
           ],
         },
       },
     };
-    const stale = parseFlagsmithWin(envelope, { localN: 40 });
-    expect(stale?.usable).toBe(false);
-    expect(stale?.rejectReason).toBe("stale");
-    const caughtUp = parseFlagsmithWin(envelope, {
-      localN: 40,
-      trafficEndedAt: "2026-11-25T23:00:00Z",
+    const parsed = parseFlagsmithWin(envelope, {
+      localArms: { control: 50, treatment: 50 },
+      trafficEndedAt: "2026-11-26T01:00:00Z",
     });
-    expect(caughtUp?.usable).toBe(true);
-    expect(caughtUp?.ciLow).toBe(-0.1);
-    expect(caughtUp?.ciHigh).toBe(0.3);
+    expect(parsed?.usable).toBe(false);
+    expect(parsed?.rejectReason).toBe("ingestion");
   });
 
   it("returns null when Flagsmith has not computed yet", () => {
@@ -277,7 +300,7 @@ describe("decideExperiment", () => {
     expect(decision.notes.some((n) => n.includes("srm_p_value"))).toBe(true);
   });
 
-  it("uses Flagsmith when as_of is after traffic even if n still lags", () => {
+  it("does not decide when Flagsmith n lags local counts even if as_of is after traffic", () => {
     const decision = decideExperiment({
       flag: "checkout_a11y",
       visits: strongTreatment,
@@ -290,8 +313,8 @@ describe("decideExperiment", () => {
             metrics: [
               {
                 variants: {
-                  control: { n: 55, sum: 20 },
-                  treatment: { n: 55, sum: 40 },
+                  control: { n: 20, sum: 10 },
+                  treatment: { n: 20, sum: 18 },
                 },
                 inference: {
                   treatment: {
@@ -307,8 +330,7 @@ describe("decideExperiment", () => {
         },
       },
     });
-    expect(decision.source).toBe("flagsmith");
-    expect(decision.decision).toBe("rollout_treatment");
-    expect(decision.ciLow).toBe(0.1);
+    expect(decision.decision).toBe("keep_running");
+    expect(decision.notes.some((n) => n.includes("awaiting ingestion"))).toBe(true);
   });
 });

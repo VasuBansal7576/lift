@@ -44,6 +44,12 @@ export function loadConfig() {
     "FLAGSMITH_EVENTS_URL",
     cloud ? "https://events.api.flagsmith.com/" : "http://localhost:8000/api/",
   ).replace(/\/?$/, "/");
+  const targetArmN = Math.max(50, Math.floor(envNumber("LIFT_TARGET_ARM_N", 300)));
+  const trafficNRaw = env("LIFT_TRAFFIC_N");
+  const trafficN = Math.max(
+    8,
+    Math.floor(trafficNRaw ? envNumber("LIFT_TRAFFIC_N", 2 * targetArmN) : 2 * targetArmN),
+  );
   return {
     apiUrl,
     adminApiUrl,
@@ -64,12 +70,14 @@ export function loadConfig() {
     flagName: env("LIFT_FLAG_NAME", "checkout_a11y"),
     metricEvent: env("LIFT_METRIC_EVENT", "checkout_completed"),
     siteUrl: env("LIFT_SITE_URL", "http://127.0.0.1:4174").replace(/\/$/, ""),
-    trafficN: Math.max(8, Math.floor(envNumber("LIFT_TRAFFIC_N", 120))),
+    trafficN,
     trafficSeed: envNumber("LIFT_TRAFFIC_SEED", 20261126),
     trafficRunId: env("LIFT_RUN_ID") || defaultRunId(),
+    trafficBatch: Math.max(0, Math.floor(envNumber("LIFT_TRAFFIC_BATCH", 0))),
     winThreshold: clampWinThreshold(envNumber("LIFT_WIN_THRESHOLD", 0.95)),
     appendVisits: env("LIFT_APPEND_VISITS") === "true",
     continueUntilDecision: env("LIFT_CONTINUE_UNTIL") === "true",
+    targetArmN,
     maxArmN: Math.max(50, Math.floor(envNumber("LIFT_MAX_ARM_N", 600))),
     baselineConvert: Math.min(1, Math.max(0, envNumber("LIFT_BASELINE_CONVERT", 0.75))),
     allowMock: env("LIFT_ALLOW_MOCK", "false") === "true",

@@ -11,6 +11,7 @@
     "scan": "tsx agent/src/scan.ts",
     "traffic": "tsx traffic/src/runner.ts",
     "decide": "tsx agent/src/decide.ts",
+    "verify:pull": "tsx agent/src/verify-pull.ts",
     "experiment": "tsx agent/src/run.ts",
     "site": "node scripts/serve-site.mjs",
     "dashboard": "node scripts/serve-site.mjs --dashboard",

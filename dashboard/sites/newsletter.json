@@ -268,5 +268,7 @@
     "matched": 20,
     "expected": "treatment",
     "usedFallback": false
-  }
+  },
+  "producedBy": "fleet",
+  "commitSha": "451a4e0f9f8c11b305885846ead484d3303c6070"
 }

@@ -121,20 +121,25 @@ CI runs typecheck, unit, and Playwright. E2E uses `scripts/serve-site.mjs --allo
 | `npm run decide` | Poll Flagsmith results; complete if `source=flagsmith`, or if `LIFT_ALLOW_LOCAL_DECISION=true` |
 | `npm run verify:pull` | Recorded probe output: throwaway complete-to-control, then Node SDK eval |
 | `npm run experiment` | One site: scan → bootstrap if needed → traffic → decide → `dashboard/sites/<id>.json` |
-| `npm run fleet` | Sequential fixed-horizon run of every site (200/arm), then aggregate `dashboard/results.json` |
+| `npx tsx agent/src/snapshot.ts` | Re-read a **completed** experiment and rewrite `dashboard/sites/<id>.json` without sending traffic. Sets `producedBy: snapshot`. Prefer `npm run fleet` with `LIFT_FLEET_FORCE=true` for a live fleet. |
+| `npm run fleet` | Sequential fixed-horizon run of every site (400 identities/site, ~200/arm, random 50/50), then aggregate `dashboard/results.json` |
 | `npm run fleet:estimate` | Print the Flagsmith HTTP estimate (no traffic) |
 | `npm run dashboard` | Serve the results page at :4173 |
 | `npm run typecheck` | `tsc --noEmit` |
 
 ## Fleet (this branch)
 
-`npm run fleet` runs each site sequentially against Flagsmith cloud **Development**, one look at a **fixed horizon of 200 identities per arm** (400 visits/site). That is under the 300/arm site-1 default so eight sites fit the 50k/month API budget; local evaluation and batched events keep HTTP to a few hundred calls. Estimate first with `npm run fleet:estimate`.
+`npm run fleet` runs each site sequentially against Flagsmith cloud **Development**, one look at a **fixed horizon of 400 identities per site (~200/arm, random 50/50)**. The cap is Playwright runtime for eight sequential sites, not the 50k/month Flagsmith API budget — local evaluation and batched events keep HTTP to a few hundred calls. Estimate first with `npm run fleet:estimate`.
 
-Sites share `sites/shared/lift-sdk.js` and `traffic/src/generic-personas.ts`. **Lumen Cloud pricing** ships a treatment-only extra confirmation modal (`[data-friction-step]`). Converted visits then take an extra seeded dropout. Lift does **not** hard-code `pull_to_control` — if treatment loses, it falls out of the persona mix (70% mouse × extra friction).
+Sites share `sites/shared/lift-sdk.js` and `traffic/src/generic-personas.ts`. The bots are **site-aware**: expected accessible names (menu, opener, submit, search, terms, friction confirm) live in each site's catalog entry (`shared/catalog.ts` → `accessible`), not in persona regexes.
 
-The dashboard headline is **conversion lift across N sites** (SIMULATED traffic, assumed mix). The number is the **unweighted median of per-site relative lifts**. Pooled lift (summed n) is a sensitivity check, not the headline, because the sites are different flows and not exchangeable. Each row links the Flagsmith experiment.
+**Lumen Cloud pricing** is a designed-to-lose pipeline check of `pull_to_control`. Treatment shows `[data-friction-step]`; bots click through the modal; then **60% of treatment conversions are dropped by construction** (`frictionKeepRate: 0.4` is P(keep), i.e. `rand() < 0.4` keeps). With the assumed mix, treatment cannot beat control, expected −50%. **The decision isn't hard-coded, but the loss is.** That is the default while the captain decides.
 
-GitHub Pages deploys `dashboard/` via `.github/workflows/pages.yml`. Enable Pages on the repo (source: GitHub Actions).
+The dashboard headline is **conversion lift across N sites** (SIMULATED traffic, assumed mix). The number is the **unweighted median of per-site relative lifts**, with IQR and range, source `lift_median_of_flagsmith_lifts`. Pooled lift (summed n, with pooled arm counts) is a sensitivity check under the headline, not the headline, because the sites are different flows and not exchangeable. Eight separate tests run at 95% with **no multiple-testing correction**. Each row links the Flagsmith experiment. Abandoned and superseded experiment IDs are listed in `results.json` (`abandonedExperiments` / `supersededExperiments`). Every site doc and fleet row has `producedBy` (`fleet` \| `snapshot` \| `reused`) and the commit SHA.
+
+`agent/src/snapshot.ts` re-reads a completed experiment and rewrites the site JSON without sending traffic. A forced fleet (`LIFT_FLEET_FORCE=true`) re-runs every site through the fleet runner so no row is reused or snapshotted.
+
+GitHub Pages deploys `dashboard/` via `.github/workflows/pages.yml` on **push to `main`** and `workflow_dispatch`. Pull requests upload the dashboard artifact without deploying. Enable Pages on the repo (source: GitHub Actions).
 
 ## Honest limits
 
@@ -142,7 +147,7 @@ GitHub Pages deploys `dashboard/` via `.github/workflows/pages.yml`. Enable Page
 - First experiment is **one bundled flag**. Per-barrier flags are wired on the page but not concurrent Flagsmith experiments.
 - Lift waits for **50 identities and 5 conversions per arm** (Lift’s floors, not Flagsmith’s) before treating `chance_to_win` as a decision. Default design is a **fixed horizon**: `LIFT_TARGET_ARM_N=300` (so ~600 visitors), one look at Flagsmith, then decide. If `LIFT_RUN_ID` is unset, it defaults to a compact UTC timestamp so re-runs get fresh identities.
 - `LIFT_CONTINUE_UNTIL=true` is **optional stopping** (add batches until P(win) crosses the threshold). It is off by default because peeking inflates false positives. `LIFT_MAX_ARM_N` (default 600) caps that path.
-- A Flagsmith snapshot is used only when **each arm’s n is at least 95% of the local visit log**. `as_of` after traffic is not enough on its own. If the warehouse is still short after the wait, the dashboard says **awaiting ingestion** and Lift does not complete.
+- A Flagsmith snapshot is used only when **each arm’s n exactly matches the local visit log**. Enrollment is probed with events off on visitor #0’s identity, so there are zero fake exposures. `as_of` after traffic is not enough on its own. If the warehouse is still short after the wait, the dashboard says **awaiting ingestion** and Lift does not complete.
 - Results refresh is at most once per 5 minutes. Lift polls with backoff until `chance_to_win` exists and ingestion holds.
 - Completing from local math requires `LIFT_ALLOW_LOCAL_DECISION=true` and is labelled everywhere. `npm run decide` completes in that case too.
 - Experiment **593** was an earlier sequential (optional-stopping) Development run. The dashboard is the latest fixed-horizon experiment.

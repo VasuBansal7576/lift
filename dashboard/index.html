@@ -23,6 +23,7 @@
   <p class="note" id="intro">Hypothesis: fixing accessibility barriers raises conversions. Flagsmith assigns arms, records exposures/conversions, and reports whether treatment rolled out, was pulled, or is still running.</p>
   <h1>Lift</h1>
   <p id="headline" class="headline">Loading results…</p>
+  <p id="pooled" class="note"></p>
   <p id="mix" class="note"></p>
   <p id="meta" class="note"></p>
   <p id="dashboard-link" class="note"></p>
@@ -38,8 +39,8 @@
     function pct(n) { return `${(n * 100).toFixed(1)}%`; }
     function pWin(n) {
       if (typeof n !== "number" || !Number.isFinite(n)) return "n/a";
-      if (n >= 0.999) return ">99.9%";
-      if (n <= 0.001) return "<0.1%";
+      if (n > 0.999) return ">99.9%";
+      if (n < 0.001) return "<0.1%";
       return pct(n);
     }
     function rate(arm) {
@@ -76,6 +77,14 @@
       .then((data) => {
         const isFleet = Array.isArray(data.rows) && data.aggregate;
         document.getElementById("headline").textContent = data.headline.copy;
+        const pooled = document.getElementById("pooled");
+        if (pooled) {
+          pooled.textContent = isFleet
+            ? [data.aggregate?.pooledCopy, data.aggregate?.multipleTestingNote || data.headline?.multipleTestingNote]
+                .filter(Boolean)
+                .join(" ")
+            : data.frictionDisclosure || "";
+        }
         const intro = document.getElementById("intro");
         if (intro) {
           intro.textContent =
@@ -84,8 +93,11 @@
         document.getElementById("mix").textContent = isFleet
           ? data.aggregate.explanation
           : `Assumed mix: ${data.personaMixLabel || ""}. Realised this run: ${data.realisedMixLabel || ""}. ${data.personaMixNote || ""}`;
+        const provenance = data.producedBy
+          ? ` producedBy=${data.producedBy} commit=${data.commitSha || "unknown"}.`
+          : "";
         document.getElementById("meta").textContent =
-          `${data.label} Generated ${data.generatedAt}. Headline source: ${data.headline?.source || "unknown"}. ${data.honesty || ""}`;
+          `${data.label} Generated ${data.generatedAt}.${provenance} Headline source: ${data.headline?.source || "unknown"}. ${data.honesty || ""}`;
         const dash = document.getElementById("dashboard-link");
         clear(dash);
         if (!isFleet && data.flagsmithDashboard) {
@@ -167,7 +179,7 @@
         }
         if (isFleet && list && !list.firstChild) {
           const li = document.createElement("li");
-          li.textContent = "Each site’s WCAG barriers are listed in dashboard/sites/<id>.json. Pricing ships a treatment-only extra confirmation step so a harmful “fix” can lose on live traffic.";
+          li.textContent = "Each site’s WCAG barriers are listed in dashboard/sites/<id>.json. Pricing ships a treatment-only extra confirmation step so a harmful “fix” can lose on SIMULATED traffic. 60% of treatment conversions are dropped by construction (bots click through the modal; the friction is an injected drop-off). With the assumed mix, treatment cannot beat control, expected −50%. The decision isn't hard-coded, but the loss is.";
           list.appendChild(li);
         }
         document.getElementById("source").textContent = (data.decision?.notes || []).join(" ");

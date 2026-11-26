@@ -1,5 +1,8 @@
 import { DEFAULT_PERSONA_MIX, type Decision, type PersonaMix } from "./types.ts";
 import { compactMix } from "./mix.ts";
+import { gitCommitSha } from "./git.ts";
+
+export type ProducedBy = "fleet" | "snapshot" | "reused";
 
 export interface SiteRow {
   site: string;
@@ -15,6 +18,8 @@ export interface SiteRow {
   winProbabilityTreatment: number;
   decision: Decision;
   source: "flagsmith" | "local_bayesian";
+  producedBy: ProducedBy;
+  commitSha: string;
 }
 
 export interface FleetAggregate {
@@ -22,9 +27,15 @@ export interface FleetAggregate {
   explanation: string;
   siteCount: number;
   medianLift: number | null;
+  iqrLow: number | null;
+  iqrHigh: number | null;
+  liftMin: number | null;
+  liftMax: number | null;
   pooledLift: number | null;
   pooledControl: { visitors: number; conversions: number; rate: number };
   pooledTreatment: { visitors: number; conversions: number; rate: number };
+  pooledCopy: string;
+  multipleTestingNote: string;
   headline: string;
 }
 
@@ -36,8 +47,39 @@ function median(values: number[]): number | null {
   return (sorted[mid - 1] + sorted[mid]) / 2;
 }
 
+function quantile(sorted: number[], p: number): number | null {
+  if (sorted.length === 0) return null;
+  if (sorted.length === 1) return sorted[0];
+  const idx = (sorted.length - 1) * p;
+  const lo = Math.floor(idx);
+  const hi = Math.ceil(idx);
+  if (lo === hi) return sorted[lo];
+  return sorted[lo] * (hi - idx) + sorted[hi] * (idx - lo);
+}
+
 function rate(conversions: number, visitors: number): number {
   return visitors === 0 ? 0 : conversions / visitors;
+}
+
+export function formatSignedPct(n: number | null | undefined): string {
+  if (n === null || n === undefined || !Number.isFinite(n)) return "n/a";
+  const pct = n * 100;
+  const abs = Math.abs(pct).toFixed(1);
+  return pct < 0 ? `−${abs}%` : `${abs}%`;
+}
+
+export function borderlineSites(rows: SiteRow[]): string[] {
+  return rows
+    .filter((row) => {
+      if (row.decision === "keep_running") return false;
+      const p = row.winProbabilityTreatment;
+      const closeWin = p >= 0.95 && p < 0.99;
+      const closeLose = p > 0.01 && p <= 0.05;
+      const ciBarelyExcludesZero =
+        typeof row.ciLow === "number" && row.ciLow > 0 && row.ciLow < 0.05;
+      return closeWin || closeLose || ciBarelyExcludesZero;
+    })
+    .map((row) => row.site);
 }
 
 export function aggregateSites(
@@ -48,7 +90,12 @@ export function aggregateSites(
   const lifts = usable
     .map((row) => row.lift)
     .filter((n): n is number => typeof n === "number" && Number.isFinite(n));
+  const sorted = [...lifts].sort((a, b) => a - b);
   const medianLift = median(lifts);
+  const iqrLow = quantile(sorted, 0.25);
+  const iqrHigh = quantile(sorted, 0.75);
+  const liftMin = sorted.length ? sorted[0] : null;
+  const liftMax = sorted.length ? sorted[sorted.length - 1] : null;
   const pooledControl = {
     visitors: rows.reduce((sum, row) => sum + row.control.visitors, 0),
     conversions: rows.reduce((sum, row) => sum + row.control.conversions, 0),
@@ -67,20 +114,40 @@ export function aggregateSites(
       : (pooledTreatment.rate - pooledControl.rate) / pooledControl.rate;
   const display =
     medianLift === null ? "n/a" : `${(medianLift * 100).toFixed(1)}%`;
+  const iqrCopy =
+    iqrLow === null || iqrHigh === null
+      ? ""
+      : ` (IQR ${formatSignedPct(iqrLow)} to ${formatSignedPct(iqrHigh)}; range ${formatSignedPct(liftMin)} to ${formatSignedPct(liftMax)})`;
   const explanation =
     "Headline is the unweighted median of per-site relative lifts (treatment vs control conversion rate). " +
     "Sites are not a sample of the web; each row is its own experiment with an assumed persona mix. " +
     "Pooled lift (visitors summed across sites) is shown as a sensitivity check — it weights larger n more, " +
     "and it is not the headline because sites have different flows and are not exchangeable.";
-  const headline = `conversion lift across ${rows.length} sites (SIMULATED traffic, assumed mix ${compactMix(mix)}): ${display} median`;
+  const headline = `conversion lift across ${rows.length} sites (SIMULATED traffic, assumed mix ${compactMix(mix)}): ${display} median${iqrCopy}`;
+  const pooledCopy =
+    pooledLift === null
+      ? "Pooled sensitivity: n/a."
+      : `Pooled sensitivity (summed n, not the headline): ${formatSignedPct(pooledLift)} (control ${pooledControl.conversions}/${pooledControl.visitors} vs treatment ${pooledTreatment.conversions}/${pooledTreatment.visitors}).`;
+  const borderline = borderlineSites(rows);
+  const multipleTestingNote =
+    `${rows.length} separate tests were run at 95% with no multiple-testing correction` +
+    (borderline.length
+      ? `; ${borderline.join(" and ")} ${borderline.length === 1 ? "is" : "are"} borderline.`
+      : ".");
   return {
     method: "median_of_site_lifts",
     explanation,
     siteCount: rows.length,
     medianLift,
+    iqrLow,
+    iqrHigh,
+    liftMin,
+    liftMax,
     pooledLift,
     pooledControl,
     pooledTreatment,
+    pooledCopy,
+    multipleTestingNote,
     headline,
   };
 }
@@ -105,6 +172,8 @@ export function siteRowFromDocument(doc: {
   flag?: string;
   experimentId?: number | null;
   flagsmithDashboard?: string | null;
+  producedBy?: ProducedBy;
+  commitSha?: string;
   decision: {
     flag: string;
     decision: Decision;
@@ -141,6 +210,7 @@ export function siteRowFromDocument(doc: {
     winProbabilityTreatment: doc.decision.winProbabilityTreatment,
     decision: doc.decision.decision,
     source: doc.decision.source,
+    producedBy: doc.producedBy ?? "fleet",
+    commitSha: doc.commitSha ?? gitCommitSha(),
   };
 }
-

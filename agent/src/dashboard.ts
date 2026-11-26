@@ -1,6 +1,8 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import { getSite } from "../../shared/catalog.ts";
+import { getSite, PRICING_FRICTION_DISCLOSURE } from "../../shared/catalog.ts";
+import { gitCommitSha } from "../../shared/git.ts";
+import type { ProducedBy } from "../../shared/aggregate.ts";
 import {
   assertNever,
   DEFAULT_PERSONA_MIX,
@@ -12,8 +14,11 @@ import {
 } from "../../shared/types.ts";
 import { compactMix, mixLabel, realisedMix } from "../../shared/mix.ts";
 import { resultsPath } from "./config.ts";
-import type { FlagsmithResultsEnvelope } from "./decide.ts";
-import { summariseVisits } from "./decide.ts";
+import {
+  summariseVisits,
+  type EnvironmentDefaultPath,
+  type FlagsmithResultsEnvelope,
+} from "./decide.ts";
 import { armStats, clampLift, formatPWin, serialiseLift } from "./stats.ts";
 
 function personaBreakdown(visits: VisitRecord[]) {
@@ -129,7 +134,10 @@ export function buildResultsDocument(input: {
     matched: number;
     expected: string | null;
     usedFallback: boolean;
+    environmentDefaultPath?: EnvironmentDefaultPath | null;
   } | null;
+  producedBy?: ProducedBy;
+  commitSha?: string;
 }) {
   const localByVariant = summariseVisits(input.visits);
   const mix = input.personaMix ?? DEFAULT_PERSONA_MIX;
@@ -156,6 +164,15 @@ export function buildResultsDocument(input: {
   if (input.flagsmith?.results?.is_final === false) {
     notes.push(
       "Embedded Flagsmith snapshot was taken before completion (results.is_final is false).",
+    );
+  }
+  const siteDef = getSite(input.site ?? "checkout");
+  if (siteDef.harmfulFix?.designedToLose) {
+    notes.push(siteDef.harmfulFix.note);
+  }
+  if (input.verification?.usedFallback && input.verification.environmentDefaultPath) {
+    notes.push(
+      `Rollout verification used environment default path ${input.verification.environmentDefaultPath}.`,
     );
   }
   const rawLift = fromFlagsmith
@@ -206,9 +223,13 @@ export function buildResultsDocument(input: {
     label:
       "SIMULATED TRAFFIC — Playwright persona bots, not humans. Demonstration of the pipeline; outcomes follow the persona model, not evidence about real users. Lift is a function of the assumed share of keyboard, screen-reader and low-vision users.",
     generatedAt: new Date().toISOString(),
+    producedBy: input.producedBy ?? "fleet",
+    commitSha: input.commitSha ?? gitCommitSha(),
     site: input.site ?? "checkout",
     sites: 1,
     flag: input.decision.flag,
+    frictionDisclosure:
+      siteDef.harmfulFix?.designedToLose ? PRICING_FRICTION_DISCLOSURE : null,
     experimentId: input.experimentId ?? null,
     flagsmithDashboard: input.dashboardUrl ?? null,
     personaMix: mix,

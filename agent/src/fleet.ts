@@ -5,8 +5,11 @@ import {
   aggregateSites,
   decisionLabel,
   siteRowFromDocument,
+  type ProducedBy,
   type SiteRow,
 } from "../../shared/aggregate.ts";
+import { gitCommitSha } from "../../shared/git.ts";
+import { historicLists } from "../../shared/experiment-history.ts";
 import {
   estimateFleetCalls,
   FLEET_ARM_N,
@@ -22,11 +25,18 @@ export { estimateFleetCalls, FLEET_ARM_N };
 export function buildFleetDocument(rows: SiteRow[], estimate: FleetCallEstimate) {
   const mix = DEFAULT_PERSONA_MIX;
   const aggregate = aggregateSites(rows, mix);
+  const sha = gitCommitSha();
+  const currentIds = rows
+    .map((row) => row.experimentId)
+    .filter((id): id is number => typeof id === "number");
+  const historic = historicLists(currentIds);
   return {
     traffic: "simulated" as const,
     label:
       "SIMULATED TRAFFIC — Playwright persona bots, not humans. Demonstration of the pipeline; outcomes follow the persona model, not evidence about real users.",
     generatedAt: new Date().toISOString(),
+    producedBy: "fleet" as ProducedBy,
+    commitSha: sha,
     sites: rows.length,
     site: "fleet",
     personaMix: mix,
@@ -35,14 +45,21 @@ export function buildFleetDocument(rows: SiteRow[], estimate: FleetCallEstimate)
     headline: {
       conversionLift: aggregate.medianLift,
       displayLift: aggregate.medianLift,
-      source: "flagsmith" as const,
+      source: "lift_median_of_flagsmith_lifts" as const,
       copy: aggregate.headline,
       method: aggregate.method,
+      iqrLow: aggregate.iqrLow,
+      iqrHigh: aggregate.iqrHigh,
+      pooledLift: aggregate.pooledLift,
+      pooledCopy: aggregate.pooledCopy,
+      multipleTestingNote: aggregate.multipleTestingNote,
     },
-    outcome: aggregate.explanation,
+    outcome: `${aggregate.explanation} ${aggregate.pooledCopy} ${aggregate.multipleTestingNote}`,
     honesty: aggregate.explanation,
     rows: rows.map((row) => ({
       ...row,
+      producedBy: row.producedBy,
+      commitSha: row.commitSha || sha,
       decisionLabel: decisionLabel(row.decision),
     })),
     flags: rows.map((row) => ({
@@ -57,7 +74,11 @@ export function buildFleetDocument(rows: SiteRow[], estimate: FleetCallEstimate)
       source: row.source,
       decision: row.decision,
       flagsmithDashboard: row.flagsmithDashboard,
+      producedBy: row.producedBy,
+      commitSha: row.commitSha || sha,
     })),
+    abandonedExperiments: historic.abandonedExperiments,
+    supersededExperiments: historic.supersededExperiments,
   };
 }
 
@@ -76,6 +97,7 @@ export async function runFleet() {
   const port = Number(new URL(cfg.siteUrl).port || 4174);
   const server = await serveSites(port);
   const rows: SiteRow[] = [];
+  const sha = gitCommitSha();
   try {
     for (const site of SITES) {
       process.stdout.write(`\n=== ${site.id} (${site.flagName}) ===\n`);
@@ -85,6 +107,8 @@ export async function runFleet() {
         if (existing?.decision) {
           const row = siteRowFromDocument(existing);
           row.name = site.name;
+          row.producedBy = "reused";
+          row.commitSha = existing.commitSha ?? sha;
           rows.push(row);
           process.stdout.write(`Reusing ${existingPath}\n`);
           continue;
@@ -96,8 +120,10 @@ export async function runFleet() {
       process.env.LIFT_SITE_URL = `http://127.0.0.1:${port}/${site.id}`;
       process.env.LIFT_STATE_PATH = "";
       const doc = await runExperiment();
-      const row = siteRowFromDocument(doc);
+      const row = siteRowFromDocument({ ...doc, producedBy: "fleet", commitSha: sha });
       row.name = site.name;
+      row.producedBy = "fleet";
+      row.commitSha = sha;
       rows.push(row);
     }
   } finally {

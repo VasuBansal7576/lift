@@ -68,7 +68,8 @@
       "Flagsmith results as of 2026-11-26T11:08:45.877167Z.",
       "Treatment loses under the 95% chance-to-be-best rule.",
       "Local visit counts differ from Flagsmith n/sum (local control 126/205, treatment 72/195; Flagsmith control 126/205, treatment 72/196). Using Flagsmith n/sum.",
-      "Embedded Flagsmith snapshot was taken before completion (results.is_final is false)."
+      "Embedded Flagsmith snapshot was taken before completion (results.is_final is false).",
+      "60% of treatment conversions are dropped by construction (bots click through the modal; the friction is an injected drop-off). With the assumed mix, treatment cannot beat control, expected −50%. The decision isn't hard-coded, but the loss is."
     ]
   },
   "flags": [
@@ -290,5 +291,8 @@
     "matched": 20,
     "expected": "control",
     "usedFallback": false
-  }
+  },
+  "producedBy": "fleet",
+  "commitSha": "451a4e0f9f8c11b305885846ead484d3303c6070",
+  "frictionDisclosure": "60% of treatment conversions are dropped by construction (bots click through the modal; the friction is an injected drop-off). With the assumed mix, treatment cannot beat control, expected −50%. The decision isn't hard-coded, but the loss is."
 }

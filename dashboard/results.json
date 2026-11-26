@@ -1,7 +1,9 @@
 {
   "traffic": "simulated",
   "label": "SIMULATED TRAFFIC — Playwright persona bots, not humans. Demonstration of the pipeline; outcomes follow the persona model, not evidence about real users.",
-  "generatedAt": "2026-11-26T11:47:04.777Z",
+  "generatedAt": "2026-11-26T12:12:41.039Z",
+  "producedBy": "fleet",
+  "commitSha": "451a4e0f9f8c11b305885846ead484d3303c6070",
   "sites": 8,
   "site": "fleet",
   "personaMix": {
@@ -21,7 +23,7 @@
     "environmentDocs": 16,
     "total": 264,
     "notes": [
-      "200 identities per arm (400 visits/site) — under the 300/arm default to keep Playwright time and the 50k/month Flagsmith budget in check.",
+      "Fixed horizon of 400 identities per site (~200/arm, random 50/50). Cap is Playwright runtime for eight sequential sites, not the 50k/month Flagsmith API budget (local eval + batched events keep HTTP to a few hundred calls).",
       "Node SDK local evaluation: environment document ~1–2 times per site, not per visitor.",
       "Playwright bots do not call the JS SDK. Events flush in batches (~1–2 POSTs/site).",
       "Admin: ensure feature/metric/experiment/start (~20) + results poll/refresh (~6) + complete/GET (~2) per site.",
@@ -33,6 +35,10 @@
     "explanation": "Headline is the unweighted median of per-site relative lifts (treatment vs control conversion rate). Sites are not a sample of the web; each row is its own experiment with an assumed persona mix. Pooled lift (visitors summed across sites) is shown as a sensitivity check — it weights larger n more, and it is not the headline because sites have different flows and are not exchangeable.",
     "siteCount": 8,
     "medianLift": 0.29042073387335077,
+    "iqrLow": 0.1737824111989852,
+    "iqrHigh": 0.39261098414243284,
+    "liftMin": -0.40233236151603496,
+    "liftMax": 0.4626708223447616,
     "pooledLift": 0.21628928692125723,
     "pooledControl": {
       "visitors": 1593,
@@ -44,16 +50,23 @@
       "conversions": 1098,
       "rate": 0.6802973977695167
     },
-    "headline": "conversion lift across 8 sites (SIMULATED traffic, assumed mix 70/10/10/10): 29.0% median"
+    "pooledCopy": "Pooled sensitivity (summed n, not the headline): 21.6% (control 891/1593 vs treatment 1098/1614).",
+    "multipleTestingNote": "8 separate tests were run at 95% with no multiple-testing correction; newsletter and booking are borderline.",
+    "headline": "conversion lift across 8 sites (SIMULATED traffic, assumed mix 70/10/10/10): 29.0% median (IQR 17.4% to 39.3%; range −40.2% to 46.3%)"
   },
   "headline": {
     "conversionLift": 0.29042073387335077,
     "displayLift": 0.29042073387335077,
-    "source": "flagsmith",
-    "copy": "conversion lift across 8 sites (SIMULATED traffic, assumed mix 70/10/10/10): 29.0% median",
-    "method": "median_of_site_lifts"
+    "source": "lift_median_of_flagsmith_lifts",
+    "copy": "conversion lift across 8 sites (SIMULATED traffic, assumed mix 70/10/10/10): 29.0% median (IQR 17.4% to 39.3%; range −40.2% to 46.3%)",
+    "method": "median_of_site_lifts",
+    "iqrLow": 0.1737824111989852,
+    "iqrHigh": 0.39261098414243284,
+    "pooledLift": 0.21628928692125723,
+    "pooledCopy": "Pooled sensitivity (summed n, not the headline): 21.6% (control 891/1593 vs treatment 1098/1614).",
+    "multipleTestingNote": "8 separate tests were run at 95% with no multiple-testing correction; newsletter and booking are borderline."
   },
-  "outcome": "Headline is the unweighted median of per-site relative lifts (treatment vs control conversion rate). Sites are not a sample of the web; each row is its own experiment with an assumed persona mix. Pooled lift (visitors summed across sites) is shown as a sensitivity check — it weights larger n more, and it is not the headline because sites have different flows and are not exchangeable.",
+  "outcome": "Headline is the unweighted median of per-site relative lifts (treatment vs control conversion rate). Sites are not a sample of the web; each row is its own experiment with an assumed persona mix. Pooled lift (visitors summed across sites) is shown as a sensitivity check — it weights larger n more, and it is not the headline because sites have different flows and are not exchangeable. Pooled sensitivity (summed n, not the headline): 21.6% (control 891/1593 vs treatment 1098/1614). 8 separate tests were run at 95% with no multiple-testing correction; newsletter and booking are borderline.",
   "honesty": "Headline is the unweighted median of per-site relative lifts (treatment vs control conversion rate). Sites are not a sample of the web; each row is its own experiment with an assumed persona mix. Pooled lift (visitors summed across sites) is shown as a sensitivity check — it weights larger n more, and it is not the headline because sites have different flows and are not exchangeable.",
   "rows": [
     {
@@ -78,6 +91,8 @@
       "winProbabilityTreatment": 0.9986344301369484,
       "decision": "rollout_treatment",
       "source": "flagsmith",
+      "producedBy": "fleet",
+      "commitSha": "451a4e0f9f8c11b305885846ead484d3303c6070",
       "decisionLabel": "rolled out"
     },
     {
@@ -102,6 +117,8 @@
       "winProbabilityTreatment": 0.9999609334102709,
       "decision": "rollout_treatment",
       "source": "flagsmith",
+      "producedBy": "fleet",
+      "commitSha": "451a4e0f9f8c11b305885846ead484d3303c6070",
       "decisionLabel": "rolled out"
     },
     {
@@ -126,6 +143,8 @@
       "winProbabilityTreatment": 3.424088235171041e-10,
       "decision": "pull_to_control",
       "source": "flagsmith",
+      "producedBy": "fleet",
+      "commitSha": "451a4e0f9f8c11b305885846ead484d3303c6070",
       "decisionLabel": "pulled"
     },
     {
@@ -150,6 +169,8 @@
       "winProbabilityTreatment": 0.9810782874837998,
       "decision": "rollout_treatment",
       "source": "flagsmith",
+      "producedBy": "fleet",
+      "commitSha": "451a4e0f9f8c11b305885846ead484d3303c6070",
       "decisionLabel": "rolled out"
     },
     {
@@ -174,6 +195,8 @@
       "winProbabilityTreatment": 0.999934386507852,
       "decision": "rollout_treatment",
       "source": "flagsmith",
+      "producedBy": "fleet",
+      "commitSha": "451a4e0f9f8c11b305885846ead484d3303c6070",
       "decisionLabel": "rolled out"
     },
     {
@@ -198,6 +221,8 @@
       "winProbabilityTreatment": 0.9799910687571942,
       "decision": "rollout_treatment",
       "source": "flagsmith",
+      "producedBy": "fleet",
+      "commitSha": "451a4e0f9f8c11b305885846ead484d3303c6070",
       "decisionLabel": "rolled out"
     },
     {
@@ -222,6 +247,8 @@
       "winProbabilityTreatment": 0.9956781718827219,
       "decision": "rollout_treatment",
       "source": "flagsmith",
+      "producedBy": "fleet",
+      "commitSha": "451a4e0f9f8c11b305885846ead484d3303c6070",
       "decisionLabel": "rolled out"
     },
     {
@@ -246,6 +273,8 @@
       "winProbabilityTreatment": 0.999470461617796,
       "decision": "rollout_treatment",
       "source": "flagsmith",
+      "producedBy": "fleet",
+      "commitSha": "451a4e0f9f8c11b305885846ead484d3303c6070",
       "decisionLabel": "rolled out"
     }
   ],
@@ -269,7 +298,9 @@
       "ciHigh": 0.5551358881770039,
       "source": "flagsmith",
       "decision": "rollout_treatment",
-      "flagsmithDashboard": "https://app.flagsmith.com/project/56470/environment/120798/experiments/613"
+      "flagsmithDashboard": "https://app.flagsmith.com/project/56470/environment/120798/experiments/613",
+      "producedBy": "fleet",
+      "commitSha": "451a4e0f9f8c11b305885846ead484d3303c6070"
     },
     {
       "name": "signup_a11y",
@@ -290,7 +321,9 @@
       "ciHigh": 0.6922418303606405,
       "source": "flagsmith",
       "decision": "rollout_treatment",
-      "flagsmithDashboard": "https://app.flagsmith.com/project/56470/environment/120798/experiments/614"
+      "flagsmithDashboard": "https://app.flagsmith.com/project/56470/environment/120798/experiments/614",
+      "producedBy": "fleet",
+      "commitSha": "451a4e0f9f8c11b305885846ead484d3303c6070"
     },
     {
       "name": "pricing_a11y",
@@ -311,7 +344,9 @@
       "ciHigh": -0.27451816150092223,
       "source": "flagsmith",
       "decision": "pull_to_control",
-      "flagsmithDashboard": "https://app.flagsmith.com/project/56470/environment/120798/experiments/616"
+      "flagsmithDashboard": "https://app.flagsmith.com/project/56470/environment/120798/experiments/616",
+      "producedBy": "fleet",
+      "commitSha": "451a4e0f9f8c11b305885846ead484d3303c6070"
     },
     {
       "name": "newsletter_a11y",
@@ -332,7 +367,9 @@
       "ciHigh": 0.3242442118663942,
       "source": "flagsmith",
       "decision": "rollout_treatment",
-      "flagsmithDashboard": "https://app.flagsmith.com/project/56470/environment/120798/experiments/618"
+      "flagsmithDashboard": "https://app.flagsmith.com/project/56470/environment/120798/experiments/618",
+      "producedBy": "fleet",
+      "commitSha": "451a4e0f9f8c11b305885846ead484d3303c6070"
     },
     {
       "name": "donate_a11y",
@@ -353,7 +390,9 @@
       "ciHigh": 0.6721101873939531,
       "source": "flagsmith",
       "decision": "rollout_treatment",
-      "flagsmithDashboard": "https://app.flagsmith.com/project/56470/environment/120798/experiments/619"
+      "flagsmithDashboard": "https://app.flagsmith.com/project/56470/environment/120798/experiments/619",
+      "producedBy": "fleet",
+      "commitSha": "451a4e0f9f8c11b305885846ead484d3303c6070"
     },
     {
       "name": "booking_a11y",
@@ -374,7 +413,9 @@
       "ciHigh": 0.34418981215348965,
       "source": "flagsmith",
       "decision": "rollout_treatment",
-      "flagsmithDashboard": "https://app.flagsmith.com/project/56470/environment/120798/experiments/621"
+      "flagsmithDashboard": "https://app.flagsmith.com/project/56470/environment/120798/experiments/621",
+      "producedBy": "fleet",
+      "commitSha": "451a4e0f9f8c11b305885846ead484d3303c6070"
     },
     {
       "name": "login_a11y",
@@ -395,7 +436,9 @@
       "ciHigh": 0.4282682647672811,
       "source": "flagsmith",
       "decision": "rollout_treatment",
-      "flagsmithDashboard": "https://app.flagsmith.com/project/56470/environment/120798/experiments/624"
+      "flagsmithDashboard": "https://app.flagsmith.com/project/56470/environment/120798/experiments/624",
+      "producedBy": "fleet",
+      "commitSha": "451a4e0f9f8c11b305885846ead484d3303c6070"
     },
     {
       "name": "search_a11y",
@@ -416,7 +459,113 @@
       "ciHigh": 0.6000440773698674,
       "source": "flagsmith",
       "decision": "rollout_treatment",
-      "flagsmithDashboard": "https://app.flagsmith.com/project/56470/environment/120798/experiments/625"
+      "flagsmithDashboard": "https://app.flagsmith.com/project/56470/environment/120798/experiments/625",
+      "producedBy": "fleet",
+      "commitSha": "451a4e0f9f8c11b305885846ead484d3303c6070"
+    }
+  ],
+  "abandonedExperiments": [
+    {
+      "id": 615,
+      "kind": "abandoned",
+      "flag": null,
+      "site": "pricing",
+      "name": null,
+      "status": "not_found",
+      "exposures": null,
+      "rolloutDecision": null,
+      "reason": "Looked up on Development: GET /experiments/615/ returned 404 (No Experiment matches). ID gap between signup 614 and pricing 616. Likely a deleted or never-persisted bootstrap attempt. Exposures unknown because the object is gone."
+    },
+    {
+      "id": 617,
+      "kind": "abandoned",
+      "flag": null,
+      "site": "newsletter",
+      "name": null,
+      "status": "not_found",
+      "exposures": null,
+      "rolloutDecision": null,
+      "reason": "Looked up on Development: GET /experiments/617/ returned 404. ID gap between pricing 616 and newsletter 618. Likely a deleted or never-persisted bootstrap attempt. Exposures unknown because the object is gone."
+    },
+    {
+      "id": 620,
+      "kind": "abandoned",
+      "flag": null,
+      "site": "booking",
+      "name": null,
+      "status": "not_found",
+      "exposures": null,
+      "rolloutDecision": null,
+      "reason": "Looked up on Development: GET /experiments/620/ returned 404. ID gap between donate 619 and booking 621. Likely a deleted or never-persisted bootstrap attempt. Exposures unknown because the object is gone."
+    },
+    {
+      "id": 622,
+      "kind": "abandoned",
+      "flag": null,
+      "site": "login",
+      "name": null,
+      "status": "not_found",
+      "exposures": null,
+      "rolloutDecision": null,
+      "reason": "Looked up on Development: GET /experiments/622/ returned 404. ID gap between booking 621 and login 624. Likely a deleted or never-persisted bootstrap attempt. Exposures unknown because the object is gone."
+    },
+    {
+      "id": 623,
+      "kind": "abandoned",
+      "flag": null,
+      "site": "login",
+      "name": null,
+      "status": "not_found",
+      "exposures": null,
+      "rolloutDecision": null,
+      "reason": "Looked up on Development: GET /experiments/623/ returned 404. ID gap between booking 621 and login 624 (with 622). Likely a deleted or never-persisted bootstrap attempt. Exposures unknown because the object is gone."
+    }
+  ],
+  "supersededExperiments": [
+    {
+      "id": 586,
+      "kind": "superseded",
+      "flag": "checkout_a11y",
+      "site": "checkout",
+      "name": "Checkout accessibility lift",
+      "status": "completed",
+      "exposures": {
+        "control": 59,
+        "treatment": 61,
+        "total": 120
+      },
+      "rolloutDecision": "variant",
+      "reason": "Site-1 first live Development run (120 identities). Rolled out treatment. Superseded by later checkout experiments and the fleet."
+    },
+    {
+      "id": 593,
+      "kind": "superseded",
+      "flag": "checkout_a11y",
+      "site": "checkout",
+      "name": "Checkout accessibility lift (rev2)",
+      "status": "completed",
+      "exposures": {
+        "control": 152,
+        "treatment": 143,
+        "total": 295
+      },
+      "rolloutDecision": "variant",
+      "reason": "Site-1 sequential (optional-stopping) Development run. Rolled out treatment. Superseded by the fixed-horizon site-1 run and the fleet."
+    },
+    {
+      "id": 605,
+      "kind": "superseded",
+      "flag": "checkout_a11y",
+      "site": "checkout",
+      "name": "Checkout accessibility lift (20261126100841)",
+      "status": "completed",
+      "exposures": {
+        "control": 271,
+        "treatment": 310,
+        "total": 581
+      },
+      "rolloutDecision": "variant",
+      "reason": "Site-1 fixed-horizon Development run. Rolled out treatment. Superseded by the fleet checkout experiment."
     }
   ]
 }

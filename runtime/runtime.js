@@ -5,8 +5,7 @@
 
 import {
   cssKey,
-  isAllowedAttributeName,
-  isSafeAttributeValue,
+  hashKey,
   isSafeInsertHtml,
   mountKeyFor,
   parsePatchSpec,
@@ -70,23 +69,36 @@ function applySetAttribute(root, op, index) {
   });
 }
 
+const FORBIDDEN_TEXT_HOSTS = new Set(["STYLE", "SCRIPT", "TEMPLATE", "NOSCRIPT"]);
+
 function applySetText(root, op, index) {
   const found = queryOne(root, op.selector);
   if (found.error) return miss(index, op.selector, found.error);
   const el = found.el;
   if (!(el instanceof Element)) return miss(index, op.selector);
-  const prev = el.textContent ?? "";
-  if (prev === op.text) return noop();
+  if (FORBIDDEN_TEXT_HOSTS.has(el.tagName)) {
+    return { status: "miss", error: `ops[${index}] target is not allowlisted` };
+  }
+  const prevChildren = [...el.childNodes];
+  if (el.textContent === op.text) return noop();
   el.textContent = op.text;
   return applied(() => {
-    el.textContent = prev;
+    el.replaceChildren(...prevChildren);
   });
 }
 
 function applyInjectCss(root, op) {
   const doc = docOf(root);
   const id = cssKey(op);
-  if (doc.getElementById(id)) return noop();
+  const existing = doc.getElementById(id);
+  if (existing && existing.tagName === "STYLE") {
+    const prev = existing.textContent ?? "";
+    if (prev === op.css) return noop();
+    existing.textContent = op.css;
+    return applied(() => {
+      existing.textContent = prev;
+    });
+  }
   const style = doc.createElement("style");
   style.id = id;
   style.setAttribute("data-lift-css", "1");
@@ -176,26 +188,74 @@ function applyBindEnterToClick(root, op, index) {
   });
 }
 
-const FORWARDED = new WeakSet();
+const FORWARDED_TO = new WeakMap();
+const replacementRoot = new WeakMap();
+
+function alreadyForwardedTo(event, target) {
+  const set = FORWARDED_TO.get(event);
+  return Boolean(set && set.has(target));
+}
+
+function markForwardedTo(event, target) {
+  let set = FORWARDED_TO.get(event);
+  if (!set) {
+    set = new Set();
+    FORWARDED_TO.set(event, set);
+  }
+  set.add(target);
+}
 
 function forwardUiEvents(from, to) {
-  const handler = (event) => {
-    if (FORWARDED.has(event)) return;
+  const nativeActivator = from.tagName === "BUTTON" || from.tagName === "A";
+  const onClick = (event) => {
+    if (alreadyForwardedTo(event, to)) return;
+    markForwardedTo(event, to);
     let copy;
     try {
       copy = new event.constructor(event.type, event);
     } catch {
       copy = new Event(event.type, { bubbles: event.bubbles, cancelable: event.cancelable });
     }
-    FORWARDED.add(copy);
+    markForwardedTo(copy, to);
+    const prior = FORWARDED_TO.get(event);
+    if (prior) FORWARDED_TO.set(copy, new Set(prior));
     to.dispatchEvent(copy);
   };
-  from.addEventListener("click", handler);
-  from.addEventListener("keydown", handler);
+  from.addEventListener("click", onClick);
+  let onKey = null;
+  if (!nativeActivator) {
+    onKey = (event) => {
+      if (alreadyForwardedTo(event, to)) return;
+      markForwardedTo(event, to);
+      let copy;
+      try {
+        copy = new event.constructor(event.type, event);
+      } catch {
+        copy = new Event(event.type, { bubbles: event.bubbles, cancelable: event.cancelable });
+      }
+      markForwardedTo(copy, to);
+      const prior = FORWARDED_TO.get(event);
+      if (prior) FORWARDED_TO.set(copy, new Set(prior));
+      to.dispatchEvent(copy);
+    };
+    from.addEventListener("keydown", onKey);
+  }
   return () => {
-    from.removeEventListener("click", handler);
-    from.removeEventListener("keydown", handler);
+    from.removeEventListener("click", onClick);
+    if (onKey) from.removeEventListener("keydown", onKey);
   };
+}
+
+function replaceTagKey(op) {
+  return hashKey(`${op.selector}|${op.tag}|${JSON.stringify(op.attributes ?? {})}`);
+}
+
+function findReplaced(root, key) {
+  const scope = "querySelectorAll" in root ? root : docOf(root);
+  for (const el of scope.querySelectorAll("[data-lift-replaced]")) {
+    if (el.getAttribute("data-lift-replaced") === key) return el;
+  }
+  return null;
 }
 
 function copyAttributesExceptHandlers(from, to) {
@@ -205,27 +265,44 @@ function copyAttributesExceptHandlers(from, to) {
   }
 }
 
+function overlayAttributes(el, attrs) {
+  const undoAttrs = [];
+  for (const [name, value] of Object.entries(attrs)) {
+    if (el.getAttribute(name) === value) continue;
+    const had = el.hasAttribute(name);
+    const prev = el.getAttribute(name);
+    el.setAttribute(name, value);
+    undoAttrs.push(() => {
+      if (!had) el.removeAttribute(name);
+      else el.setAttribute(name, prev ?? "");
+    });
+  }
+  if (undoAttrs.length === 0) return noop();
+  return applied(() => {
+    for (const undo of undoAttrs.reverse()) undo();
+  });
+}
+
 function applyReplaceTag(root, op, index) {
+  const key = replaceTagKey(op);
+  const existing = findReplaced(root, key);
+  if (existing) return overlayAttributes(existing, op.attributes || {});
   const found = queryOne(root, op.selector);
   if (found.error) return miss(index, op.selector, found.error);
   const el = found.el;
   if (!(el instanceof Element)) return miss(index, op.selector);
+  if (el.getAttribute("data-lift-replaced") === key) {
+    return overlayAttributes(el, op.attributes || {});
+  }
   if (el.tagName.toLowerCase() === op.tag.toLowerCase()) {
-    const attrs = op.attributes || {};
-    const undoAttrs = [];
-    for (const [name, value] of Object.entries(attrs)) {
-      if (el.getAttribute(name) === value) continue;
-      const had = el.hasAttribute(name);
-      const prev = el.getAttribute(name);
-      el.setAttribute(name, value);
-      undoAttrs.push(() => {
-        if (!had) el.removeAttribute(name);
-        else el.setAttribute(name, prev ?? "");
-      });
-    }
-    if (undoAttrs.length === 0) return noop();
+    const hadMarker = el.hasAttribute("data-lift-replaced");
+    const prevMarker = el.getAttribute("data-lift-replaced");
+    el.setAttribute("data-lift-replaced", key);
+    const overlay = overlayAttributes(el, op.attributes || {});
     return applied(() => {
-      for (const undo of undoAttrs.reverse()) undo();
+      if (overlay.status === "applied") overlay.undo();
+      if (!hadMarker) el.removeAttribute("data-lift-replaced");
+      else el.setAttribute("data-lift-replaced", prevMarker ?? "");
     });
   }
   const doc = docOf(root);
@@ -234,11 +311,15 @@ function applyReplaceTag(root, op, index) {
   for (const [name, value] of Object.entries(op.attributes || {})) {
     next.setAttribute(name, value);
   }
+  next.setAttribute("data-lift-replaced", key);
   while (el.firstChild) next.appendChild(el.firstChild);
+  const rootOriginal = replacementRoot.get(el) ?? el;
+  replacementRoot.set(next, rootOriginal);
   el.replaceWith(next);
-  const stopForward = forwardUiEvents(next, el);
+  const stopForward = forwardUiEvents(next, rootOriginal);
   return applied(() => {
     stopForward();
+    replacementRoot.delete(next);
     while (next.firstChild) el.appendChild(next.firstChild);
     next.replaceWith(el);
   });

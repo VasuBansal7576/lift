@@ -32,7 +32,6 @@ export const INSERT_TAGS = new Set([
 ]);
 
 const ALLOWED_ATTR_NAMES = new Set([
-  "id",
   "class",
   "for",
   "type",
@@ -41,7 +40,6 @@ const ALLOWED_ATTR_NAMES = new Set([
   "alt",
   "lang",
   "autocomplete",
-  "name",
   "title",
   "aria-expanded",
   "aria-controls",
@@ -66,6 +64,110 @@ const DROP_INSERT_ATTR = new Set([
   "style",
   "data",
   "codebase",
+  "id",
+  "name",
+]);
+
+const ALLOWED_CSS_PROPS = new Set([
+  "color",
+  "background-color",
+  "outline",
+  "outline-color",
+  "outline-style",
+  "outline-width",
+  "outline-offset",
+  "border",
+  "border-color",
+  "border-style",
+  "border-width",
+  "border-top",
+  "border-right",
+  "border-bottom",
+  "border-left",
+  "border-top-color",
+  "border-right-color",
+  "border-bottom-color",
+  "border-left-color",
+  "border-top-style",
+  "border-right-style",
+  "border-bottom-style",
+  "border-left-style",
+  "border-top-width",
+  "border-right-width",
+  "border-bottom-width",
+  "border-left-width",
+  "font-size",
+  "font-weight",
+  "line-height",
+  "letter-spacing",
+  "word-spacing",
+  "text-decoration",
+  "text-decoration-line",
+  "text-decoration-color",
+  "text-decoration-style",
+  "text-decoration-thickness",
+  "margin",
+  "margin-top",
+  "margin-right",
+  "margin-bottom",
+  "margin-left",
+  "padding",
+  "padding-top",
+  "padding-right",
+  "padding-bottom",
+  "padding-left",
+  "display",
+  "width",
+  "height",
+  "min-width",
+  "min-height",
+  "max-width",
+  "max-height",
+  "clip",
+  "clip-path",
+  "visibility",
+  "opacity",
+  "animation",
+  "transition",
+  "position",
+]);
+
+const ALLOWED_DISPLAY = new Set([
+  "block",
+  "inline",
+  "inline-block",
+  "flex",
+  "inline-flex",
+  "grid",
+  "inline-grid",
+  "contents",
+  "list-item",
+  "table",
+  "table-row",
+  "table-cell",
+  "inline-table",
+  "flow-root",
+]);
+
+const ALLOWED_CSS_FUNCS = new Set([
+  "rgb",
+  "rgba",
+  "hsl",
+  "hsla",
+  "hwb",
+  "lab",
+  "lch",
+  "oklab",
+  "oklch",
+  "clamp",
+  "min",
+  "max",
+  "inset",
+  "circle",
+  "ellipse",
+  "polygon",
+  "rect",
+  "calc",
 ]);
 
 function isRecord(value) {
@@ -110,16 +212,103 @@ export function isSafeAttributeValue(name, value) {
   return true;
 }
 
+export function stripCssComments(css) {
+  return css.replace(/\/\*[\s\S]*?\*\//g, " ");
+}
+
+export function decodeCssEscapes(css) {
+  return css.replace(/\\([0-9a-fA-F]{1,6})(?:\r\n|[ \t\r\n\f])?|\\(.)/g, (_, hex, ch) => {
+    if (hex) return String.fromCodePoint(parseInt(hex, 16));
+    return ch;
+  });
+}
+
+function cssIdentAt(selector, index) {
+  const before = index === 0 ? "" : selector[index - 1];
+  if (before && /[a-zA-Z0-9_-]/.test(before)) return false;
+  return true;
+}
+
+function selectorListForbidden(selectorList) {
+  for (const raw of selectorList.split(",")) {
+    const selector = raw.trim();
+    if (!selector) return true;
+    if (/(?:^|[\s>+~])\*(?:$|[\s>+~.#[:])/.test(` ${selector} `)) return true;
+    if (/:root(?:$|[^a-zA-Z0-9_-])/.test(`${selector} `)) return true;
+    const typeMatch = selector.matchAll(/(?:^|[\s>+~])([a-zA-Z][\w-]*)/g);
+    for (const match of typeMatch) {
+      const ident = match[1].toLowerCase();
+      if (ident === "html" || ident === "body") return true;
+    }
+    if (/^html\b|^body\b/i.test(selector) && cssIdentAt(selector, 0)) {
+      const ident = selector.match(/^[a-zA-Z][\w-]*/);
+      if (ident && /^(html|body)$/i.test(ident[0])) return true;
+    }
+  }
+  return false;
+}
+
+function cssFunctionsAllowed(value) {
+  const funcs = value.match(/-?[a-zA-Z_][\w-]*\s*\(/g) ?? [];
+  for (const raw of funcs) {
+    const name = raw.replace(/\s*\($/, "").toLowerCase();
+    if (!ALLOWED_CSS_FUNCS.has(name)) return false;
+  }
+  return true;
+}
+
+function isSafeCssValue(prop, value) {
+  if (!value) return false;
+  if (!cssFunctionsAllowed(value)) return false;
+  const v = value.trim();
+  if (prop === "display") return ALLOWED_DISPLAY.has(v.toLowerCase());
+  if (prop === "position") return /^(static|relative)$/i.test(v);
+  if (prop === "animation" || prop === "transition") return /^none$/i.test(v);
+  if (prop === "visibility") return /^(visible|hidden|collapse)$/i.test(v);
+  if (prop === "opacity") {
+    const n = Number(v);
+    return Number.isFinite(n) && n >= 0 && n <= 1;
+  }
+  return true;
+}
+
+function isSafeDeclarationBlock(body) {
+  for (const part of body.split(";")) {
+    const decl = part.trim();
+    if (!decl) continue;
+    const colon = decl.indexOf(":");
+    if (colon < 1) return false;
+    const prop = decl.slice(0, colon).trim().toLowerCase();
+    const value = decl
+      .slice(colon + 1)
+      .trim()
+      .replace(/\s*!important$/i, "")
+      .trim();
+    if (!ALLOWED_CSS_PROPS.has(prop)) return false;
+    if (!isSafeCssValue(prop, value)) return false;
+  }
+  return true;
+}
+
+/** Tokenizing CSS allowlist: comments stripped, escapes decoded, then properties/selectors checked. */
 export function isSafeCss(css) {
   if (typeof css !== "string" || css.length === 0) return false;
-  if (/<\/\s*style/i.test(css)) return false;
-  if (/@import/i.test(css)) return false;
-  if (/url\s*\(/i.test(css)) return false;
-  if (/expression\s*\(/i.test(css)) return false;
-  if (/behavior\s*:/i.test(css)) return false;
-  if (/-moz-binding/i.test(css)) return false;
-  if (/position\s*:\s*(fixed|sticky)/i.test(css)) return false;
-  return true;
+  const decoded = decodeCssEscapes(stripCssComments(css));
+  if (/<\/\s*style/i.test(decoded)) return false;
+  if (/@/.test(decoded)) return false;
+  if (/\b(?:url|src|image-set|image|element|paint|expression)\s*\(/i.test(decoded)) return false;
+  let ok = true;
+  const leftover = decoded.replace(/([^{}]+)\{([^{}]*)\}/g, (_, selector, body) => {
+    if (selectorListForbidden(selector) || !isSafeDeclarationBlock(body)) ok = false;
+    return " ";
+  });
+  if (!ok) return false;
+  return leftover.trim().length === 0;
+}
+
+export function selectorTargetsForbiddenTextHost(selector) {
+  if (typeof selector !== "string") return true;
+  return /(?:^|[\s>+~,])(?:style|script|template|noscript)(?:$|[\s.#[:>+~,])/i.test(selector.trim());
 }
 
 export function hashKey(value) {
@@ -236,6 +425,9 @@ function parseOp(raw, index, doc) {
     case "setText": {
       if (!isNonEmptyString(raw.selector)) return { error: `ops[${index}] selector required` };
       if (typeof raw.text !== "string") return { error: `ops[${index}] text must be a string` };
+      if (selectorTargetsForbiddenTextHost(raw.selector)) {
+        return { error: `ops[${index}] target is not allowlisted` };
+      }
       return { op, selector: raw.selector, text: raw.text };
     }
     case "injectCSS": {

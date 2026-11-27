@@ -11,15 +11,29 @@ test("lift_vid cookie persists across reload and assignment is sticky", async ({
   expect(again?.value).toBe(first?.value);
 });
 
-test("?lift_identity= overwrites the cookie by design and stays after a query-less load", async ({
+test("lift_identity without lift_bot=1 does not overwrite the visitor cookie", async ({
   page,
   context,
 }) => {
-  await page.goto("/checkout/?lift_variant=control&lift_identity=lift-sim-sticky-1");
-  await expect(page.locator("body")).toHaveAttribute("data-variant", "control");
-  const written = (await context.cookies()).find((cookie) => cookie.name === "lift_vid");
-  expect(written?.value).toBe("lift-sim-sticky-1");
   await page.goto("/checkout/?lift_variant=control");
-  const sticky = (await context.cookies()).find((cookie) => cookie.name === "lift_vid");
-  expect(sticky?.value).toBe("lift-sim-sticky-1");
+  const first = (await context.cookies()).find((cookie) => cookie.name === "lift_vid");
+  expect(first?.value).toBeTruthy();
+  await page.goto(`/checkout/?lift_variant=control&lift_identity=evil-id`);
+  const after = (await context.cookies()).find((cookie) => cookie.name === "lift_vid");
+  expect(after?.value).toBe(first?.value);
+});
+
+test("lift_bot=1 identity is used for the load but is not written into the cookie", async ({
+  page,
+  context,
+}) => {
+  await page.goto("/checkout/?lift_variant=control");
+  const first = (await context.cookies()).find((cookie) => cookie.name === "lift_vid");
+  expect(first?.value).toBeTruthy();
+  await page.goto(
+    "/checkout/?lift_variant=control&lift_bot=1&lift_identity=lift-sim-bot-override",
+  );
+  const after = (await context.cookies()).find((cookie) => cookie.name === "lift_vid");
+  expect(after?.value).toBe(first?.value);
+  expect(after?.value).not.toBe("lift-sim-bot-override");
 });

@@ -284,4 +284,124 @@ describe("applyPatchSpec ops", () => {
     expect(() => applyPatchSpec(undefined)).not.toThrow();
     expect(applyPatchSpec(undefined).ok).toBe(false);
   });
+
+  it("refuses setText into a style host and leaves CSS untouched", () => {
+    document.head.innerHTML = `<style id="s1">.x { color: #111; }</style>`;
+    const before = document.getElementById("s1")?.textContent;
+    const parsed = validatePatchSpec({
+      id: "style-text",
+      version: 0,
+      ops: [{ op: "setText", selector: "#s1", text: "\\75 rl(http://evil.example)" }],
+    });
+    expect(parsed.ok).toBe(true);
+    const result = applyPatchSpec({
+      id: "style-text",
+      version: 0,
+      ops: [{ op: "setText", selector: "#s1", text: "\\75 rl(http://evil.example)" }],
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toContain("target is not allowlisted");
+    expect(document.getElementById("s1")?.textContent).toBe(before);
+  });
+
+  it("restores child elements when setText is rolled back", () => {
+    document.body.innerHTML = `<p id="keep"><span id="kid">a</span>b</p>`;
+    const original = document.createElement.bind(document);
+    document.createElement = ((tag: string) => {
+      if (tag === "style") throw new Error("style boom");
+      return original(tag);
+    }) as typeof document.createElement;
+    try {
+      const result = applyPatchSpec({
+        id: "settext-undo",
+        version: 0,
+        ops: [
+          { op: "setText", selector: "#keep", text: "new" },
+          { op: "injectCSS", css: ".x { color: #111; }" },
+        ],
+      });
+      expect(result.ok).toBe(false);
+      expect(document.getElementById("kid")?.textContent).toBe("a");
+      expect(document.getElementById("keep")?.textContent).toBe("ab");
+    } finally {
+      document.createElement = original;
+    }
+  });
+
+  it("forwards chained replaceTag clicks to the original node once", () => {
+    document.body.innerHTML = `<div id="x" class="pay">Pay</div>`;
+    let clicks = 0;
+    document.getElementById("x")?.addEventListener("click", () => {
+      clicks += 1;
+    });
+    expect(
+      applyPatchSpec({
+        id: "chain-1",
+        version: 0,
+        ops: [{ op: "replaceTag", selector: "#x", tag: "button", attributes: { type: "button" } }],
+      }).ok,
+    ).toBe(true);
+    expect(
+      applyPatchSpec({
+        id: "chain-2",
+        version: 0,
+        ops: [{ op: "replaceTag", selector: "#x", tag: "a", attributes: { href: "#ok" } }],
+      }).ok,
+    ).toBe(true);
+    document.getElementById("x")?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(clicks).toBe(1);
+    expect(document.getElementById("x")?.tagName).toBe("A");
+  });
+
+  it("is idempotent for replaceTag on a class selector that drops the class", () => {
+    document.body.innerHTML = `<span class="chip">Go</span>`;
+    const spec = {
+      id: "class-replace",
+      version: 0,
+      ops: [{ op: "replaceTag", selector: ".chip", tag: "button", attributes: { class: "btn" } }],
+    };
+    expect(applyPatchSpec(spec).ok).toBe(true);
+    expect(applyPatchSpec(spec).ok).toBe(true);
+    expect(document.querySelectorAll("button.btn")).toHaveLength(1);
+    expect(document.querySelectorAll(".chip")).toHaveLength(0);
+  });
+
+  it("updates injectCSS text when the same id carries different css", () => {
+    const first = applyPatchSpec({
+      id: "css-1",
+      version: 0,
+      ops: [{ op: "injectCSS", id: "s1", css: ".a { color: #111; }" }],
+    });
+    expect(first.ok).toBe(true);
+    expect(document.getElementById("lift-patch-css-s1")?.textContent).toContain("#111");
+    const second = applyPatchSpec({
+      id: "css-2",
+      version: 0,
+      ops: [{ op: "injectCSS", id: "s1", css: ".a { color: #222; }" }],
+    });
+    expect(second.ok).toBe(true);
+    expect(document.getElementById("lift-patch-css-s1")?.textContent).toContain("#222");
+    expect(document.querySelectorAll("[data-lift-css]")).toHaveLength(1);
+  });
+
+  it("restores the previous injectCSS text when a later op rolls back", () => {
+    expect(
+      applyPatchSpec({
+        id: "css-1",
+        version: 0,
+        ops: [{ op: "injectCSS", id: "s1", css: ".a { color: #111; }" }],
+      }).ok,
+    ).toBe(true);
+    const rolled = applyPatchSpec({
+      id: "css-2",
+      version: 0,
+      ops: [
+        { op: "injectCSS", id: "s1", css: ".a { color: #222; }" },
+        { op: "setText", selector: "#missing", text: "nope" },
+      ],
+    });
+    expect(rolled.ok).toBe(false);
+    expect(document.getElementById("lift-patch-css-s1")?.textContent).toContain("#111");
+  });
 });

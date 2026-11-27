@@ -60,15 +60,20 @@ describe("isUsableIdentity", () => {
 });
 
 describe("readQueryIdentity", () => {
-  it("reads ?lift_identity= for bots", () => {
-    expect(readQueryIdentity("?lift_identity=lift-sim-run-1-0")).toBe("lift-sim-run-1-0");
-    expect(readQueryIdentity("lift_identity=plain")).toBe("plain");
+  it("honors ?lift_identity= only together with lift_bot=1", () => {
+    expect(readQueryIdentity("?lift_bot=1&lift_identity=lift-sim-run-1-0")).toBe("lift-sim-run-1-0");
+    expect(readQueryIdentity("lift_bot=1&lift_identity=plain")).toBe("plain");
+  });
+
+  it("ignores lift_identity without lift_bot=1", () => {
+    expect(readQueryIdentity("?lift_identity=lift-sim-run-1-0")).toBeNull();
+    expect(readQueryIdentity("lift_identity=plain")).toBeNull();
   });
 
   it("ignores missing or unusable query values", () => {
     expect(readQueryIdentity("")).toBeNull();
     expect(readQueryIdentity("?other=1")).toBeNull();
-    expect(readQueryIdentity("?lift_identity=bad;id")).toBeNull();
+    expect(readQueryIdentity("?lift_bot=1&lift_identity=bad;id")).toBeNull();
   });
 });
 
@@ -92,15 +97,25 @@ describe("cookie stickiness", () => {
     expect(readCookieIdentity("lift_vid=bad,comma")).toBeNull();
   });
 
-  it("prefers ?lift_identity= over cookie and storage, then persists it", () => {
+  it("ignores a crafted lift_identity without lift_bot=1 and keeps the cookie", () => {
     const env = makeEnv({
-      search: "?lift_identity=lift-sim-bot-9",
+      search: "?lift_identity=evil-id",
+      cookie: "lift_vid=old-cookie",
+      storage: "old-storage",
+    });
+    expect(resolveVisitorId(env)).toBe("old-cookie");
+    expect(env.storageValue).toBe("old-cookie");
+  });
+
+  it("honors lift_bot=1 identity for this load without persisting it", () => {
+    const env = makeEnv({
+      search: "?lift_bot=1&lift_identity=lift-sim-bot-9",
       cookie: "lift_vid=old-cookie",
       storage: "old-storage",
     });
     expect(resolveVisitorId(env)).toBe("lift-sim-bot-9");
-    expect(env.storageValue).toBe("lift-sim-bot-9");
-    expect(env.cookieWrites[0]).toContain("lift_vid=lift-sim-bot-9");
+    expect(env.storageValue).toBe("old-storage");
+    expect(env.cookieWrites.join("")).not.toContain("lift-sim-bot-9");
   });
 
   it("reuses the cookie when the query is absent", () => {

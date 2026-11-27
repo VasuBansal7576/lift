@@ -5,7 +5,7 @@
     {
       "op": "injectCSS",
       "id": "checkout-treatment-css",
-      "css": ".hover-nav:focus-within .hover-menu { display: block; } .contrast-fail { color: #111 !important; background: #fff !important; }"
+      "css": ".hover-nav:focus-within .hover-menu { display: block; } .contrast-fail { color: #111 !important; background-color: #fff !important; }"
     },
     {
       "op": "replaceTag",

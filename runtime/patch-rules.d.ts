@@ -9,7 +9,10 @@ export function isSafeMountId(value: unknown): value is string;
 export function isAllowedAttributeName(name: string): boolean;
 export function isSafeHref(value: string): boolean;
 export function isSafeAttributeValue(name: string, value: string): boolean;
+export function stripCssComments(css: string): string;
+export function decodeCssEscapes(css: string): string;
 export function isSafeCss(css: string): boolean;
+export function selectorTargetsForbiddenTextHost(selector: string): boolean;
 export function hashKey(value: string): string;
 export function cssKey(op: { css: string; id?: string }): string;
 export function mountKeyFor(op: {

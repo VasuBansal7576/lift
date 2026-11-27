@@ -1,4 +1,4 @@
-/** First-party visitor id. Query override wins so Playwright bots stay deterministic. */
+/** First-party visitor id. Bot override requires lift_bot=1 and is not persisted. */
 
 export const IDENTITY_COOKIE = "lift_vid";
 export const IDENTITY_STORAGE_KEY = "lift_vid";
@@ -26,9 +26,9 @@ export function isUsableIdentity(value) {
 }
 
 export function readQueryIdentity(search) {
-  const raw = new URLSearchParams(search.startsWith("?") ? search.slice(1) : search).get(
-    "lift_identity",
-  );
+  const params = new URLSearchParams(search.startsWith("?") ? search.slice(1) : search);
+  if (params.get("lift_bot") !== "1") return null;
+  const raw = params.get("lift_identity");
   if (raw === null) return null;
   return isUsableIdentity(raw) ? raw : null;
 }
@@ -69,12 +69,12 @@ function persist(id, env) {
   }
 }
 
-/** Resolve a sticky visitor id. `?lift_identity=` wins, then cookie, then localStorage, then a new UUID. */
+/** Resolve a sticky visitor id. Cookie, then localStorage, then a new UUID. */
 export function resolveVisitorId(env) {
   const fromQuery = readQueryIdentity(env.search);
   if (fromQuery) {
-    // ?lift_identity= overwrites the cookie by design so bots and e2e stay deterministic.
-    persist(fromQuery, env);
+    // Honor ?lift_identity= only when lift_bot=1 is also present (traffic bots / e2e).
+    // Do not persist that override: a crafted link must not overwrite a real visitor cookie.
     return fromQuery;
   }
   const fromCookie = readCookieIdentity(env.getCookie());

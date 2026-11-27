@@ -263,4 +263,167 @@ export const PATCH_SPEC_CORPUS: CorpusCase[] = [
     ok: false,
     error: "ops[0] html required",
   },
+  {
+    name: "css escaped url",
+    spec: op([{ op: "injectCSS", css: ".x { color: \\75 rl(http://evil.example); }" }]),
+    ok: false,
+    error: "ops[0] css is not allowlisted",
+    schema: "skip",
+  },
+  {
+    name: "css escaped import",
+    spec: op([{ op: "injectCSS", css: "@\\69mport 'http://evil.example';" }]),
+    ok: false,
+    error: "ops[0] css is not allowlisted",
+    schema: "skip",
+  },
+  {
+    name: "css image-set",
+    spec: op([{ op: "injectCSS", css: ".x { color: image-set('//evil.example' 1x); }" }]),
+    ok: false,
+    error: "ops[0] css is not allowlisted",
+  },
+  {
+    name: "css escaped position fixed",
+    spec: op([{ op: "injectCSS", css: ".x { position: \\66 ixed; }" }]),
+    ok: false,
+    error: "ops[0] css is not allowlisted",
+    schema: "skip",
+  },
+  {
+    name: "css comment position fixed",
+    spec: op([{ op: "injectCSS", css: ".x { position:/**/fixed; }" }]),
+    ok: false,
+    error: "ops[0] css is not allowlisted",
+    schema: "skip",
+  },
+  {
+    name: "css comment import",
+    spec: op([{ op: "injectCSS", css: "@/**/import 'x';" }]),
+    ok: false,
+    error: "ops[0] css is not allowlisted",
+    schema: "skip",
+  },
+  {
+    name: "css src()",
+    spec: op([{ op: "injectCSS", css: ".x { color: src(http://evil.example); }" }]),
+    ok: false,
+    error: "ops[0] css is not allowlisted",
+  },
+  {
+    name: "css element()",
+    spec: op([{ op: "injectCSS", css: ".x { color: element(#x); }" }]),
+    ok: false,
+    error: "ops[0] css is not allowlisted",
+  },
+  {
+    name: "css paint()",
+    spec: op([{ op: "injectCSS", css: ".x { color: paint(foo); }" }]),
+    ok: false,
+    error: "ops[0] css is not allowlisted",
+  },
+  {
+    name: "css body display none",
+    spec: op([{ op: "injectCSS", css: "body{display:none}" }]),
+    ok: false,
+    error: "ops[0] css is not allowlisted",
+  },
+  {
+    name: "css html selector",
+    spec: op([{ op: "injectCSS", css: "html .x { color: #111; }" }]),
+    ok: false,
+    error: "ops[0] css is not allowlisted",
+  },
+  {
+    name: "css star selector",
+    spec: op([{ op: "injectCSS", css: "* { color: #111; }" }]),
+    ok: false,
+    error: "ops[0] css is not allowlisted",
+  },
+  {
+    name: "css :root selector",
+    spec: op([{ op: "injectCSS", css: ":root { color: #111; }" }]),
+    ok: false,
+    error: "ops[0] css is not allowlisted",
+  },
+  {
+    name: "css display none",
+    spec: op([{ op: "injectCSS", css: ".x { display: none; }" }]),
+    ok: false,
+    error: "ops[0] css is not allowlisted",
+  },
+  {
+    name: "css absolute overlay",
+    spec: op([{ op: "injectCSS", css: ".x { position: absolute; }" }]),
+    ok: false,
+    error: "ops[0] css is not allowlisted",
+  },
+  {
+    name: "insertHTML id attr",
+    spec: op([
+      {
+        op: "insertHTML",
+        selector: "body",
+        position: "append",
+        html: '<a id="clobber" href="#main">x</a>',
+      },
+    ]),
+    ok: false,
+    error: "ops[0] html is not allowlisted",
+    schema: "skip",
+  },
+  {
+    name: "insertHTML name attr",
+    spec: op([
+      {
+        op: "insertHTML",
+        selector: "body",
+        position: "append",
+        html: '<a name="clobber" href="#main">x</a>',
+      },
+    ]),
+    ok: false,
+    error: "ops[0] html is not allowlisted",
+    schema: "skip",
+  },
+  {
+    name: "setAttribute id",
+    spec: op([{ op: "setAttribute", selector: "#x", name: "id", value: "clobber" }]),
+    ok: false,
+    error: "ops[0] disallowed attribute",
+  },
+  {
+    name: "setAttribute name",
+    spec: op([{ op: "setAttribute", selector: "#x", name: "name", value: "clobber" }]),
+    ok: false,
+    error: "ops[0] disallowed attribute",
+  },
+  {
+    name: "setText style tag",
+    spec: op([{ op: "setText", selector: "style", text: "body{display:none}" }]),
+    ok: false,
+    error: "ops[0] target is not allowlisted",
+  },
 ];
+
+export const CSS_ATTACKS = PATCH_SPEC_CORPUS.filter(
+  (fixture) =>
+    !fixture.ok &&
+    typeof fixture.spec === "object" &&
+    fixture.spec !== null &&
+    Array.isArray((fixture.spec as { ops?: unknown }).ops) &&
+    (fixture.spec as { ops: { op?: string }[] }).ops.some((item) => item.op === "injectCSS"),
+).map((fixture) => ({
+  name: fixture.name,
+  css: ((fixture.spec as { ops: { css: string }[] }).ops.find((item) => item.css) as { css: string })
+    .css,
+}));
+
+export const INSERT_HTML_ATTACKS = PATCH_SPEC_CORPUS.filter(
+  (fixture) =>
+    !fixture.ok &&
+    typeof fixture.spec === "object" &&
+    fixture.spec !== null &&
+    Array.isArray((fixture.spec as { ops?: unknown }).ops) &&
+    (fixture.spec as { ops: { op?: string }[] }).ops.some((item) => item.op === "insertHTML"),
+);

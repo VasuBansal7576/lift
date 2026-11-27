@@ -225,7 +225,7 @@ export async function runTraffic(overrides?: Partial<LiftConfig>) {
         persona === "low-vision" ? { deviceScaleFactor: 2 } : {},
       );
       const page = await context.newPage();
-      const url = `${cfg.siteUrl}/?lift_variant=${variant}&lift_identity=${encodeURIComponent(identity)}`;
+      const url = `${cfg.siteUrl}/?lift_variant=${variant}&lift_bot=1&lift_identity=${encodeURIComponent(identity)}`;
       await page.goto(url, { waitUntil: "domcontentloaded" });
       await page.waitForFunction(
         ({ expected }) =>

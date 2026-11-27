@@ -10,19 +10,7 @@ async function pause(page: Page, ms = 1600) {
   await page.waitForTimeout(ms);
 }
 
-async function showBanner(page: Page, text: string) {
-  await page.evaluate((message) => {
-    let el = document.getElementById("lift-evidence-banner");
-    if (!el) {
-      el = document.createElement("div");
-      el.id = "lift-evidence-banner";
-      el.setAttribute("data-evidence", "1");
-      el.style.cssText =
-        "position:fixed;top:0;left:0;right:0;z-index:2147483647;padding:14px 18px;font:600 18px/1.4 system-ui,sans-serif;background:#111;color:#fff;box-shadow:0 8px 24px rgba(0,0,0,.45)";
-      document.body.prepend(el);
-    }
-    el.textContent = message;
-  }, text);
+async function showBanner(page: Page, _text: string) {
   await pause(page);
 }
 
@@ -79,20 +67,11 @@ async function fillCheckout(page: Page) {
 
 async function paintIdentityReadout(page: Page) {
   return page.evaluate(() => {
-    let el = document.getElementById("lift-cookie-readout");
-    if (!el) {
-      el = document.createElement("pre");
-      el.id = "lift-cookie-readout";
-      el.setAttribute("data-evidence", "1");
-      el.style.cssText =
-        "position:fixed;bottom:0;left:0;right:0;z-index:2147483647;margin:0;padding:12px 18px;font:16px/1.4 ui-monospace,monospace;background:#063;color:#fff;white-space:pre-wrap";
-      document.body.append(el);
-    }
     const cookie = document.cookie;
     const variant = document.body.getAttribute("data-variant") ?? "";
     const status = document.getElementById("flag-status")?.textContent ?? "";
-    el.textContent = `document.cookie=${cookie}\ndata-variant=${variant}\n#flag-status=${status}`;
-    return { cookie, variant, status, text: el.textContent };
+    const text = `document.cookie=${cookie}\ndata-variant=${variant}\n#flag-status=${status}`;
+    return { cookie, variant, status, text };
   });
 }
 
@@ -118,23 +97,7 @@ async function injectAxe(page: Page) {
   await page.addScriptTag({ path: axePath });
 }
 
-async function paintLiveAxePanel(page: Page, title: string) {
-  await page.evaluate(async (cap) => {
-    const axe = (window as unknown as { axe: { run: (ctx: Document) => Promise<{ violations: { id: string; nodes: unknown[] }[] }> } }).axe;
-    const results = await axe.run(document);
-    let panel = document.getElementById("lift-axe-panel");
-    if (!panel) {
-      panel = document.createElement("div");
-      panel.id = "lift-axe-panel";
-      panel.setAttribute("data-evidence", "1");
-      panel.style.cssText =
-        "position:fixed;top:56px;left:16px;right:16px;z-index:2147483646;max-height:40vh;overflow:auto;padding:12px 16px;font:16px/1.4 ui-monospace,monospace;background:#111;color:#fff;border:3px solid #38bdf8";
-      document.body.append(panel);
-    }
-    const lines = results.violations.map((v) => `${v.id}: ${v.nodes.length}`).join("\n");
-    panel.textContent = `${cap}\n${results.violations.length} rules\n${lines || "(none)"}`;
-    return results.violations.map((v) => v.id);
-  }, title);
+async function paintLiveAxePanel(page: Page, _title: string) {
   await pause(page, 1200);
 }
 
@@ -1817,33 +1780,13 @@ test("05-sticky-identity", async ({ page }) => {
     const variant = document.body.getAttribute("data-variant");
     return variant === "control" || variant === "treatment";
   });
-  if (!flagsmithReady) {
-    await page.goto("/checkout/?lift_variant=control");
-    await expect(page.locator("body")).toHaveAttribute("data-variant", "control");
-  }
+  expect(flagsmithReady).toBe(true);
   const first = await paintIdentityReadout(page);
   expect(first.cookie).toMatch(/lift_vid=/);
-  await showBanner(page, `IDENTITY first load (from page) ${first.text.replaceAll("\n", " | ")}`);
   await page.reload();
-  if (!flagsmithReady) {
-    await expect(page.locator("body")).toHaveAttribute("data-variant", "control");
-  } else {
-    await expect(page.locator("body")).toHaveAttribute("data-variant", first.variant);
-  }
+  await expect(page.locator("body")).toHaveAttribute("data-variant", first.variant);
   const again = await paintIdentityReadout(page);
   expect(again.cookie).toBe(first.cookie);
   expect(again.variant).toBe(first.variant);
-  await showBanner(page, `IDENTITY after reload (from page) ${again.text.replaceAll("\n", " | ")} — same document.cookie`);
-  if (flagsmithReady) {
-    await showBanner(
-      page,
-      "Variant stability is only meaningful with a live Flagsmith environment key. This run had one.",
-    );
-  } else {
-    await showBanner(
-      page,
-      "Variant stability is only meaningful with a live Flagsmith environment key. This run used the mock control fallback.",
-    );
-  }
   await pause(page, 2000);
 });

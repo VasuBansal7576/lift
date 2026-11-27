@@ -2370,7 +2370,7 @@ function nodeGeometryPersists(el, snapshots, err) {
     return Boolean(before && !before.clipped && isOverflowClipped(el));
   }
   if (err === "lost hit target") {
-    if (!inViewport(el)) return true;
+    if (!inViewport(el)) return false;
     return !hitIsSelfOrDescendant(el, hitTargetAtCenter(el));
   }
   return true;
@@ -2632,9 +2632,9 @@ function installMutationGuard(root, spec, snapshots, undos) {
     if (stopped) return;
     queued = queued.concat(records || []);
     if (reason) queuedReason = reason;
-    if (backstopsPaused) return;
     const now = Date.now();
     if (!deferStartedAt) deferStartedAt = now;
+    if (backstopsPaused) return;
     if (!burstStart) burstStart = now;
     if (timer) clearTimeout(timer);
     const elapsed = now - burstStart;

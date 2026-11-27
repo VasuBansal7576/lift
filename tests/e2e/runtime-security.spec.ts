@@ -2424,6 +2424,52 @@ test("R13 smooth scrollTo is not snapped back by attribution", async ({ page }) 
   expect(y).toBeGreaterThan(1500);
 });
 
+test("R13 mouse wheel is not snapped back by attribution", async ({ page }) => {
+  await page.goto("/checkout/?lift_variant=control&lift_bot=1");
+  await page.evaluate(async () => {
+    const href = new URL("/runtime/runtime.js", location.origin).href;
+    const runtime = (await import(href)) as {
+      applyPatchSpec: (input: unknown) => { ok: boolean };
+    };
+    const spacer = document.createElement("div");
+    spacer.style.height = "6000px";
+    const host = document.createElement("a");
+    host.id = "r13-wheel";
+    host.href = "#x";
+    host.textContent = "Go";
+    host.style.cssText = "color:#111;background:#fff";
+    document.body.append(spacer, host);
+    runtime.applyPatchSpec({
+      id: "r13-wheel",
+      version: 0,
+      ops: [
+        {
+          op: "injectCSS",
+          rules: [
+            {
+              selector: { id: "r13-wheel" },
+              declarations: [{ property: "min-width", value: "44px" }],
+            },
+          ],
+        },
+      ],
+    });
+  });
+  await page.evaluate(() => window.scrollTo(0, 3000));
+  await page.mouse.move(400, 300);
+  await page.mouse.wheel(0, 800);
+  await page.waitForTimeout(80);
+  const before = await page.evaluate(() => window.scrollY);
+  await page.evaluate(() => {
+    const host = document.getElementById("r13-wheel");
+    if (host instanceof HTMLElement) host.style.color = "#eee";
+  });
+  await page.waitForTimeout(200);
+  const after = await page.evaluate(() => window.scrollY);
+  expect(Math.abs(after - before)).toBeLessThan(80);
+  expect(after).toBeGreaterThan(1500);
+});
+
 test("R14 real Enter then a timer host.click then Enter is three clicks", async ({ page }) => {
   await page.goto("/checkout/?lift_variant=control");
   await page.evaluate(async () => {
@@ -2485,6 +2531,7 @@ test("R14 smooth scroll to top is not cancelled by colour-fight attribution", as
       wrap.append(a);
     }
     document.body.append(wrap);
+    document.documentElement.style.scrollBehavior = "smooth";
     runtime.applyPatchSpec({
       id: "r14-smooth",
       version: 0,
@@ -2500,7 +2547,7 @@ test("R14 smooth scroll to top is not cancelled by colour-fight attribution", as
         },
       ],
     });
-    window.scrollTo(0, document.documentElement.scrollHeight);
+    window.scrollTo({ top: document.documentElement.scrollHeight, behavior: "instant" });
     return runtime.getRuntimeStats().undos;
   });
   await page.waitForTimeout(80);
@@ -2522,10 +2569,18 @@ test("R14 smooth scroll to top is not cancelled by colour-fight attribution", as
     const runtime = (await import(href)) as {
       getRuntimeStats: () => { undos: number };
     };
-    return { y: window.scrollY, undos: runtime.getRuntimeStats().undos };
+    const link = document.querySelector(".r14-link");
+    return {
+      y: window.scrollY,
+      undos: runtime.getRuntimeStats().undos,
+      minHeight: link ? getComputedStyle(link).minHeight : "",
+      hasSheet: Boolean(document.querySelector("[data-lift-css]")),
+    };
   });
   expect(after.y).toBe(0);
   expect(after.undos - startUndos).toBe(0);
+  expect(after.minHeight).toBe("44px");
+  expect(after.hasSheet).toBe(true);
 });
 
 test("GET // returns 400 and the site still serves", async ({ request }) => {

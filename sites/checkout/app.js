@@ -46,6 +46,42 @@ function allFixes(on) {
   };
 }
 
+function isNativeActivateTarget(el) {
+  if (!el || el.nodeType !== 1) return false;
+  if (/^(BUTTON|A|INPUT|SELECT|TEXTAREA)$/i.test(el.tagName)) return true;
+  const role = (el.getAttribute("role") || "").toLowerCase();
+  return role === "button" || role === "link";
+}
+
+function onActivateKey(handler) {
+  return (event) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    if (isNativeActivateTarget(event.currentTarget)) return;
+    event.preventDefault();
+    handler();
+  };
+}
+
+/**
+ * Control cart / place-order / keyboard handlers. Always bound so checkout
+ * works when Flagsmith is missing (fail-open). Treatment still upgrades the
+ * nodes in place via the edge spec / applyFixes.
+ */
+function bindBaseHandlers() {
+  const cart = document.getElementById("cart-icon");
+  if (cart && !cart.dataset.bound) {
+    cart.dataset.bound = "1";
+    cart.addEventListener("click", openCheckout);
+    cart.addEventListener("keydown", onActivateKey(openCheckout));
+  }
+  const pay = document.getElementById("place-order");
+  if (pay && !pay.dataset.bound) {
+    pay.dataset.bound = "1";
+    pay.addEventListener("click", submitOrder);
+    pay.addEventListener("keydown", onActivateKey(submitOrder));
+  }
+}
+
 function applyFixes(fixes, sourceLabel) {
   document.body.classList.toggle("fix-hover", Boolean(fixes.hover_menu));
   document.body.classList.toggle("fix-labels", Boolean(fixes.missing_labels));
@@ -237,11 +273,18 @@ async function initFromFlagsmith(config, identity) {
 }
 
 async function main() {
+  bindBaseHandlers();
   const mock = params().get("lift_variant");
   const config = await loadConfig();
   const identity = resolveVisitorId(
     browserIdentityEnv({ allowBotOverride: config?.allowBotOverride === true }),
   );
+  if (config?.edgeOrigin) {
+    document.body.dataset.variant = "control";
+    document.body.dataset.liftOriginMode = "edge";
+    setStatus("Edge origin (no in-page experiment)");
+    return;
+  }
   const allowMock = Boolean(config?.allowMock);
   if (allowMock && (mock === "control" || mock === "treatment")) {
     applyFixes(allFixes(mock === "treatment"), "URL override (no Flagsmith)");
@@ -249,12 +292,11 @@ async function main() {
   }
   try {
     await initFromFlagsmith(config ?? {}, identity);
-  } catch (err) {
-    setStatus(
-      `Flagsmith is required for variant assignment (${err instanceof Error ? err.message : err}).`,
-      true,
-    );
+  } catch {
+    document.body.dataset.variant = document.body.dataset.variant || "control";
+    setStatus("Using control handlers (Flagsmith unavailable).");
   }
 }
 
+bindBaseHandlers();
 void main();

@@ -9,6 +9,7 @@ import { resolveRuntimePath } from "../shared/runtime-static.ts";
 const rootDir = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const dashboard = process.argv.includes("--dashboard");
 const allowMock = process.argv.includes("--allow-mock");
+const edgeOrigin = process.argv.includes("--edge-origin");
 const portArg = process.argv.indexOf("--port");
 const port = Number(portArg >= 0 ? process.argv[portArg + 1] : dashboard ? 4173 : 4174);
 const siteRoot = resolve(rootDir, dashboard ? "dashboard" : "sites");
@@ -30,6 +31,7 @@ const MIME: Record<string, string> = {
 function overlaySiteConfig(parsed: Record<string, unknown>): string {
   const extra: Record<string, unknown> = {};
   if (allowMock) extra.allowMock = true;
+  if (edgeOrigin) extra.edgeOrigin = true;
   if (process.env.LIFT_ALLOW_BOT_OVERRIDE === "true") extra.allowBotOverride = true;
   return JSON.stringify({ ...parsed, ...extra });
 }
@@ -87,7 +89,7 @@ const server = createServer(async (req, res) => {
       try {
         parsed = JSON.parse(await readFile(filePath, "utf8")) as Record<string, unknown>;
       } catch {
-        if (allowMock) parsed = placeholderFor(relative);
+        if (allowMock || edgeOrigin) parsed = placeholderFor(relative);
       }
       if (parsed) {
         const body = overlaySiteConfig(parsed);

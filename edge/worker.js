@@ -5,7 +5,7 @@ export default {
     try {
       return await handleRequest(request, env);
     } catch {
-      return new Response("lift edge fail-open", { status: 502 });
+      return new Response("not found", { status: 404 });
     }
   },
 };

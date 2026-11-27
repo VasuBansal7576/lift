@@ -26,7 +26,7 @@ id = "00000000000000000000000000000001"
 
 # runtime/*.js served from the repo's runtime/ via a symlink. run_worker_first
 # keeps fail-open and Cache-Control in the Worker; the Worker then fetches
-# these files from ASSETS for /runtime/* only.
+# these files from ASSETS for /__lift/runtime/* only.
 [assets]
 directory = "./runtime-assets"
 binding = "ASSETS"

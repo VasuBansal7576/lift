@@ -3,7 +3,8 @@
  * treatment value is the checkout spec id. Control has no spec.
  *
  * Usage (after docker compose in a scratch dir):
- *   FLAGSMITH_ADMIN_API_URL=http://127.0.0.1:8000/api/v1/ npx tsx edge/bootstrap-flag.ts
+ *   FLAGSMITH_BOOTSTRAP_PASSWORD=… FLAGSMITH_ADMIN_API_URL=http://127.0.0.1:8000/api/v1/ \
+ *     npx tsx edge/bootstrap-flag.ts
  *
  * Never logs secret tokens. Writes edge/.dev.vars with the public client key.
  */
@@ -18,7 +19,7 @@ const API = (process.env.FLAGSMITH_ADMIN_API_URL || "http://127.0.0.1:8000/api/v
   "/",
 );
 const EMAIL = process.env.FLAGSMITH_BOOTSTRAP_EMAIL || "admin@lift.local";
-const PASSWORD = process.env.FLAGSMITH_BOOTSTRAP_PASSWORD || "LiftDev123!";
+const PASSWORD = process.env.FLAGSMITH_BOOTSTRAP_PASSWORD;
 const FLAG_NAME = process.env.FLAGSMITH_FLAG_NAME || "lift_edge_spec";
 const SPEC_ID = process.env.LIFT_SPEC_ID || "checkout-treatment-v0";
 const TREATMENT_PCT = Math.min(100, Math.max(0, Number(process.env.LIFT_TREATMENT_PCT || "50")));
@@ -79,6 +80,10 @@ async function registerOrLogin(): Promise<string> {
 }
 
 async function main() {
+  if (!PASSWORD) {
+    process.stderr.write("FLAGSMITH_BOOTSTRAP_PASSWORD is required (no default).\n");
+    process.exit(1);
+  }
   const token = await registerOrLogin();
   const orgs = (await req("GET", "organisations/", undefined, token)) as {
     results?: { id: number; name: string }[];

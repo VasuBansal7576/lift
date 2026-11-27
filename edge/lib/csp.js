@@ -14,10 +14,10 @@ function addTokens(values, extras) {
   if (values.length === 0) values.push("'none'");
 }
 
-function parsePolicy(policy) {
+export function parsePolicy(policy) {
   const order = [];
   const map = new Map();
-  for (const raw of policy.split(";")) {
+  for (const raw of String(policy || "").split(";")) {
     const part = raw.trim();
     if (!part) continue;
     const sp = part.search(/\s/);
@@ -39,10 +39,41 @@ function serializePolicy(order, map) {
     .join("; ");
 }
 
+export function nonceFromTokens(tokens) {
+  if (!Array.isArray(tokens)) return null;
+  for (const token of tokens) {
+    const match = /^'nonce-([^']+)'$/.exec(token);
+    if (match) return match[1];
+  }
+  return null;
+}
+
+/**
+ * Whether Lift can inject scripts under this policy.
+ * `'strict-dynamic'` requires a script nonce on parser-inserted tags.
+ */
+export function inspectCsp(header) {
+  if (!header || typeof header !== "string") {
+    return { ok: true, scriptNonce: null, styleNonce: null, strictDynamic: false };
+  }
+  const chunk = header.split(",")[0];
+  const { map } = parsePolicy(chunk);
+  const script = map.get("script-src") || map.get("script-src-elem") || map.get("default-src") || [];
+  const style = map.get("style-src") || map.get("style-src-elem") || map.get("default-src") || [];
+  const strictDynamic = script.includes("'strict-dynamic'");
+  const scriptNonce = nonceFromTokens(script);
+  const styleNonce = nonceFromTokens(style);
+  if (strictDynamic && !scriptNonce) {
+    return { ok: false, reason: "csp-strict-dynamic-no-nonce", scriptNonce: null, styleNonce, strictDynamic };
+  }
+  return { ok: true, scriptNonce, styleNonce, strictDynamic };
+}
+
 /**
  * Minimally widen CSP so injected scripts and the Flagsmith / spec fetches work.
- * Only `'self'`, the SDK host, and the Flagsmith API origin are added.
- * Existing nonces and hashes are kept. `'unsafe-inline'` is never added.
+ * Never adds `'unsafe-inline'` or `'unsafe-eval'`. Keeps nonces, hashes, and
+ * `'strict-dynamic'`. Host allowlists are still added for browsers that ignore
+ * `'strict-dynamic'`; nonce'd parser-inserted scripts satisfy strict-dynamic.
  */
 export function adjustCsp(header, opts) {
   if (!header || typeof header !== "string") return header;
@@ -50,6 +81,8 @@ export function adjustCsp(header, opts) {
   const flagsmithOrigin = opts?.flagsmithOrigin || null;
   const scriptExtras = ["'self'", sdkOrigin].filter(Boolean);
   const connectExtras = ["'self'", flagsmithOrigin].filter(Boolean);
+  const nonce = opts?.scriptNonce ? `'nonce-${opts.scriptNonce}'` : null;
+  if (nonce) scriptExtras.push(nonce);
 
   return header
     .split(",")
@@ -88,4 +121,42 @@ export function adjustCsp(header, opts) {
 
 export function sdkOriginFromUrl(sdkUrl) {
   return originOf(sdkUrl) || originOf(FLAGSMITH_SDK_URL_DEFAULT);
+}
+
+function attrValue(attrs, name) {
+  const re = new RegExp(`(?:^|\\s)${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s>]+))`, "i");
+  const match = re.exec(attrs);
+  if (!match) return null;
+  return match[1] ?? match[2] ?? match[3] ?? null;
+}
+
+/** First `<meta http-equiv=Content-Security-Policy>` in HTML, or null. */
+export function findMetaCsp(html) {
+  if (typeof html !== "string" || html.length === 0) return null;
+  const re = /<meta\b([^>]*?)>/gi;
+  let match;
+  while ((match = re.exec(html))) {
+    const attrs = match[1];
+    const equiv = attrValue(attrs, "http-equiv");
+    if (equiv && equiv.toLowerCase() === "content-security-policy") {
+      return {
+        tag: match[0],
+        content: attrValue(attrs, "content") || "",
+        index: match.index,
+        length: match[0].length,
+      };
+    }
+  }
+  return null;
+}
+
+export function rewriteMetaCspHtml(html, rewriteContent) {
+  const found = findMetaCsp(html);
+  if (!found) return html;
+  const next = rewriteContent(found.content);
+  if (typeof next !== "string") return html;
+  const tag = found.tag.includes("content=")
+    ? found.tag.replace(/content\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/i, `content="${next.replace(/"/g, "&quot;")}"`)
+    : found.tag.replace(/>$/, ` content="${next.replace(/"/g, "&quot;")}">`);
+  return html.slice(0, found.index) + tag + html.slice(found.index + found.length);
 }

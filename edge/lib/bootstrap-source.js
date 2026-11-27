@@ -1,13 +1,16 @@
-import { BOOTSTRAP_PATH, CONFIG_SCRIPT_ID, FLAGSMITH_SDK_URL_DEFAULT } from "./constants.js";
+import { BOOTSTRAP_PATH, CONFIG_SCRIPT_ID, FLAGSMITH_SDK_URL_DEFAULT, RUNTIME_PATH_PREFIX } from "./constants.js";
+
+const RUNTIME_URL = `${RUNTIME_PATH_PREFIX}runtime.js`;
 
 /**
  * Browser module served at /__lift/bootstrap.js. Fail-open on every path.
- * Uses the inlined spec id when the Worker evaluated Flagsmith; otherwise
- * the Flagsmith JS SDK with the sticky lift_vid identity.
+ * Server-side eval is authoritative when `evaluated` is true; the JS SDK is
+ * only used when the Worker did not evaluate.
  */
 export const BOOTSTRAP_JS = `/* lift edge bootstrap — fail open */
 const CONFIG_ID = ${JSON.stringify(CONFIG_SCRIPT_ID)};
 const SDK_FALLBACK = ${JSON.stringify(FLAGSMITH_SDK_URL_DEFAULT)};
+const RUNTIME_URL = ${JSON.stringify(RUNTIME_URL)};
 
 function readConfig() {
   const el = document.getElementById(CONFIG_ID);
@@ -36,6 +39,42 @@ function usableSpecId(value) {
   return text;
 }
 
+function adoptLiftCss(styleNonce) {
+  const take = (el) => {
+    if (!el || el.tagName !== "STYLE") return;
+    if (el.getAttribute("data-lift-css") !== "1") return;
+    if (el.dataset.liftCssAdopted === "1") return;
+    el.dataset.liftCssAdopted = "1";
+    try {
+      if (typeof CSSStyleSheet === "function") {
+        const sheet = new CSSStyleSheet();
+        sheet.replaceSync(el.textContent || "");
+        document.adoptedStyleSheets = [...document.adoptedStyleSheets, sheet];
+        el.remove();
+        return;
+      }
+    } catch {
+      /* fall through to nonce */
+    }
+    if (styleNonce) el.setAttribute("nonce", styleNonce);
+  };
+  try {
+    document.querySelectorAll("style[data-lift-css]").forEach(take);
+    const obs = new MutationObserver((recs) => {
+      for (const rec of recs) {
+        for (const node of rec.addedNodes) {
+          if (!node || node.nodeType !== 1) continue;
+          if (node.tagName === "STYLE") take(node);
+          if (node.querySelectorAll) node.querySelectorAll("style[data-lift-css]").forEach(take);
+        }
+      }
+    });
+    obs.observe(document.documentElement, { childList: true, subtree: true });
+  } catch {
+    /* fail-open */
+  }
+}
+
 async function specIdFromSdk(cfg, identity) {
   const sdkUrl = cfg.sdkUrl || SDK_FALLBACK;
   const { default: flagsmith } = await import(sdkUrl);
@@ -61,10 +100,13 @@ async function main() {
     const cfg = readConfig();
     if (!cfg) return;
     document.documentElement.dataset.liftEdge = "injected";
+    if (cfg.styleNonce) document.documentElement.dataset.liftStyleNonce = cfg.styleNonce;
+    adoptLiftCss(cfg.styleNonce || null);
     const identity = cfg.identity || cookieVid();
     let spec = cfg.spec || null;
     let specId = usableSpecId(cfg.specId);
-    if (!spec && !specId && cfg.environmentKey && cfg.apiUrl && cfg.flagName) {
+    const serverEvaluated = cfg.evaluated === true;
+    if (!serverEvaluated && !spec && !specId && cfg.environmentKey && cfg.apiUrl && cfg.flagName) {
       specId = await specIdFromSdk(cfg, identity);
     }
     if (!spec && specId) {
@@ -75,7 +117,7 @@ async function main() {
     }
     if (!spec) return;
     if (spec.id) document.documentElement.dataset.liftSpec = spec.id;
-    const runtime = await import("/runtime/runtime.js");
+    const runtime = await import(RUNTIME_URL);
     const result = runtime.applyPatchSpec(spec);
     document.documentElement.dataset.liftApplied = result && result.ok ? "1" : "0";
   } catch {
@@ -96,4 +138,4 @@ export function bootstrapResponse() {
   });
 }
 
-export { BOOTSTRAP_PATH };
+export { BOOTSTRAP_PATH, RUNTIME_URL };

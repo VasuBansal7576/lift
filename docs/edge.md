@@ -1,21 +1,23 @@
 # Lift Layer 1 — edge Worker
 
-A Cloudflare Worker reverse proxy that sits **in front of any origin** and ships WCAG fixes with **zero code changes** to the site. Visitors are bucketed by a sticky `lift_vid` identity into a Flagsmith multivariate flag. The flag’s value is a patch-spec id stored in Workers KV. `runtime/runtime.js` applies the spec in the browser.
+A Cloudflare Worker reverse proxy that sits **in front of any origin** and ships WCAG fixes with **zero HTML changes** to the site. Visitors are bucketed by a sticky `lift_vid` identity into a Flagsmith multivariate flag. The flag’s value is a patch-spec id stored in Workers KV. `runtime/runtime.js` applies the spec in the browser.
 
 Free-tier demo: `wrangler dev` / Miniflare locally. No Cloudflare account required.
+
+The checkout fixture’s `app.js` **fail-opens**: control cart, place-order, and keyboard handlers always bind, even if Flagsmith is missing. The edge demo origin (`npm run site -- --edge-origin`) skips the in-page `checkout_a11y` experiment so only the Worker experiment runs.
 
 ## Layout
 
 | Path | Role |
 | --- | --- |
 | `edge/worker.js` | Worker entry (`fetch` → `handleRequest`) |
-| `edge/lib/` | Cookie, CSP, Flagsmith eval, HTML injection, bootstrap source |
+| `edge/lib/` | Cookie, CSP, Flagsmith eval, HTML injection, bootstrap source, origin URL |
 | `edge/wrangler.toml` | ORIGIN, Flagsmith URL/flag name, KV `SPECS`, runtime assets |
+| `tests/e2e/edge-wrangler.toml` | Isolated e2e config; **does not touch** `edge/.dev.vars` |
 | `edge/put-spec.ts` | `npm run edge:put-spec` — validate then write KV |
-| `edge/bootstrap-flag.ts` | Create the self-hosted multivariate flag (Track 3) |
-| `edge/runtime-assets` | Symlink to `runtime/` so the Worker serves `runtime.js` |
-
-Do not edit `runtime/`, `sites/`, or the origin HTML. The origin in this repo is the checkout fixture served at `http://127.0.0.1:4174`.
+| `edge/bootstrap-flag.ts` | Create the self-hosted multivariate flag (Track 3). Requires `FLAGSMITH_BOOTSTRAP_PASSWORD`. |
+| `edge/runtime-assets` | Symlink to `runtime/` so the Worker serves `/__lift/runtime/*` |
+| `edge/record/` | Live headed-Chrome recordings against real Flagsmith 2.295.2 |
 
 ## Config (env)
 
@@ -33,41 +35,43 @@ Set in `edge/wrangler.toml` `[vars]` or overridden with `wrangler dev --var`. Th
 
 Self-hosted Flagsmith is the Track 3 integration point. The Worker only talks to `FLAGSMITH_API_URL`; cloud and OSS share the same identities API.
 
+`FLAGSMITH_BOOTSTRAP_PASSWORD` is **required** for `edge/bootstrap-flag.ts`. There is no default password.
+
 ## What the Worker does
 
-1. Proxies the request to `ORIGIN` (rewrites `Location` back onto the Worker host).
-2. Non-HTML is passed through unchanged.
-3. For HTML:
-   - Sets `lift_vid` if missing (`Path=/; Max-Age=1y; SameSite=Lax`; `Secure` on https; **not** HttpOnly so the SDK can read it).
-   - Evaluates the visitor’s flag **server-side** (`GET {FLAGSMITH_API_URL}identities/?identifier=…`) with a **300 ms** timeout.
-   - Control (empty / `"control"` value): injects the SDK, `runtime/runtime.js`, and bootstrap. No spec is applied.
-   - Treatment: the multivariate **value is the spec id**. The Worker loads that JSON from KV and inlines it.
-4. HTMLRewriter appends to `<head>`:
-   - `application/json` config (`#lift-edge-config`) — not executable JS
-   - Flagsmith JS SDK (module)
-   - `/runtime/runtime.js`
-   - `/__lift/bootstrap.js`
-5. Personalised HTML is never cacheable in a shared cache: `Cache-Control: private, no-store, no-cache, must-revalidate`. `Server-Timing: liftcpu;dur=…` reports Worker CPU-ish wall time excluding origin/Flagsmith waits.
+1. Resolves the origin URL **from parts** of a copy of `ORIGIN`. If `dest.origin !== origin`, or the path is `//host` / `///host` / `/\host` / `/%2F%2Fhost`, it returns **400** (open-proxy / SSRF). Malformed percent-encoding returns **404**. Exceptions never return 502.
+2. Proxies GET/HEAD/POST to `ORIGIN` (rewrites `Location` back onto the Worker host).
+3. **GET HTML only:** sets `lift_vid` if missing, evaluates Flagsmith **in parallel** with the origin fetch, injects Lift. HEAD and non-GET skip eval, injection, and the cookie.
+4. Server-side eval is **authoritative** (`evaluated: true` in the JSON config). The browser does not re-eval unless the server skipped eval.
+5. Control (empty / `"control"` value): injects the SDK, `/__lift/runtime/runtime.js`, and bootstrap. No spec is applied.
+6. Treatment: the multivariate **value is the spec id**. The Worker loads that JSON from KV and inlines it.
+7. Personalised HTML is never cacheable in a shared cache: `Cache-Control: private, no-store, no-cache, must-revalidate`. `ETag` and `Last-Modified` are stripped after injection.
+8. `Server-Timing: liftwall;dur=…` is **wall time** for the Worker handler (not CPU). Real CPU is in `wrangler tail`.
 
 The Worker does **not** apply the spec itself (keeps CPU under the 10 ms free-tier budget). Application is `runtime.js` in the browser, which already fail-opens.
 
+HTML is **buffered** (1 MiB cap) before injection so a Miniflare / HTMLRewriter streaming error can fail-open from the origin bytes. The Worker does not `clone()` the origin stream. Over-size HTML is passed through unmodified.
+
 ## Fail open
 
-Any of these returns the **origin HTML unmodified** (no injected scripts). The sticky cookie may still be set.
+Any of these returns the **origin HTML unmodified** (no injected scripts). The sticky cookie may still be set on GET HTML.
 
 | Reason | `Server-Timing` desc |
 | --- | --- |
 | Non-HTML | `non-html` |
+| HEAD / non-GET | `head` / `method` |
 | Flagsmith HTTP error / network | `flagsmith-down` |
 | Flagsmith eval > 300 ms | `flagsmith-timeout` |
 | Spec id in the flag but missing from KV | `kv-miss` |
 | KV value is not JSON / rewriter throws | `parse-error` |
+| `strict-dynamic` CSP without a nonce | `csp-strict-dynamic-no-nonce` |
+| HTML larger than 1 MiB | `html-too-large` |
 
 The bootstrap also fail-opens: SDK errors, `applyPatchSpec` failures, and 404 spec fetches leave the DOM as the origin sent it.
 
 ## Sticky identity
 
-Cookie name `lift_vid` matches `sites/shared/identity.js`. Same visitor → same Flagsmith identity → same variant across reloads. The Worker mints a UUID when the cookie is absent.
+Cookie name `lift_vid` matches `sites/shared/identity.js`. Same visitor → same Flagsmith identity → same variant across reloads. The Worker mints a UUID when the cookie is absent. GET HTML only.
 
 ## Specs in KV
 
@@ -82,19 +86,21 @@ The demo treatment value is `checkout-treatment-v0`. Control has no spec.
 
 ## CSP
 
-The Worker never adds `'unsafe-inline'` or `'unsafe-eval'`. If the origin sends `Content-Security-Policy`, the Worker **minimally** adds:
+The Worker never adds `'unsafe-inline'` or `'unsafe-eval'`.
 
-- `script-src` / existing `script-src-elem`: `'self'` and `https://cdn.jsdelivr.net`
-- `connect-src`: `'self'` and the Flagsmith API origin
+- Script **nonce** on the origin policy is copied onto every injected `<script>` (including the JSON config).
+- `'strict-dynamic'` is kept. Parser-inserted scripts need that nonce; without a nonce the Worker **fail-opens** (no injection).
+- CSS from `injectCSS` is moved onto `document.adoptedStyleSheets` in bootstrap, or stamped with the style nonce if Constructable Stylesheets are unavailable.
+- A `<meta http-equiv="Content-Security-Policy">` is rewritten the same way as the header. If it cannot be honoured, injection is skipped.
 
-Bootstrap and runtime are same-origin (`/__lift/bootstrap.js`, `/runtime/runtime.js`). Config is `type="application/json"`, not a script. Nonces and hashes on the origin policy are kept. If `script-src` was `'none'`, it is replaced by those two sources only.
+Host allowlists (`'self'`, jsDelivr, Flagsmith origin) are still added for browsers that ignore `'strict-dynamic'`.
 
 ## Local demo
 
-Terminal 1 — origin (unchanged checkout fixture):
+Terminal 1 — origin in **edge mode** (no in-page experiment):
 
 ```bash
-npm run site -- --port 4174
+npm run site -- --port 4174 --edge-origin
 ```
 
 Terminal 2 — self-hosted Flagsmith **outside this repo**:
@@ -106,20 +112,20 @@ curl -o docker-compose.yml https://raw.githubusercontent.com/Flagsmith/flagsmith
 docker compose up -d
 ```
 
-If `migrate-db` hangs on a fresh VM: `sudo sysctl -w net.bridge.bridge-nf-call-iptables=0` (do **not** put that in repo scripts).
+If `migrate-db` hangs on a **throwaway Cloud Agent / CI VM**, `sudo sysctl -w net.bridge.bridge-nf-call-iptables=0` can unblock Docker bridge traffic. **VM only, never on a host you care about.** Do not put that sysctl in repo scripts.
 
 ```bash
-npx tsx edge/bootstrap-flag.ts          # writes edge/.dev.vars
+FLAGSMITH_BOOTSTRAP_PASSWORD=… npx tsx edge/bootstrap-flag.ts
 npm run edge:put-spec -- runtime/checkout-treatment.json
 npx wrangler dev --config edge/wrangler.toml --persist-to edge/.wrangler/state
 ```
 
-Open `http://127.0.0.1:8787/checkout/`. Control identities see the original barriers; treatment identities get labels, a named Place order control, contrast, and a keyboard-operable Shop trigger.
+Open `http://127.0.0.1:8787/checkout/`. Control identities see the original barriers; treatment identities get labels, a named Place order control, contrast, and a keyboard-operable Shop trigger. Mouse checkout completes for both; keyboard checkout completes for treatment.
 
 ## Tests
 
-- Unit: `tests/unit/edge-*.test.ts` — injection, cookie, spec validation, non-HTML, each fail-open mode.
-- E2E: `tests/e2e/edge-*.spec.ts` — Playwright through `wrangler dev` with a mock Flagsmith so CI does not need Docker. Real Flagsmith is used for recordings.
+- Unit: `tests/unit/edge-*.test.ts` — injection, cookie, spec validation, SSRF variants, CSP, HEAD/non-GET, fail-open, wall time, HTMLRewriter streaming fail-open.
+- E2E: `tests/e2e/edge-*.spec.ts` — Playwright through `wrangler dev` with a mock Flagsmith so CI does not need Docker. Uses `tests/e2e/edge-wrangler.toml` + `tests/e2e/.dev.vars` and **does not overwrite** `edge/.dev.vars`. Real Flagsmith is used for recordings (`edge/record/`).
 
 ```bash
 npm run typecheck

@@ -3,30 +3,28 @@ import {
   DEFAULT_EVAL_TIMEOUT_MS,
   DEFAULT_FLAG_NAME,
   FLAGSMITH_SDK_URL_DEFAULT,
+  MAX_HTML_BYTES,
   PERSONAL_CACHE_CONTROL,
   RUNTIME_PATH_PREFIX,
   SPEC_PATH_PREFIX,
+  WALL_TIMING_NAME,
   isSpecKey,
   originOf,
   trailingSlash,
 } from "./constants.js";
 import { visitorFromRequest } from "./cookie.js";
-import { adjustCsp, sdkOriginFromUrl } from "./csp.js";
+import { adjustCsp, findMetaCsp, inspectCsp, sdkOriginFromUrl } from "./csp.js";
 import { evaluateSpecId } from "./flagsmith.js";
-import { buildHeadSnippet, injectHtmlResponse } from "./inject.js";
+import { buildHeadSnippet, injectHtmlResponse, stripValidators } from "./inject.js";
+import { buildOriginRequest } from "./origin-url.js";
 
-function cpuMeter() {
-  let acc = 0;
-  let mark = performance.now();
+export { buildOriginRequest, resolveOriginDestination } from "./origin-url.js";
+
+function wallMeter() {
+  const start = performance.now();
   return {
-    pause() {
-      acc += performance.now() - mark;
-    },
-    resume() {
-      mark = performance.now();
-    },
     ms() {
-      return acc + (performance.now() - mark);
+      return performance.now() - start;
     },
   };
 }
@@ -51,38 +49,8 @@ export function isHtmlResponse(response) {
   return /text\/html/i.test(type);
 }
 
-function hopByHop() {
-  return new Set([
-    "connection",
-    "keep-alive",
-    "proxy-authenticate",
-    "proxy-authorization",
-    "te",
-    "trailers",
-    "transfer-encoding",
-    "upgrade",
-    "host",
-  ]);
-}
-
-export function buildOriginRequest(request, originBase) {
-  const incoming = new URL(request.url);
-  const dest = new URL(incoming.pathname + incoming.search, originBase.endsWith("/") ? originBase : `${originBase}/`);
-  const headers = new Headers();
-  const skip = hopByHop();
-  for (const [key, value] of request.headers) {
-    if (skip.has(key.toLowerCase())) continue;
-    headers.append(key, value);
-  }
-  const init = {
-    method: request.method,
-    headers,
-    redirect: "manual",
-  };
-  if (request.method !== "GET" && request.method !== "HEAD") {
-    init.body = request.body;
-  }
-  return new Request(dest, init);
+function shouldPersonalize(request) {
+  return request.method === "GET";
 }
 
 export function rewriteLocation(headers, originBase, workerOrigin) {
@@ -102,8 +70,8 @@ export function rewriteLocation(headers, originBase, workerOrigin) {
   }
 }
 
-function withServerTiming(headers, cpu, failOpen) {
-  const parts = [`liftcpu;dur=${cpu.toFixed(2)}`];
+function withServerTiming(headers, wallMs, failOpen) {
+  const parts = [`${WALL_TIMING_NAME};dur=${Number(wallMs).toFixed(2)}`];
   if (failOpen) parts.push(`liftfail;desc="${failOpen}"`);
   headers.set("Server-Timing", parts.join(", "));
 }
@@ -122,9 +90,11 @@ function applyHtmlHeaders(headers, opts) {
       adjustCsp(headers.get(key), {
         sdkOrigin: sdkOriginFromUrl(opts.sdkUrl),
         flagsmithOrigin: originOf(opts.apiUrl),
+        scriptNonce: opts.scriptNonce || null,
       }),
     );
   }
+  if (opts.injected) stripValidators(headers);
   if (opts.setCookie) headers.append("Set-Cookie", opts.setCookie);
   withServerTiming(headers, opts.cpuMs, opts.failOpen);
 }
@@ -141,7 +111,11 @@ function finalizePassthrough(response, opts) {
   });
 }
 
-async function serveRuntime(request, url, cfg, cpu) {
+function statusFor(error) {
+  return error === 400 ? 400 : 404;
+}
+
+async function serveRuntime(request, url, cfg, wall) {
   const relative = url.pathname.slice(RUNTIME_PATH_PREFIX.length - 1) || "/";
   if (relative.includes("..") || relative.includes("\\")) {
     return new Response("not found", { status: 404 });
@@ -159,7 +133,7 @@ async function serveRuntime(request, url, cfg, cpu) {
           headers.set("Content-Type", "application/json; charset=utf-8");
         }
         headers.set("Cache-Control", "public, max-age=60");
-        withServerTiming(headers, cpu.ms(), null);
+        withServerTiming(headers, wall.ms(), null);
         return new Response(res.body, { status: res.status, headers });
       }
     } catch {
@@ -168,23 +142,32 @@ async function serveRuntime(request, url, cfg, cpu) {
   }
   if (!cfg.origin) return new Response("not found", { status: 404 });
   try {
-    cpu.pause();
-    const proxied = await fetch(buildOriginRequest(request, cfg.origin));
-    cpu.resume();
+    const built = buildOriginRequest(request, cfg.origin);
+    if ("error" in built) {
+      return new Response("not found", { status: statusFor(built.error) });
+    }
+    const proxied = await fetch(built.request);
     const headers = new Headers(proxied.headers);
     if (url.pathname.endsWith(".js")) headers.set("Content-Type", "text/javascript; charset=utf-8");
-    withServerTiming(headers, cpu.ms(), null);
+    withServerTiming(headers, wall.ms(), null);
     return new Response(proxied.body, { status: proxied.status, headers });
   } catch {
     return new Response("not found", { status: 404 });
   }
 }
 
-async function serveSpec(url, cfg, cpu) {
-  const id = decodeURIComponent(url.pathname.slice(SPEC_PATH_PREFIX.length));
+async function serveSpec(url, cfg, wall) {
+  let id;
+  try {
+    id = decodeURIComponent(url.pathname.slice(SPEC_PATH_PREFIX.length));
+  } catch {
+    const headers = new Headers({ "Cache-Control": "no-store" });
+    withServerTiming(headers, wall.ms(), "malformed-path");
+    return new Response("not found", { status: 404, headers });
+  }
   if (!isSpecKey(id) || !cfg.specs || typeof cfg.specs.get !== "function") {
     const headers = new Headers({ "Cache-Control": "no-store" });
-    withServerTiming(headers, cpu.ms(), "kv-miss");
+    withServerTiming(headers, wall.ms(), "kv-miss");
     return new Response("not found", { status: 404, headers });
   }
   let raw;
@@ -195,7 +178,7 @@ async function serveSpec(url, cfg, cpu) {
   }
   if (raw == null || raw === "") {
     const headers = new Headers({ "Cache-Control": "no-store" });
-    withServerTiming(headers, cpu.ms(), "kv-miss");
+    withServerTiming(headers, wall.ms(), "kv-miss");
     return new Response("not found", { status: 404, headers });
   }
   const body = typeof raw === "string" ? raw : JSON.stringify(raw);
@@ -203,7 +186,7 @@ async function serveSpec(url, cfg, cpu) {
     "Content-Type": "application/json; charset=utf-8",
     "Cache-Control": "private, no-store",
   });
-  withServerTiming(headers, cpu.ms(), null);
+  withServerTiming(headers, wall.ms(), null);
   return new Response(body, { status: 200, headers });
 }
 
@@ -226,12 +209,33 @@ async function loadSpecJson(specs, specId) {
   }
 }
 
+async function bufferHtml(originRes) {
+  const len = Number(originRes.headers.get("content-length") || originRes.headers.get("Content-Length"));
+  if (Number.isFinite(len) && len > MAX_HTML_BYTES) {
+    return { tooLarge: true };
+  }
+  const bytes = await originRes.arrayBuffer();
+  if (bytes.byteLength > MAX_HTML_BYTES) {
+    return { tooLarge: true, bytes };
+  }
+  return { bytes, html: new TextDecoder("utf-8").decode(bytes) };
+}
+
+function replayResponse(originRes, bytes) {
+  return new Response(bytes, {
+    status: originRes.status,
+    statusText: originRes.statusText,
+    headers: originRes.headers,
+  });
+}
+
 /**
  * Cloudflare Worker reverse proxy. Fail-open: origin HTML is returned
  * unmodified on Flagsmith errors, KV miss, timeout, parse errors, or non-HTML.
+ * Exceptions and malformed percent-encoding return 404 (never 502).
  */
 export async function handleRequest(request, env) {
-  const cpu = cpuMeter();
+  const wall = wallMeter();
   const cfg = readEnv(env);
   let url;
   try {
@@ -243,69 +247,122 @@ export async function handleRequest(request, env) {
   if (url.pathname === "/__lift/bootstrap.js") {
     const res = bootstrapResponse();
     const headers = new Headers(res.headers);
-    withServerTiming(headers, cpu.ms(), null);
+    withServerTiming(headers, wall.ms(), null);
     return new Response(res.body, { status: 200, headers });
   }
   if (url.pathname.startsWith(SPEC_PATH_PREFIX)) {
-    return serveSpec(url, cfg, cpu);
+    return serveSpec(url, cfg, wall);
   }
   if (url.pathname.startsWith(RUNTIME_PATH_PREFIX)) {
-    return serveRuntime(request, url, cfg, cpu);
+    return serveRuntime(request, url, cfg, wall);
   }
 
   if (!cfg.origin) {
     return new Response("ORIGIN is not configured", { status: 500 });
   }
 
+  const built = buildOriginRequest(request, cfg.origin);
+  if ("error" in built) {
+    return new Response(built.reason === "open-proxy" ? "bad request" : "not found", {
+      status: statusFor(built.error),
+    });
+  }
+
+  const personalize = shouldPersonalize(request);
+  const visitor = personalize ? visitorFromRequest(request, url) : { id: null, setCookie: null, minted: false };
+
+  const evalPromise =
+    personalize && visitor.id
+      ? evaluateSpecId({
+          apiUrl: cfg.apiUrl,
+          environmentKey: cfg.environmentKey,
+          identifier: visitor.id,
+          flagName: cfg.flagName,
+          timeoutMs: cfg.timeoutMs,
+        })
+      : Promise.resolve({ skipped: true, ok: false, reason: "skipped" });
+
   let originRes;
+  let evaluated;
   try {
-    cpu.pause();
-    originRes = await fetch(buildOriginRequest(request, cfg.origin));
-    cpu.resume();
+    const originPromise = fetch(built.request).then(
+      (res) => ({ ok: true, res }),
+      (err) => ({ ok: false, err }),
+    );
+    const [evalResult, originSettled] = await Promise.all([evalPromise, originPromise]);
+    evaluated = evalResult;
+    if (!originSettled.ok) {
+      return new Response("not found", { status: 404 });
+    }
+    originRes = originSettled.res;
   } catch {
-    return new Response("origin unreachable", { status: 502 });
+    return new Response("not found", { status: 404 });
   }
 
   const html = isHtmlResponse(originRes);
-  const visitor = html ? visitorFromRequest(request, url) : { id: null, setCookie: null };
   const baseOpts = {
     originBase: cfg.origin,
     workerOrigin: url.origin,
     sdkUrl: cfg.sdkUrl,
     apiUrl: cfg.apiUrl,
-    setCookie: visitor.setCookie,
-    cpuMs: cpu.ms(),
+    setCookie: personalize ? visitor.setCookie : null,
+    cpuMs: wall.ms(),
     html,
   };
 
-  if (!html) {
-    return finalizePassthrough(originRes, { ...baseOpts, failOpen: "non-html", cpuMs: cpu.ms() });
+  if (!html || !personalize) {
+    const reason = !html ? "non-html" : request.method === "HEAD" ? "head" : "method";
+    return finalizePassthrough(originRes, { ...baseOpts, failOpen: reason, cpuMs: wall.ms() });
   }
 
-  const passthrough = originRes.clone();
-  const failOpen = (reason) =>
-    finalizePassthrough(passthrough, { ...baseOpts, failOpen: reason, cpuMs: cpu.ms() });
+  const failOpenFrom = (bytes, originLike, reason) =>
+    finalizePassthrough(replayResponse(originLike, bytes), {
+      ...baseOpts,
+      failOpen: reason,
+      cpuMs: wall.ms(),
+    });
+
+  let buffered;
+  try {
+    buffered = await bufferHtml(originRes);
+  } catch {
+    return new Response("not found", { status: 404 });
+  }
+  if (buffered.tooLarge) {
+    if (buffered.bytes) {
+      return failOpenFrom(buffered.bytes, originRes, "html-too-large");
+    }
+    return finalizePassthrough(originRes, { ...baseOpts, failOpen: "html-too-large", cpuMs: wall.ms() });
+  }
+
+  const headerCsp =
+    originRes.headers.get("Content-Security-Policy") || originRes.headers.get("content-security-policy") || "";
+  const metaCsp = findMetaCsp(buffered.html);
+  const cspSource = headerCsp || (metaCsp ? metaCsp.content : "");
+  const cspInfo = inspectCsp(cspSource);
+  if (!cspInfo.ok) {
+    return failOpenFrom(buffered.bytes, originRes, cspInfo.reason || "csp");
+  }
 
   try {
-    cpu.pause();
-    const evaluated = await evaluateSpecId({
-      apiUrl: cfg.apiUrl,
-      environmentKey: cfg.environmentKey,
-      identifier: visitor.id,
-      flagName: cfg.flagName,
-      timeoutMs: cfg.timeoutMs,
-    });
-    cpu.resume();
-
-    if (!evaluated.ok) return failOpen(evaluated.reason);
+    if (!evaluated || evaluated.skipped) {
+      return failOpenFrom(buffered.bytes, originRes, "flagsmith-down");
+    }
+    if (!evaluated.ok) return failOpenFrom(buffered.bytes, originRes, evaluated.reason);
 
     let spec = null;
     if (evaluated.specId) {
       const loaded = await loadSpecJson(cfg.specs, evaluated.specId);
-      if (loaded.miss) return failOpen("kv-miss");
-      if (loaded.parseError) return failOpen("parse-error");
+      if (loaded.miss) return failOpenFrom(buffered.bytes, originRes, "kv-miss");
+      if (loaded.parseError) return failOpenFrom(buffered.bytes, originRes, "parse-error");
       spec = loaded.spec;
     }
+
+    const cspOpts = {
+      sdkOrigin: sdkOriginFromUrl(cfg.sdkUrl),
+      flagsmithOrigin: originOf(cfg.apiUrl),
+      scriptNonce: cspInfo.scriptNonce,
+    };
 
     const snippet = buildHeadSnippet({
       identity: visitor.id,
@@ -315,30 +372,28 @@ export async function handleRequest(request, env) {
       specId: evaluated.specId,
       spec,
       sdkUrl: cfg.sdkUrl,
+      evaluated: true,
+      scriptNonce: cspInfo.scriptNonce,
+      styleNonce: cspInfo.styleNonce,
     });
 
     const extra = {
       "Cache-Control": PERSONAL_CACHE_CONTROL,
     };
     if (visitor.setCookie) extra["Set-Cookie"] = visitor.setCookie;
-    extra["Server-Timing"] = `liftcpu;dur=${cpu.ms().toFixed(2)}`;
-
-    const csp = originRes.headers.get("Content-Security-Policy") || originRes.headers.get("content-security-policy");
-    if (csp) {
-      extra["Content-Security-Policy"] = adjustCsp(csp, {
-        sdkOrigin: sdkOriginFromUrl(cfg.sdkUrl),
-        flagsmithOrigin: originOf(cfg.apiUrl),
-      });
+    extra["Server-Timing"] = `${WALL_TIMING_NAME};dur=${wall.ms().toFixed(2)}`;
+    if (headerCsp) {
+      extra["Content-Security-Policy"] = adjustCsp(headerCsp, cspOpts);
     }
 
-    const injected = await injectHtmlResponse(originRes, snippet, extra);
-    if (!injected) return failOpen("parse-error");
+    const toInject = replayResponse(originRes, buffered.bytes);
+    const injected = await injectHtmlResponse(toInject, snippet, extra, { cspOpts });
+    if (!injected) return failOpenFrom(buffered.bytes, originRes, "parse-error");
     rewriteLocation(injected.headers, cfg.origin, url.origin);
-    injected.headers.delete("content-length");
-    injected.headers.delete("Content-Length");
-    withServerTiming(injected.headers, cpu.ms(), null);
+    stripValidators(injected.headers);
+    withServerTiming(injected.headers, wall.ms(), null);
     return injected;
   } catch {
-    return failOpen("parse-error");
+    return failOpenFrom(buffered.bytes, originRes, "parse-error");
   }
 }

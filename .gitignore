@@ -19,3 +19,4 @@ blob-report/
 .wrangler/
 edge/.dev.vars
 edge/.wrangler/
+tests/e2e/.dev.vars

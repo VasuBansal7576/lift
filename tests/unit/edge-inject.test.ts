@@ -23,7 +23,7 @@ describe("buildHeadSnippet", () => {
     });
     expect(html).toContain(`id="${CONFIG_SCRIPT_ID}"`);
     expect(html).toContain(`src="${SDK}"`);
-    expect(html).toContain('src="/runtime/runtime.js"');
+      expect(html).toContain('src="/__lift/runtime/runtime.js"');
     expect(html).toContain('src="/__lift/bootstrap.js"');
     expect(html).toContain("checkout-treatment-v0");
     expect(html).toContain('type="application/json"');
@@ -82,12 +82,13 @@ describe("Worker HTML injection", () => {
       expect(res.headers.get("content-type")).toMatch(/text\/html/);
       expect(body).toContain(CONFIG_SCRIPT_ID);
       expect(body).toContain(SDK);
-      expect(body).toContain("/runtime/runtime.js");
+      expect(body).toContain("/__lift/runtime/runtime.js");
+      expect(body).toContain('"evaluated":true');
       expect(body).toContain("/__lift/bootstrap.js");
       expect(body).toContain("Northline");
       expect(res.headers.get("cache-control")).toMatch(/private/);
       expect(res.headers.get("cache-control")).toMatch(/no-store/);
-      expect(res.headers.get("server-timing")).toMatch(/liftcpu/);
+      expect(res.headers.get("server-timing")).toMatch(/liftwall/);
     } finally {
       restore();
     }
@@ -132,7 +133,7 @@ describe("Worker HTML injection", () => {
       expect(bootText).toContain("fail open");
       expect(bootText).toContain("applyPatchSpec");
 
-      const runtime = await handleRequest(new Request("http://edge.test/runtime/runtime.js"), env);
+      const runtime = await handleRequest(new Request("http://edge.test/__lift/runtime/runtime.js"), env);
       expect(runtime.status).toBe(200);
       expect(await runtime.text()).toContain("export const x = 1");
     } finally {

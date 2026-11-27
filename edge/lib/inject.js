@@ -4,6 +4,7 @@ import {
   FLAGSMITH_SDK_URL_DEFAULT,
   RUNTIME_PATH_PREFIX,
 } from "./constants.js";
+import { adjustCsp, rewriteMetaCspHtml } from "./csp.js";
 
 export function escapeJsonForScript(value) {
   return JSON.stringify(value).replace(/</g, "\\u003c").replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029");
@@ -11,6 +12,11 @@ export function escapeJsonForScript(value) {
 
 function escapeAttr(value) {
   return String(value).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+}
+
+function nonceAttr(nonce) {
+  if (!nonce) return "";
+  return ` nonce="${escapeAttr(nonce)}"`;
 }
 
 /** Snippet HTMLRewriter appends to <head>. No inline JS (CSP-safe). */
@@ -24,12 +30,15 @@ export function buildHeadSnippet(cfg) {
     specId: cfg.specId || null,
     spec: cfg.spec || null,
     sdkUrl,
+    evaluated: cfg.evaluated !== false,
+    styleNonce: cfg.styleNonce || null,
   };
+  const n = nonceAttr(cfg.scriptNonce);
   return [
-    `<script type="application/json" id="${CONFIG_SCRIPT_ID}">${escapeJsonForScript(payload)}</script>`,
-    `<script type="module" src="${escapeAttr(sdkUrl)}"></script>`,
-    `<script type="module" src="${RUNTIME_PATH_PREFIX}runtime.js"></script>`,
-    `<script type="module" src="${BOOTSTRAP_PATH}"></script>`,
+    `<script type="application/json" id="${CONFIG_SCRIPT_ID}"${n}>${escapeJsonForScript(payload)}</script>`,
+    `<script type="module" src="${escapeAttr(sdkUrl)}"${n}></script>`,
+    `<script type="module" src="${RUNTIME_PATH_PREFIX}runtime.js"${n}></script>`,
+    `<script type="module" src="${BOOTSTRAP_PATH}"${n}></script>`,
   ].join("");
 }
 
@@ -55,6 +64,14 @@ export function injectHead(html, snippet) {
   return snippet + html;
 }
 
+export function stripValidators(headers) {
+  for (const key of ["ETag", "etag", "Last-Modified", "last-modified"]) {
+    headers.delete(key);
+  }
+  headers.delete("content-length");
+  headers.delete("Content-Length");
+}
+
 function applyExtraHeaders(headers, extra) {
   if (!extra) return;
   for (const [key, value] of Object.entries(extra)) {
@@ -62,15 +79,17 @@ function applyExtraHeaders(headers, extra) {
     if (key.toLowerCase() === "set-cookie") headers.append("Set-Cookie", value);
     else headers.set(key, value);
   }
-  headers.delete("content-length");
-  headers.delete("Content-Length");
+  stripValidators(headers);
 }
 
 /**
  * HTMLRewriter in the Worker runtime; string inject in Node unit tests.
- * Returns null on rewriter/parse failure so the caller can fail open.
+ * Returns null on rewriter/parse failure so the caller can fail open from
+ * buffered origin bytes (Miniflare HTMLRewriter can drop the original
+ * stream after transform() starts).
  */
-export async function injectHtmlResponse(response, snippet, extraHeaders) {
+export async function injectHtmlResponse(response, snippet, extraHeaders, injectOpts) {
+  const cspOpts = injectOpts?.cspOpts || null;
   try {
     if (typeof HTMLRewriter === "function") {
       let injected = false;
@@ -79,6 +98,15 @@ export async function injectHtmlResponse(response, snippet, extraHeaders) {
           element(el) {
             el.append(snippet, { html: true });
             injected = true;
+          },
+        })
+        .on("meta", {
+          element(el) {
+            const equiv = (el.getAttribute("http-equiv") || "").toLowerCase();
+            if (equiv !== "content-security-policy") return;
+            const content = el.getAttribute("content");
+            if (!content || !cspOpts) return;
+            el.setAttribute("content", adjustCsp(content, cspOpts));
           },
         })
         .onDocument({
@@ -92,7 +120,10 @@ export async function injectHtmlResponse(response, snippet, extraHeaders) {
       return new Response(rewritten.body, { status: rewritten.status, statusText: rewritten.statusText, headers });
     }
     const html = await response.text();
-    const out = injectHead(html, snippet);
+    let out = injectHead(html, snippet);
+    if (cspOpts) {
+      out = rewriteMetaCspHtml(out, (policy) => adjustCsp(policy, cspOpts));
+    }
     const headers = new Headers(response.headers);
     applyExtraHeaders(headers, extraHeaders);
     return new Response(out, { status: response.status, statusText: response.statusText, headers });

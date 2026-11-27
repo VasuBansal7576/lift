@@ -44,6 +44,27 @@ export function mockEnv(overrides: Record<string, unknown> = {}) {
   };
 }
 
+async function delay(ms: number, signal?: AbortSignal | null) {
+  if (!ms) return;
+  await new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => resolve(), ms);
+    if (!signal) return;
+    if (signal.aborted) {
+      clearTimeout(timer);
+      reject(new DOMException("The operation was aborted.", "AbortError"));
+      return;
+    }
+    signal.addEventListener(
+      "abort",
+      () => {
+        clearTimeout(timer);
+        reject(new DOMException("The operation was aborted.", "AbortError"));
+      },
+      { once: true },
+    );
+  });
+}
+
 export function installEdgeFetch(opts: {
   originBody?: string;
   originType?: string;
@@ -52,11 +73,17 @@ export function installEdgeFetch(opts: {
   flagsmith?: unknown | "down" | "http500";
   flagsmithDelayMs?: number;
   flagsmithStatus?: number;
+  originDelayMs?: number;
+  originThrow?: boolean;
+  onFetch?: (url: string, init?: RequestInit) => void;
 }) {
   const orig = globalThis.fetch;
   globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input instanceof Request ? input.url : input);
+    opts.onFetch?.(url, init);
     if (url.startsWith("http://origin.test")) {
+      if (opts.originDelayMs) await delay(opts.originDelayMs);
+      if (opts.originThrow) throw new TypeError("origin fetch failed");
       return new Response(opts.originBody ?? originHtml(), {
         status: opts.originStatus ?? 200,
         headers: {
@@ -67,25 +94,7 @@ export function installEdgeFetch(opts: {
     }
     if (url.includes("/identities/")) {
       const signal = init?.signal || (input instanceof Request ? input.signal : undefined);
-      if (opts.flagsmithDelayMs) {
-        await new Promise<void>((resolve, reject) => {
-          const timer = setTimeout(() => resolve(), opts.flagsmithDelayMs);
-          if (!signal) return;
-          if (signal.aborted) {
-            clearTimeout(timer);
-            reject(new DOMException("The operation was aborted.", "AbortError"));
-            return;
-          }
-          signal.addEventListener(
-            "abort",
-            () => {
-              clearTimeout(timer);
-              reject(new DOMException("The operation was aborted.", "AbortError"));
-            },
-            { once: true },
-          );
-        });
-      }
+      if (opts.flagsmithDelayMs) await delay(opts.flagsmithDelayMs, signal);
       if (opts.flagsmith === "down") throw new TypeError("fetch failed");
       if (opts.flagsmith === "http500" || (opts.flagsmithStatus && opts.flagsmithStatus >= 400)) {
         return new Response("nope", { status: opts.flagsmithStatus ?? 500 });

@@ -26,7 +26,7 @@
     "test:all": "vitest run tests/unit && playwright test",
     "edge:dev": "wrangler dev --config edge/wrangler.toml --persist-to edge/.wrangler/state",
     "edge:put-spec": "tsx edge/put-spec.ts",
-    "edge:record": "LIFT_EDGE_RECORD=1 playwright test tests/e2e/edge-record.spec.ts --workers=1"
+    "edge:record": "node edge/record/live.mjs"
   },
   "engines": {
     "node": ">=20"

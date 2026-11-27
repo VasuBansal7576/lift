@@ -1,10 +1,19 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { ROOT } from "../../agent/src/config.ts";
 import { CONFIG_SCRIPT_ID } from "../../edge/lib/constants.js";
 import { handleRequest } from "../../edge/lib/handler.js";
 import { flagsPayload, installEdgeFetch, mockEnv, originHtml, restoreFetch } from "./edge-test-helpers.ts";
 
 describe("fail-open", () => {
   afterEach(restoreFetch);
+
+  it("does not tee the origin body with an unread clone()", () => {
+    const src = readFileSync(resolve(ROOT, "edge/lib/handler.js"), "utf8");
+    expect(src).not.toMatch(/\.clone\s*\(/);
+    expect(src).toContain("MAX_HTML_BYTES");
+  });
 
   it("passes non-HTML through unmodified", async () => {
     const env = mockEnv();

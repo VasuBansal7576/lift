@@ -291,8 +291,9 @@ async function main() {
   writeFileSync(LIVE_PATH, "{}\n");
   process.env.LIFT_ORCH_TRAFFIC_CONCURRENCY = process.env.LIFT_ORCH_TRAFFIC_CONCURRENCY || "16";
   process.env.LIFT_ORCH_RESULTS_INITIAL_MS = process.env.LIFT_ORCH_RESULTS_INITIAL_MS || "4000";
+  process.env.LIFT_ORCH_RESULTS_WAIT_MS = process.env.LIFT_ORCH_RESULTS_WAIT_MS || "60000";
   process.env.LIFT_TRAFFIC_SEED = process.env.LIFT_TRAFFIC_SEED || "20261127";
-  process.env.LIFT_ORCH_MAX_EXTRA_ROUNDS = process.env.LIFT_ORCH_MAX_EXTRA_ROUNDS || "3";
+  process.env.LIFT_ORCH_MAX_EXTRA_ROUNDS = process.env.LIFT_ORCH_MAX_EXTRA_ROUNDS || "1";
 
   spawn(
     "xterm",
@@ -351,17 +352,13 @@ async function main() {
 
   await waitLive(
     (s) =>
-      s.phase === "analysing" ||
-      s.phase === "WAITING_FOR_HUMAN_APPROVAL" ||
-      s.phase === "complete" ||
-      s.phase === "aborted",
-    420_000,
-    "t2 traffic finishing",
+      s.phase === "WAITING_FOR_HUMAN_APPROVAL" || s.phase === "complete" || s.phase === "aborted",
+    900_000,
+    "t2 waiting",
   );
+  const state = await orchPromise;
 
-  const stateP = orchPromise;
   await withClip("t2b-approve-rollout", async () => {
-    const state = await stateP;
     process.stdout.write(
       `t2 seed=${process.env.LIFT_TRAFFIC_SEED} recommendation=${JSON.stringify(state.recommendation)}\n`,
     );
@@ -382,7 +379,6 @@ async function main() {
       await sleep(2500);
     }
   });
-  const state = await stateP;
 
   await withClip("t1-experiment", async () => {
     await typeUrlInOmnibox(page, "http://127.0.0.1:8000/organisation/1/projects");
@@ -436,8 +432,15 @@ async function main() {
     await sleep(2500);
   });
 
+  await waitLive(
+    (s) =>
+      s.phase === "WAITING_FOR_HUMAN_APPROVAL" || s.phase === "complete" || s.phase === "aborted",
+    900_000,
+    "l2 waiting",
+  );
+  const gen2 = await gen2Promise;
+
   await withClip("l2b-gen2-gate-rollout", async () => {
-    const gen2 = await gen2Promise;
     const rejected = gen2.generations[1]?.rejected ?? [];
     for (const item of rejected) {
       process.stdout.write(`gen-2 rejected ${item.specId}: ${item.reason}\n`);

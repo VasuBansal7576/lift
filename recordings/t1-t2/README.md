@@ -9,10 +9,10 @@ Flagsmith URLs are real. The public client environment key in `/environment/<key
 | File | What it shows |
 | --- | --- |
 | `t2a-gate-launch` | Scan → template mutator → axe gate (hostile canary rejected with `added axe rules` / `nodes increased`) → Flag agent launches the experiment. Traffic starts (SIMULATED). |
-| `t2b-approve-rollout` | Traffic finishing + Flagsmith `/results` + recording harness types `APPROVE <id>` standing in for the human approver → rollout → Flagsmith UI with the winner rolled out. |
+| `t2b-approve-rollout` | Flagsmith `/results` after traffic. The harness types `APPROVE <id>` standing in for the human approver only when `chance_to_win >= 0.95`; otherwise it leaves the experiment collecting and does not type APPROVE. |
 | `t1-experiment` | Real Flagsmith Experiment results page, reached by Organisation → Lift → Experiments → the honest t2 experiment. |
 | `l2a-gen1-champion` | Generation-1 Flagsmith result and the champion arm. |
-| `l2b-gen2-gate-rollout` | Generation-2 gate (champion is control) + experiment + rollout or keep-champion if gen-2 does not win. Hostile canary reason is `added axe rules` / `nodes increased`. |
+| `l2b-gen2-gate-rollout` | Generation-2 gate (champion is control) + experiment. If gen-2 does not beat the champion (`chance_to_win < 0.95`), the harness does not type APPROVE and the champion stays. Hostile canary reason is `added axe rules` / `nodes increased`. |
 
 ## Persona model (honest traffic)
 

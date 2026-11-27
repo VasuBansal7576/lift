@@ -95,6 +95,23 @@ describe("CSP nonce, strict-dynamic, meta", () => {
     }
   });
 
+  it("fail-opens when meta CSP is strict-dynamic without a nonce even if the header is fine", async () => {
+    const env = mockEnv();
+    const html = `<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="script-src 'strict-dynamic'"><title>Northline</title></head><body>hi</body></html>`;
+    const restore = installEdgeFetch({
+      originBody: html,
+      flagsmith: flagsPayload(null),
+      originHeaders: { "Content-Security-Policy": "default-src 'self'" },
+    });
+    try {
+      const res = await handleRequest(documentRequest("http://edge.test/checkout/"), env);
+      expect(await res.text()).toBe(html);
+      expect(res.headers.get("server-timing") || "").toMatch(/csp-strict-dynamic-no-nonce/);
+    } finally {
+      restore();
+    }
+  });
+
   it("uses adoptedStyleSheets (or the style nonce) for injectCSS", () => {
     expect(BOOTSTRAP_JS).toContain("adoptedStyleSheets");
     expect(BOOTSTRAP_JS).toContain("CSSStyleSheet");

@@ -3,6 +3,7 @@ import {
   CONFIG_SCRIPT_ID,
   FLAGSMITH_SDK_URL_DEFAULT,
   RUNTIME_PATH_PREFIX,
+  isNullBodyStatus,
 } from "./constants.js";
 import { adjustCsp, rewriteMetaCspHtml } from "./csp.js";
 
@@ -96,6 +97,11 @@ function applyExtraHeaders(headers, extra) {
 export async function injectHtmlResponse(response, snippet, extraHeaders, injectOpts) {
   const cspOpts = injectOpts?.cspOpts || null;
   try {
+    if (isNullBodyStatus(response.status) || response.body == null) {
+      const headers = new Headers(response.headers);
+      applyExtraHeaders(headers, extraHeaders);
+      return new Response(null, { status: response.status, statusText: response.statusText, headers });
+    }
     if (typeof HTMLRewriter === "function") {
       let injected = false;
       const rewritten = new HTMLRewriter()

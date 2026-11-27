@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { ROOT } from "../../agent/src/config.ts";
-import { CONFIG_SCRIPT_ID } from "../../edge/lib/constants.js";
+import { CONFIG_SCRIPT_ID, MAX_HTML_BYTES } from "../../edge/lib/constants.js";
 import { handleRequest, readEnv } from "../../edge/lib/handler.js";
 import { documentRequest, flagsPayload, installEdgeFetch, mockEnv, originHtml, restoreFetch } from "./edge-test-helpers.ts";
 
@@ -13,6 +13,7 @@ describe("fail-open", () => {
     const src = readFileSync(resolve(ROOT, "edge/lib/handler.js"), "utf8");
     expect(src).not.toMatch(/\.clone\s*\(/);
     expect(src).toContain("MAX_HTML_BYTES");
+    expect(src).not.toMatch(/if \(buffered\.bytes\)/);
   });
 
   it("passes non-HTML through unmodified", async () => {
@@ -143,10 +144,34 @@ describe("fail-open", () => {
       },
     });
     try {
-      const res = await handleRequest(documentRequest("http://edge.test/checkout/"), env);
+      const res = await handleRequest(
+        documentRequest("http://edge.test/checkout/", {
+          headers: { cookie: "lift_vid=already-there" },
+        }),
+        env,
+      );
       expect(await res.text()).toBe(html);
+      expect(res.headers.get("set-cookie")).toBeNull();
       expect(res.headers.get("cache-control")).toBe("public, max-age=60");
       expect(res.headers.get("content-security-policy")).toBe("script-src 'self'");
+    } finally {
+      restore();
+    }
+  });
+
+  it("forces private, no-store when minting lift_vid on a public origin response", async () => {
+    const env = mockEnv();
+    const html = originHtml();
+    const restore = installEdgeFetch({
+      originBody: html,
+      flagsmith: "down",
+      originHeaders: { "Cache-Control": "public, max-age=600" },
+    });
+    try {
+      const res = await handleRequest(documentRequest("http://edge.test/checkout/"), env);
+      expect(await res.text()).toBe(html);
+      expect(res.headers.get("set-cookie") || "").toContain("lift_vid=");
+      expect(res.headers.get("cache-control")).toBe("private, no-store");
     } finally {
       restore();
     }
@@ -161,8 +186,12 @@ describe("fail-open", () => {
     try {
       const cfg = readEnv({ FLAGSMITH_ENVIRONMENT_KEY: "ser.secret-server-key" });
       expect(cfg.environmentKey).toBe("");
-      expect(warns.join("\n")).toMatch(/server-side key/);
       expect(warns.join("\n")).not.toContain("ser.secret-server-key");
+      const afterFirst = warns.length;
+      readEnv({ FLAGSMITH_ENVIRONMENT_KEY: "ser.another-secret" });
+      expect(warns.length).toBe(afterFirst);
+      expect(warns.join("\n")).not.toContain("ser.another-secret");
+      if (afterFirst > 0) expect(warns.join("\n")).toMatch(/server-side key/);
     } finally {
       console.warn = orig;
     }
@@ -191,6 +220,46 @@ describe("fail-open", () => {
       expect(warns.join("\n")).not.toContain("ser.abc");
     } finally {
       console.warn = orig;
+      restore();
+    }
+  });
+
+  it("passes through unbuffered when Content-Length exceeds 1 MiB", async () => {
+    const env = mockEnv();
+    const html = originHtml();
+    const restore = installEdgeFetch({
+      originBody: html,
+      flagsmith: flagsPayload(null),
+      originHeaders: { "Content-Length": String(MAX_HTML_BYTES + 1) },
+    });
+    try {
+      const res = await handleRequest(documentRequest("http://edge.test/checkout/"), env);
+      expect(await res.text()).toBe(html);
+      expect(res.headers.get("server-timing") || "").toMatch(/html-too-large/);
+    } finally {
+      restore();
+    }
+  });
+
+  it("fail-opens the full body when decompressed HTML exceeds 1 MiB", async () => {
+    const env = mockEnv();
+    const oversized = `${originHtml()}<!--${"x".repeat(MAX_HTML_BYTES)}-->`;
+    const restore = installEdgeFetch({
+      originBody: new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode(oversized));
+          controller.close();
+        },
+      }),
+      flagsmith: flagsPayload(null),
+    });
+    try {
+      const res = await handleRequest(documentRequest("http://edge.test/checkout/"), env);
+      const body = await res.text();
+      expect(body).toBe(oversized);
+      expect(body).not.toContain(CONFIG_SCRIPT_ID);
+      expect(res.headers.get("server-timing") || "").toMatch(/html-too-large/);
+    } finally {
       restore();
     }
   });

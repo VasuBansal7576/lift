@@ -78,7 +78,7 @@ async function delay(ms: number, signal?: AbortSignal | null) {
 }
 
 export function installEdgeFetch(opts: {
-  originBody?: string | Uint8Array | ArrayBuffer;
+  originBody?: string | Uint8Array | ArrayBuffer | ReadableStream;
   originType?: string;
   originStatus?: number;
   originHeaders?: Record<string, string>;
@@ -96,8 +96,10 @@ export function installEdgeFetch(opts: {
     if (url.startsWith("http://origin.test")) {
       if (opts.originDelayMs) await delay(opts.originDelayMs);
       if (opts.originThrow) throw new TypeError("origin fetch failed");
-      return new Response((opts.originBody ?? originHtml()) as BodyInit, {
-        status: opts.originStatus ?? 200,
+      const status = opts.originStatus ?? 200;
+      const nullBody = status === 101 || status === 204 || status === 205 || status === 304;
+      return new Response(nullBody ? null : ((opts.originBody ?? originHtml()) as BodyInit), {
+        status,
         headers: {
           "content-type": opts.originType ?? "text/html; charset=utf-8",
           ...(opts.originHeaders || {}),

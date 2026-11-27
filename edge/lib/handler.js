@@ -1,5 +1,6 @@
 import { bootstrapResponse } from "./bootstrap-source.js";
 import {
+  COOKIE_CACHE_CONTROL,
   DEFAULT_EVAL_TIMEOUT_MS,
   DEFAULT_FLAG_NAME,
   FLAGSMITH_SDK_URL_DEFAULT,
@@ -8,6 +9,7 @@ import {
   RUNTIME_PATH_PREFIX,
   SPEC_PATH_PREFIX,
   WALL_TIMING_NAME,
+  isNullBodyStatus,
   isSpecKey,
   originOf,
   trailingSlash,
@@ -29,11 +31,16 @@ function wallMeter() {
   };
 }
 
+let warnedServerEnvKey = false;
+
 function clientEnvironmentKey(raw) {
   const key = String(raw || "").trim();
   if (!key) return "";
   if (key.startsWith("ser.")) {
-    console.warn("FLAGSMITH_ENVIRONMENT_KEY looks like a server-side key; treating as unset");
+    if (!warnedServerEnvKey) {
+      warnedServerEnvKey = true;
+      console.warn("FLAGSMITH_ENVIRONMENT_KEY looks like a server-side key; treating as unset");
+    }
     return "";
   }
   return key;
@@ -63,7 +70,7 @@ export function isHtmlResponse(response) {
 export function isDocumentRequest(request) {
   if (request.method !== "GET") return false;
   const dest = (request.headers.get("Sec-Fetch-Dest") || "").toLowerCase();
-  if (dest === "document") return true;
+  if (dest === "document" || dest === "iframe" || dest === "frame") return true;
   if (dest) return false;
   const accept = request.headers.get("Accept") || "";
   return /text\/html/i.test(accept);
@@ -92,6 +99,23 @@ function withServerTiming(headers, wallMs, failOpen) {
   headers.set("Server-Timing", parts.join(", "));
 }
 
+function appendVary(headers, tokens) {
+  const current = headers.get("Vary") || "";
+  const parts = current.split(",").map((s) => s.trim()).filter(Boolean);
+  const seen = new Set(parts.map((p) => p.toLowerCase()));
+  for (const token of tokens) {
+    if (!seen.has(token.toLowerCase())) {
+      parts.push(token);
+      seen.add(token.toLowerCase());
+    }
+  }
+  if (parts.length) headers.set("Vary", parts.join(", "));
+}
+
+function applyHtmlVary(headers) {
+  appendVary(headers, ["Sec-Fetch-Dest", "Accept"]);
+}
+
 function applyInjectedHtmlHeaders(headers, opts) {
   headers.set("Cache-Control", PERSONAL_CACHE_CONTROL);
   headers.delete("Age");
@@ -118,13 +142,18 @@ function applyInjectedHtmlHeaders(headers, opts) {
 function finalizePassthrough(response, opts) {
   const headers = new Headers(response.headers);
   rewriteLocation(headers, opts.originBase, opts.workerOrigin);
+  if (opts.varyHtml) applyHtmlVary(headers);
   if (opts.injected) {
     applyInjectedHtmlHeaders(headers, opts);
   } else {
-    if (opts.setCookie) headers.append("Set-Cookie", opts.setCookie);
+    if (opts.setCookie) {
+      headers.append("Set-Cookie", opts.setCookie);
+      headers.set("Cache-Control", COOKIE_CACHE_CONTROL);
+    }
     if (opts.cpuMs != null) withServerTiming(headers, opts.cpuMs, opts.failOpen);
   }
-  return new Response(response.body, {
+  const body = isNullBodyStatus(response.status) || response.body == null ? null : response.body;
+  return new Response(body, {
     status: response.status,
     statusText: response.statusText,
     headers,
@@ -229,35 +258,92 @@ async function loadSpecJson(specs, specId) {
   }
 }
 
-async function decodedOriginBytes(originRes, raw) {
+function declaredContentLength(originRes) {
+  const raw = originRes.headers.get("content-length") || originRes.headers.get("Content-Length");
+  if (raw == null || raw === "") return null;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? n : null;
+}
+
+function concatChunks(chunks) {
+  let total = 0;
+  for (const chunk of chunks) total += chunk.byteLength;
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return out;
+}
+
+function remainderStream(prefix, overflow, reader) {
+  let i = 0;
+  let overflowSent = false;
+  return new ReadableStream({
+    async pull(controller) {
+      if (i < prefix.length) {
+        controller.enqueue(prefix[i++]);
+        return;
+      }
+      if (!overflowSent) {
+        overflowSent = true;
+        controller.enqueue(overflow);
+        return;
+      }
+      const next = await reader.read();
+      if (next.done) controller.close();
+      else controller.enqueue(next.value);
+    },
+    cancel(reason) {
+      return reader.cancel(reason);
+    },
+  });
+}
+
+function decodedReadable(originRes) {
+  const body = originRes.body;
+  if (!body) return null;
   const enc = (originRes.headers.get("content-encoding") || "").toLowerCase().split(",")[0].trim();
-  if (enc !== "gzip" && enc !== "deflate" && enc !== "br") return raw;
+  if (enc !== "gzip" && enc !== "deflate" && enc !== "br") return body;
   try {
-    const body = new Response(raw).body;
-    if (!body) return raw;
-    const ds = new DecompressionStream(enc);
-    return await new Response(body.pipeThrough(ds)).arrayBuffer();
+    return body.pipeThrough(new DecompressionStream(enc));
   } catch {
-    return raw;
+    return body;
   }
 }
 
 async function bufferHtml(originRes) {
-  const raw = await originRes.arrayBuffer();
-  const bytes = await decodedOriginBytes(originRes, raw);
-  if (bytes.byteLength > MAX_HTML_BYTES) {
-    return { tooLarge: true, bytes };
+  const declared = declaredContentLength(originRes);
+  if (declared != null && declared > MAX_HTML_BYTES) {
+    return { tooLarge: true, unbuffered: true };
   }
+  const stream = decodedReadable(originRes);
+  if (!stream) return { bytes: new Uint8Array(0), html: "" };
+  const reader = stream.getReader();
+  const chunks = [];
+  let total = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    const chunk = value instanceof Uint8Array ? value.slice() : new Uint8Array(value);
+    total += chunk.byteLength;
+    if (total > MAX_HTML_BYTES) {
+      return { tooLarge: true, stream: remainderStream(chunks, chunk, reader) };
+    }
+    chunks.push(chunk);
+  }
+  const bytes = concatChunks(chunks);
   return { bytes, html: new TextDecoder("utf-8").decode(bytes) };
 }
 
-function replayResponse(originRes, bytes) {
+function replayResponse(originRes, body) {
   const headers = new Headers(originRes.headers);
   headers.delete("Content-Length");
   headers.delete("content-length");
   headers.delete("Content-Encoding");
   headers.delete("content-encoding");
-  return new Response(bytes, {
+  return new Response(body, {
     status: originRes.status,
     statusText: originRes.statusText,
     headers,
@@ -343,6 +429,7 @@ export async function handleRequest(request, env) {
     setCookie: personalize ? visitor.setCookie : null,
     cpuMs: wall.ms(),
     html,
+    varyHtml: request.method === "GET" && html,
   };
 
   if (!html || !personalize) {
@@ -354,6 +441,10 @@ export async function handleRequest(request, env) {
           ? "non-document"
           : "method";
     return finalizePassthrough(originRes, { ...baseOpts, failOpen: reason, cpuMs: wall.ms() });
+  }
+
+  if (isNullBodyStatus(originRes.status) || originRes.body == null) {
+    return finalizePassthrough(originRes, { ...baseOpts, failOpen: "empty-body", cpuMs: wall.ms() });
   }
 
   const failOpenFrom = (bytes, originLike, reason) =>
@@ -370,20 +461,28 @@ export async function handleRequest(request, env) {
     return new Response("not found", { status: 404 });
   }
   if (buffered.tooLarge) {
-    if (buffered.bytes) {
-      return failOpenFrom(buffered.bytes, originRes, "html-too-large");
+    if (buffered.unbuffered) {
+      return finalizePassthrough(originRes, { ...baseOpts, failOpen: "html-too-large", cpuMs: wall.ms() });
     }
-    return finalizePassthrough(originRes, { ...baseOpts, failOpen: "html-too-large", cpuMs: wall.ms() });
+    return failOpenFrom(buffered.stream || buffered.bytes, originRes, "html-too-large");
   }
 
   const headerCsp =
     originRes.headers.get("Content-Security-Policy") || originRes.headers.get("content-security-policy") || "";
   const metaCsp = findMetaCsp(buffered.html);
-  const cspSource = headerCsp || (metaCsp ? metaCsp.content : "");
-  const cspInfo = inspectCsp(cspSource);
-  if (!cspInfo.ok) {
-    return failOpenFrom(buffered.bytes, originRes, cspInfo.reason || "csp");
+  const headerInfo = inspectCsp(headerCsp);
+  if (!headerInfo.ok) {
+    return failOpenFrom(buffered.bytes, originRes, headerInfo.reason || "csp");
   }
+  const metaInfo = inspectCsp(metaCsp ? metaCsp.content : "");
+  if (!metaInfo.ok) {
+    return failOpenFrom(buffered.bytes, originRes, metaInfo.reason || "csp");
+  }
+  const cspInfo = {
+    scriptNonce: headerInfo.scriptNonce || metaInfo.scriptNonce,
+    styleNonce: headerInfo.styleNonce || metaInfo.styleNonce,
+    strictDynamic: headerInfo.strictDynamic || metaInfo.strictDynamic,
+  };
 
   try {
     if (!evaluated || evaluated.skipped) {
@@ -433,6 +532,7 @@ export async function handleRequest(request, env) {
     rewriteLocation(injected.headers, cfg.origin, url.origin);
     stripValidators(injected.headers);
     withServerTiming(injected.headers, wall.ms(), null);
+    if (baseOpts.varyHtml) applyHtmlVary(injected.headers);
     return injected;
   } catch {
     return failOpenFrom(buffered.bytes, originRes, "parse-error");

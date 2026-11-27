@@ -14,6 +14,12 @@ export const SPEC_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 /** 1 MiB buffer cap so HTMLRewriter streaming errors can fail-open from origin bytes. */
 export const MAX_HTML_BYTES = 1_048_576;
 export const WALL_TIMING_NAME = "liftwall";
+export const COOKIE_CACHE_CONTROL = "private, no-store";
+
+/** Statuses whose responses must not carry a body (Fetch / HTTP). */
+export function isNullBodyStatus(status) {
+  return status === 101 || status === 204 || status === 205 || status === 304;
+}
 
 export function isSpecKey(value) {
   return typeof value === "string" && SPEC_ID_RE.test(value);

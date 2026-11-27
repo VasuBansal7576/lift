@@ -206,7 +206,79 @@ describe("HTMLRewriter streaming-error fail-open", () => {
   });
 });
 
+describe("null-body HTML statuses", () => {
+  it("returns 304 for If-None-Match instead of 404", async () => {
+    const env = mockEnv();
+    const restore = installEdgeFetch({
+      originStatus: 304,
+      originHeaders: { ETag: '"v1"' },
+    });
+    try {
+      const res = await handleRequest(
+        documentRequest("http://edge.test/checkout/", {
+          headers: { "If-None-Match": '"v1"', cookie: "lift_vid=sticky-1" },
+        }),
+        env,
+      );
+      expect(res.status).toBe(304);
+      expect(res.headers.get("etag")).toBe('"v1"');
+      expect(await res.text()).toBe("");
+    } finally {
+      restore();
+    }
+  });
+
+  it("passes 204 and 205 HTML through without becoming 404", async () => {
+    const env = mockEnv();
+    for (const status of [204, 205]) {
+      const restore = installEdgeFetch({ originStatus: status });
+      try {
+        const res = await handleRequest(documentRequest("http://edge.test/checkout/"), env);
+        expect(res.status, String(status)).toBe(status);
+      } finally {
+        restore();
+      }
+    }
+  });
+
+  it("injectHtmlResponse returns a null-body 304 instead of throwing", async () => {
+    const out = await injectHtmlResponse(
+      new Response(null, { status: 304, headers: { "content-type": "text/html" } }),
+      "SNIP",
+      {},
+    );
+    expect(out).not.toBeNull();
+    expect(out?.status).toBe(304);
+  });
+});
+
 describe("document-only eval", () => {
+  it("treats iframe and frame as document requests", async () => {
+    const env = mockEnv();
+    for (const dest of ["iframe", "frame"]) {
+      let flagsmithHits = 0;
+      const restore = installEdgeFetch({
+        originBody: originHtml(),
+        flagsmith: flagsPayload(null),
+        onFetch: (url) => {
+          if (url.includes("/identities/")) flagsmithHits += 1;
+        },
+      });
+      try {
+        const res = await handleRequest(
+          new Request("http://edge.test/checkout/", {
+            headers: { "Sec-Fetch-Dest": dest, Accept: "text/html" },
+          }),
+          env,
+        );
+        expect(flagsmithHits, dest).toBe(1);
+        expect(await res.text()).toContain(CONFIG_SCRIPT_ID);
+      } finally {
+        restore();
+      }
+    }
+  });
+
   it("CSS, JS, and image requests make 0 Flagsmith calls", async () => {
     const env = mockEnv();
     const cases = [
@@ -267,6 +339,67 @@ describe("gzip origin replay", () => {
       expect(res.headers.get("etag")).toBeNull();
     } finally {
       restore();
+    }
+  });
+});
+
+describe("Vary on GET HTML", () => {
+  it("appends Sec-Fetch-Dest and Accept on injected, fail-open, and passthrough HTML", async () => {
+    const env = mockEnv();
+    const html = originHtml();
+
+    const injectedRestore = installEdgeFetch({
+      originBody: html,
+      flagsmith: flagsPayload(null),
+      originHeaders: { Vary: "Accept-Encoding" },
+    });
+    try {
+      const res = await handleRequest(documentRequest("http://edge.test/checkout/"), env);
+      const vary = res.headers.get("vary") || "";
+      expect(await res.text()).toContain(CONFIG_SCRIPT_ID);
+      expect(vary).toMatch(/Accept-Encoding/i);
+      expect(vary).toMatch(/Sec-Fetch-Dest/i);
+      expect(vary).toMatch(/\bAccept\b/i);
+    } finally {
+      injectedRestore();
+    }
+
+    const failRestore = installEdgeFetch({
+      originBody: html,
+      flagsmith: "down",
+    });
+    try {
+      const res = await handleRequest(
+        documentRequest("http://edge.test/checkout/", {
+          headers: { cookie: "lift_vid=already-there" },
+        }),
+        env,
+      );
+      const vary = res.headers.get("vary") || "";
+      expect(await res.text()).toBe(html);
+      expect(vary).toMatch(/Sec-Fetch-Dest/i);
+      expect(vary).toMatch(/\bAccept\b/i);
+    } finally {
+      failRestore();
+    }
+
+    const passRestore = installEdgeFetch({
+      originBody: html,
+      flagsmith: flagsPayload(null),
+    });
+    try {
+      const res = await handleRequest(
+        new Request("http://edge.test/checkout/", {
+          headers: { "Sec-Fetch-Dest": "empty", Accept: "*/*" },
+        }),
+        env,
+      );
+      const vary = res.headers.get("vary") || "";
+      expect(await res.text()).toBe(html);
+      expect(vary).toMatch(/Sec-Fetch-Dest/i);
+      expect(vary).toMatch(/\bAccept\b/i);
+    } finally {
+      passRestore();
     }
   });
 });

@@ -234,20 +234,16 @@ async function openExperimentOnCamera(page: Page, flagName: string, dashboardUrl
   assertNotLogin(page, `experiment ${flagName}`);
 }
 
-async function showRolledOutFeature(
-  page: Page,
-  flagName: string,
-  dashboardUrl: string,
-  flagId?: number,
-): Promise<void> {
-  const featuresUrl = flagId
-    ? dashboardUrl.replace(/\/experiments\/\d+.*$/, `/features/${flagId}`)
-    : dashboardUrl.replace(/\/experiments\/\d+.*$/, "/features");
+async function showRolledOutFeature(page: Page, flagName: string, dashboardUrl: string): Promise<void> {
+  const featuresUrl = dashboardUrl.replace(/\/experiments\/\d+.*$/, "/features");
   await typeUrlInOmnibox(page, featuresUrl);
+  const search = page.getByPlaceholder(/^Search$/);
+  await search.waitFor({ state: "visible", timeout: 10_000 });
+  await search.fill(flagName);
+  const name = page.getByText(flagName, { exact: true }).first();
+  await name.waitFor({ state: "visible", timeout: 10_000 });
+  await name.click();
   await page.getByRole("heading").first().waitFor({ state: "visible", timeout: 10_000 });
-  const name = page.getByText(flagName, { exact: false }).first();
-  await name.waitFor({ state: "attached", timeout: 10_000 });
-  await name.scrollIntoViewIfNeeded();
   assertNotLogin(page, "features winner");
 }
 
@@ -374,7 +370,7 @@ async function main() {
       await typeApproveOnCamera(state.flag.experimentId);
       await typeUrlInOmnibox(page, state.flag.dashboardUrl);
       await visibleReload(page);
-      await showRolledOutFeature(page, state.flag.flagName, state.flag.dashboardUrl, state.flag.flagId);
+      await showRolledOutFeature(page, state.flag.flagName, state.flag.dashboardUrl);
     } else {
       process.stdout.write("No winner; harness is not typing APPROVE.\n");
       await sleep(2500);
@@ -462,7 +458,7 @@ async function main() {
       await typeApproveOnCamera(gen2.flag.experimentId);
       await typeUrlInOmnibox(page, gen2.flag.dashboardUrl);
       await visibleReload(page);
-      await showRolledOutFeature(page, gen2.flag.flagName, gen2.flag.dashboardUrl, gen2.flag.flagId);
+      await showRolledOutFeature(page, gen2.flag.flagName, gen2.flag.dashboardUrl);
     } else {
       process.stdout.write(
         "Gen-2 did not beat the champion; keeping the champion. Harness is not typing APPROVE.\n",

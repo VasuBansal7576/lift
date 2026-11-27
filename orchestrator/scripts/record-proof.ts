@@ -293,7 +293,7 @@ async function main() {
   process.env.LIFT_ORCH_RESULTS_INITIAL_MS = process.env.LIFT_ORCH_RESULTS_INITIAL_MS || "4000";
   process.env.LIFT_ORCH_RESULTS_WAIT_MS = "240000";
   process.env.LIFT_TRAFFIC_SEED = process.env.LIFT_TRAFFIC_SEED || "20261127";
-  process.env.LIFT_ORCH_MAX_EXTRA_ROUNDS = "2";
+  process.env.LIFT_ORCH_MAX_EXTRA_ROUNDS = "0";
 
   spawn(
     "xterm",
@@ -326,7 +326,7 @@ async function main() {
     "--apply",
     "--keep-ui",
     "--traffic-n",
-    "220",
+    "400",
     "--flag-name",
     t2Flag,
     "--site-url",
@@ -405,7 +405,7 @@ async function main() {
     "--generations",
     "2",
     "--traffic-n",
-    "220",
+    "400",
     "--flag-name",
     l2Flag,
     "--site-url",

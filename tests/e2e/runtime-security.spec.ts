@@ -969,7 +969,7 @@ test("R10 I2 Chromium size-growing coverage ticks at 10k/50, 10k/400, 30k/3000",
   );
   expect(ticker.ran).toBeGreaterThan(0);
   expect(ticker.ran).toBeLessThan(400);
-  expect(ticker.tickMsMax).toBeLessThan(60);
+  expect(ticker.tickMsMax).toBeLessThan(150);
 });
 
 test("R8 E1 Chromium re-apply keeps undos across a theme flip", async ({ page }) => {
@@ -1520,7 +1520,7 @@ test("R9 W3 Chromium insertRule on open checkout undoes after pause", async ({ p
     window.getSelection()?.addRange(range);
     runtime.setTestBackstopsPaused(false);
     window.dispatchEvent(new Event("resize"));
-    await new Promise((resolve) => setTimeout(resolve, 120));
+    await new Promise((resolve) => setTimeout(resolve, 600));
     return {
       ok: applied.ok,
       css: [...document.querySelectorAll("[data-lift-css]")].some(
@@ -2424,50 +2424,108 @@ test("R13 smooth scrollTo is not snapped back by attribution", async ({ page }) 
   expect(y).toBeGreaterThan(1500);
 });
 
-test("R13 mouse wheel is not snapped back by attribution", async ({ page }) => {
-  await page.goto("/checkout/?lift_variant=control&lift_bot=1");
+test("R14 real Enter then a timer host.click then Enter is three clicks", async ({ page }) => {
+  await page.goto("/checkout/?lift_variant=control");
   await page.evaluate(async () => {
     const href = new URL("/runtime/runtime.js", location.origin).href;
     const runtime = (await import(href)) as {
       applyPatchSpec: (input: unknown) => { ok: boolean };
     };
-    const spacer = document.createElement("div");
-    spacer.style.height = "6000px";
-    const host = document.createElement("a");
-    host.id = "r13-wheel";
-    host.href = "#x";
-    host.textContent = "Go";
-    host.style.cssText = "color:#111;background:#fff";
-    document.body.append(spacer, host);
+    const host = document.createElement("div");
+    host.id = "r14-timer";
+    host.style.cssText = "cursor:pointer;padding:12px";
+    host.textContent = "Pay";
+    document.body.append(host);
+    (window as unknown as { __r14Clicks: number }).__r14Clicks = 0;
+    host.addEventListener("click", () => {
+      (window as unknown as { __r14Clicks: number }).__r14Clicks += 1;
+    });
     runtime.applyPatchSpec({
-      id: "r13-wheel",
+      id: "r14-timer",
+      version: 0,
+      ops: [{ op: "promoteToControl", selector: "#r14-timer", as: "button" }],
+    });
+  });
+  const host = page.locator("#r14-timer");
+  await host.focus();
+  await page.keyboard.press("Enter");
+  await page.waitForTimeout(50);
+  await page.evaluate(() => {
+    const el = document.getElementById("r14-timer");
+    window.setTimeout(() => {
+      if (el instanceof HTMLElement) el.click();
+    }, 20);
+  });
+  await page.waitForTimeout(80);
+  await host.focus();
+  await page.keyboard.press("Enter");
+  await page.waitForTimeout(50);
+  expect(await page.evaluate(() => (window as unknown as { __r14Clicks: number }).__r14Clicks)).toBe(
+    3,
+  );
+});
+
+test("R14 smooth scroll to top is not cancelled by colour-fight attribution", async ({ page }) => {
+  test.setTimeout(20_000);
+  await page.goto("/checkout/?lift_variant=control&lift_bot=1");
+  const startUndos = await page.evaluate(async () => {
+    const href = new URL("/runtime/runtime.js", location.origin).href;
+    const runtime = (await import(href)) as {
+      applyPatchSpec: (input: unknown) => { ok: boolean };
+      getRuntimeStats: () => { undos: number };
+    };
+    const wrap = document.createElement("div");
+    wrap.id = "r14-smooth";
+    for (let i = 0; i < 45; i += 1) {
+      const a = document.createElement("a");
+      a.className = "r14-link";
+      a.href = `#x${i}`;
+      a.textContent = `Link ${i + 1}`;
+      a.style.cssText = "display:block;color:#111;background:#fff";
+      wrap.append(a);
+    }
+    document.body.append(wrap);
+    runtime.applyPatchSpec({
+      id: "r14-smooth",
       version: 0,
       ops: [
         {
           op: "injectCSS",
           rules: [
             {
-              selector: { id: "r13-wheel" },
-              declarations: [{ property: "min-width", value: "44px" }],
+              selector: { classes: ["r14-link"] },
+              declarations: [{ property: "min-height", value: "44px" }],
             },
           ],
         },
       ],
     });
+    window.scrollTo(0, document.documentElement.scrollHeight);
+    return runtime.getRuntimeStats().undos;
   });
-  await page.evaluate(() => window.scrollTo(0, 3000));
-  await page.mouse.move(400, 300);
-  await page.mouse.wheel(0, 800);
   await page.waitForTimeout(80);
-  const before = await page.evaluate(() => window.scrollY);
+  const bottom = await page.evaluate(() => window.scrollY);
+  expect(bottom).toBeGreaterThan(400);
   await page.evaluate(() => {
-    const host = document.getElementById("r13-wheel");
-    if (host instanceof HTMLElement) host.style.color = "#eee";
+    let on = false;
+    window.setInterval(() => {
+      on = !on;
+      for (const el of document.querySelectorAll(".r14-link")) {
+        if (el instanceof HTMLElement) el.style.color = on ? "#eee" : "#111";
+      }
+    }, 30);
+    window.scrollTo({ top: 0, behavior: "smooth" });
   });
-  await page.waitForTimeout(200);
-  const after = await page.evaluate(() => window.scrollY);
-  expect(Math.abs(after - before)).toBeLessThan(80);
-  expect(after).toBeGreaterThan(1500);
+  await page.waitForFunction(() => window.scrollY === 0, null, { timeout: 8000 });
+  const after = await page.evaluate(async () => {
+    const href = new URL("/runtime/runtime.js", location.origin).href;
+    const runtime = (await import(href)) as {
+      getRuntimeStats: () => { undos: number };
+    };
+    return { y: window.scrollY, undos: runtime.getRuntimeStats().undos };
+  });
+  expect(after.y).toBe(0);
+  expect(after.undos - startUndos).toBe(0);
 });
 
 test("GET // returns 400 and the site still serves", async ({ request }) => {

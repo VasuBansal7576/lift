@@ -102,7 +102,7 @@ function markHostClicked(el) {
   hostClickedAt.set(el, keySeq);
   if (synthesizingClick) return;
   const ev = typeof window !== "undefined" ? window.event : null;
-  if (keyInFlight || lastKeyTarget === el || (ev && ev.type === "keydown")) {
+  if (ev && (ev.type === "keydown" || ev.type === "keyup")) {
     clickDuringKeyDispatch = el;
   }
 }
@@ -2370,7 +2370,7 @@ function nodeGeometryPersists(el, snapshots, err) {
     return Boolean(before && !before.clipped && isOverflowClipped(el));
   }
   if (err === "lost hit target") {
-    if (!inViewport(el)) return false;
+    if (!inViewport(el)) return true;
     return !hitIsSelfOrDescendant(el, hitTargetAtCenter(el));
   }
   return true;
@@ -2452,30 +2452,17 @@ function originalTextWouldViolate(root, el, spec, snapshots, err) {
 
 function withSheetsDisabled(root, spec, fn, node) {
   const doc = docOf(root);
-  const view = doc && doc.defaultView;
   const sheets = specStyleElements(root, spec);
   const prev = sheets.map((style) => Boolean(style.disabled));
   const before = snapshotScroll(doc, node || lastFailNode);
   for (const style of sheets) setSheetDisabled(style, true);
   const mid = snapshotScroll(doc, node || lastFailNode);
   const toggleMoved = scrollSnapshotChanged(before, mid);
-  let userMoved = false;
-  const onUserScroll = () => {
-    userMoved = true;
-  };
-  if (view && typeof view.addEventListener === "function") {
-    view.addEventListener("wheel", onUserScroll, { capture: true, passive: true });
-    view.addEventListener("scroll", onUserScroll, { capture: true, passive: true });
-  }
   try {
     return fn();
   } finally {
-    if (view && typeof view.removeEventListener === "function") {
-      view.removeEventListener("wheel", onUserScroll, true);
-      view.removeEventListener("scroll", onUserScroll, true);
-    }
     sheets.forEach((style, i) => setSheetDisabled(style, prev[i]));
-    if (toggleMoved && !userMoved) restoreScrollSnapshot(before);
+    if (toggleMoved) restoreScrollSnapshot(before);
   }
 }
 
@@ -2577,13 +2564,28 @@ function installMutationGuard(root, spec, snapshots, undos) {
   let lastFp = pageFingerprint(doc, root, spec);
   let lastGeom = overlayGeometryKey(root, spec);
   let intervalN = 0;
+  let lastScrollAt = 0;
+  let deferStartedAt = 0;
+  const view = doc.defaultView;
+  const onScroll = () => {
+    lastScrollAt = Date.now();
+  };
+  if (view && typeof view.addEventListener === "function") {
+    view.addEventListener("scroll", onScroll, { capture: true, passive: true });
+  }
   const media =
-    doc.defaultView && typeof doc.defaultView.matchMedia === "function"
-      ? doc.defaultView.matchMedia("(prefers-color-scheme: dark)")
+    view && typeof view.matchMedia === "function"
+      ? view.matchMedia("(prefers-color-scheme: dark)")
       : null;
 
   const run = (records, reason) => {
     if (stopped) return;
+    const now = Date.now();
+    if (now - lastScrollAt < 150 && deferStartedAt && now - deferStartedAt < 500) {
+      schedule(records, reason);
+      return;
+    }
+    deferStartedAt = 0;
     const t0 = typeof performance !== "undefined" ? performance.now() : 0;
     runtimeStats.ticksRan += 1;
     observer.disconnect();
@@ -2632,6 +2634,7 @@ function installMutationGuard(root, spec, snapshots, undos) {
     if (reason) queuedReason = reason;
     if (backstopsPaused) return;
     const now = Date.now();
+    if (!deferStartedAt) deferStartedAt = now;
     if (!burstStart) burstStart = now;
     if (timer) clearTimeout(timer);
     const elapsed = now - burstStart;
@@ -2704,6 +2707,9 @@ function installMutationGuard(root, spec, snapshots, undos) {
   const stop = () => {
     stopped = true;
     if (timer) clearTimeout(timer);
+    if (view && typeof view.removeEventListener === "function") {
+      view.removeEventListener("scroll", onScroll, true);
+    }
     observer.disconnect();
     const fi = guardFlushers.indexOf(flushQueued);
     if (fi >= 0) guardFlushers.splice(fi, 1);

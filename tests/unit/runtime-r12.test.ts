@@ -236,6 +236,33 @@ describe("R12 P4 Enter is once", () => {
   });
 });
 
+describe("R14 timer click after Enter does not swallow the next Enter", () => {
+  it("counts Enter, delayed host.click, Enter as three clicks", async () => {
+    document.body.innerHTML = `<div id="h" style="cursor:pointer">Pay</div>`;
+    const host = document.getElementById("h") as HTMLElement;
+    let clicks = 0;
+    host.addEventListener("click", () => {
+      clicks += 1;
+    });
+    expect(
+      applyPatchSpec({
+        id: "r14-timer",
+        version: 0,
+        ops: [{ op: "promoteToControl", selector: "#h", as: "button" }],
+      }).ok,
+    ).toBe(true);
+    key(host, "keydown", "Enter");
+    await wait(0);
+    expect(clicks).toBe(1);
+    window.setTimeout(() => host.click(), 0);
+    await wait(0);
+    expect(clicks).toBe(2);
+    key(host, "keydown", "Enter");
+    await wait(0);
+    expect(clicks).toBe(3);
+  });
+});
+
 describe("R13 document-level keydown click is once", () => {
   it("defers Lift's click until after a document handler calls target.click", async () => {
     document.body.innerHTML = `<div id="h" style="cursor:pointer">Pay</div>`;

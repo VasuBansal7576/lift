@@ -1,27 +1,24 @@
 import http from "node:http";
 import { expect, test } from "@playwright/test";
-import { CSS_ATTACKS, INSERT_HTML_ATTACKS } from "../fixtures/patch-spec-corpus.ts";
+import {
+  CSS_ATTACKS,
+  CSS_TYPED_ACCEPTED,
+  INSERT_HTML_ATTACKS,
+} from "../fixtures/patch-spec-corpus.ts";
 
 test("Chromium rejects the CSS attack corpus through runtime.js", async ({ page }) => {
   await page.goto("/checkout/?lift_variant=control");
   const results = await page.evaluate(async (attacks) => {
     const href = new URL("/runtime/runtime.js", location.origin).href;
     const runtime = (await import(href)) as {
-      isSafeCss: (css: string) => boolean;
       parsePatchSpec: (input: unknown) => { ok: boolean };
     };
     return attacks.map((attack) => ({
       name: attack.name,
-      safe: runtime.isSafeCss(attack.css),
-      parsed: runtime.parsePatchSpec({
-        id: "atk",
-        version: 0,
-        ops: [{ op: "injectCSS", css: attack.css }],
-      }).ok,
+      parsed: runtime.parsePatchSpec(attack.spec).ok,
     }));
   }, CSS_ATTACKS);
   for (const result of results) {
-    expect(result.safe, result.name).toBe(false);
     expect(result.parsed, result.name).toBe(false);
   }
 });
@@ -50,10 +47,20 @@ test("Chromium refuses setText into an injected style tag", async ({ page }) => 
     const runtime = (await import(href)) as {
       applyPatchSpec: (input: unknown) => { ok: boolean; error?: string };
     };
+    const cssOp = {
+      op: "injectCSS",
+      id: "s1",
+      rules: [
+        {
+          selector: { classes: ["x"] },
+          declarations: [{ property: "color", value: "#111" }],
+        },
+      ],
+    };
     runtime.applyPatchSpec({
       id: "css",
       version: 0,
-      ops: [{ op: "injectCSS", id: "s1", css: ".x { color: #111; }" }],
+      ops: [cssOp],
     });
     const before = document.getElementById("lift-patch-css-s1")?.textContent ?? "";
     const applied = runtime.applyPatchSpec({
@@ -114,31 +121,27 @@ test("one Enter on the replaced Place order button fires one original click", as
   await expect(page.locator("#confirmation")).toBeVisible();
 });
 
-test("setText rollback restores child elements", async ({ page }) => {
+test("setText refuses targets with element children", async ({ page }) => {
   await page.goto("/checkout/?lift_variant=control");
   const result = await page.evaluate(async () => {
     const href = new URL("/runtime/runtime.js", location.origin).href;
     const runtime = (await import(href)) as {
       applyPatchSpec: (input: unknown) => { ok: boolean };
     };
-    document.body.insertAdjacentHTML("beforeend", `<p id="keep"><span id="kid">a</span>b</p>`);
     const applied = runtime.applyPatchSpec({
-      id: "settext-undo",
+      id: "settext-main",
       version: 0,
-      ops: [
-        { op: "setText", selector: "#keep", text: "new" },
-        { op: "setText", selector: "#missing", text: "nope" },
-      ],
+      ops: [{ op: "setText", selector: "main", text: "wiped" }],
     });
     return {
       ok: applied.ok,
-      kid: document.getElementById("kid")?.textContent ?? null,
-      text: document.getElementById("keep")?.textContent ?? null,
+      stillHasForm: Boolean(document.getElementById("checkout-form")),
+      stillHasPay: Boolean(document.getElementById("place-order")),
     };
   });
   expect(result.ok).toBe(false);
-  expect(result.kid).toBe("a");
-  expect(result.text).toBe("ab");
+  expect(result.stillHasForm).toBe(true);
+  expect(result.stillHasPay).toBe(true);
 });
 
 test("chained replaceTag forwards one click to the original node", async ({ page }) => {
@@ -217,25 +220,32 @@ test("injectCSS with the same id updates css and undo restores the previous text
     const runtime = (await import(href)) as {
       applyPatchSpec: (input: unknown) => { ok: boolean };
     };
+    const rule = (color: string) => ({
+      op: "injectCSS",
+      id: "s1",
+      rules: [
+        {
+          selector: { classes: ["a"] },
+          declarations: [{ property: "color", value: color }],
+        },
+      ],
+    });
     runtime.applyPatchSpec({
       id: "css-1",
       version: 0,
-      ops: [{ op: "injectCSS", id: "s1", css: ".a { color: #111; }" }],
+      ops: [rule("#111")],
     });
     const afterFirst = document.getElementById("lift-patch-css-s1")?.textContent ?? "";
     runtime.applyPatchSpec({
       id: "css-2",
       version: 0,
-      ops: [{ op: "injectCSS", id: "s1", css: ".a { color: #222; }" }],
+      ops: [rule("#222")],
     });
     const afterSecond = document.getElementById("lift-patch-css-s1")?.textContent ?? "";
     const rolled = runtime.applyPatchSpec({
       id: "css-3",
       version: 0,
-      ops: [
-        { op: "injectCSS", id: "s1", css: ".a { color: #333; }" },
-        { op: "setText", selector: "#missing", text: "nope" },
-      ],
+      ops: [rule("#333"), { op: "setText", selector: "#missing", text: "nope" }],
     });
     return {
       afterFirst,
@@ -257,27 +267,36 @@ test("Chromium rejects string-hidden CSS comments and :is(body)", async ({ page 
   const result = await page.evaluate(async () => {
     const href = new URL("/runtime/runtime.js", location.origin).href;
     const runtime = (await import(href)) as {
-      isSafeCss: (css: string) => boolean;
+      parsePatchSpec: (input: unknown) => { ok: boolean };
       applyPatchSpec: (input: unknown) => { ok: boolean };
     };
-    const smuggle = 'h1{color:"/*"; background-image:url(http://x/leak) /* */}';
-    const isBody = ":is(body){opacity:0}";
-    const before = document.body.style.opacity;
-    const applied = runtime.applyPatchSpec({
-      id: "evil",
+    const smuggle = {
+      id: "smuggle",
       version: 0,
-      ops: [{ op: "injectCSS", css: isBody }],
-    });
+      ops: [
+        {
+          op: "injectCSS",
+          css: 'h1{color:"/*"; background-image:url(http://x/leak) /* */}',
+        },
+      ],
+    };
+    const isBody = {
+      id: "is-body",
+      version: 0,
+      ops: [{ op: "injectCSS", css: ":is(body){opacity:0}" }],
+    };
+    const before = getComputedStyle(document.body).opacity;
+    const applied = runtime.applyPatchSpec(isBody);
     return {
-      smuggleSafe: runtime.isSafeCss(smuggle),
-      isBodySafe: runtime.isSafeCss(isBody),
+      smuggleOk: runtime.parsePatchSpec(smuggle).ok,
+      isBodyOk: runtime.parsePatchSpec(isBody).ok,
       appliedOk: applied.ok,
-      opacity: document.body.style.opacity,
+      opacity: getComputedStyle(document.body).opacity,
       before,
     };
   });
-  expect(result.smuggleSafe).toBe(false);
-  expect(result.isBodySafe).toBe(false);
+  expect(result.smuggleOk).toBe(false);
+  expect(result.isBodyOk).toBe(false);
   expect(result.appliedOk).toBe(false);
   expect(result.opacity).toBe(result.before);
 });
@@ -393,6 +412,129 @@ test("bindEnterToClick on a non-native replacement forwards one click", async ({
   expect(counts.tag).toBe("SPAN");
   expect(counts.clicks).toBe(1);
   expect(counts.keys).toBe(0);
+});
+
+test("Chromium computed styles of accepted typed CSS stay in bounds", async ({ page }) => {
+  await page.goto("/checkout/?lift_variant=control");
+  const result = await page.evaluate(async (accepted) => {
+    const href = new URL("/runtime/runtime.js", location.origin).href;
+    const runtime = (await import(href)) as {
+      applyPatchSpec: (input: unknown) => { ok: boolean; error?: string };
+    };
+    const host = document.createElement("div");
+    host.id = "lift-css-probe";
+    document.body.append(host);
+    const reports: { name: string; ok: boolean; error?: string; styles: Record<string, string> }[] =
+      [];
+    for (const item of accepted) {
+      host.replaceChildren();
+      const el = document.createElement("button");
+      el.type = "button";
+      el.textContent = "probe";
+      if (item.probe.attr === "id") el.id = item.probe.value;
+      else el.className = item.probe.value;
+      host.append(el);
+      const applied = runtime.applyPatchSpec({
+        id: `css-${item.name}`,
+        version: 0,
+        ops: [{ op: "injectCSS", rules: item.rules }],
+      });
+      if (item.probe.state === "focus") el.focus();
+      const computed = getComputedStyle(el);
+      reports.push({
+        name: item.name,
+        ok: applied.ok,
+        error: applied.error,
+        styles: {
+          color: computed.color,
+          backgroundColor: computed.backgroundColor,
+          outlineWidth: computed.outlineWidth,
+          outlineOffset: computed.outlineOffset,
+          borderWidth: computed.borderTopWidth,
+          fontSize: computed.fontSize,
+          fontWeight: computed.fontWeight,
+          lineHeight: computed.lineHeight,
+          letterSpacing: computed.letterSpacing,
+          wordSpacing: computed.wordSpacing,
+          textDecorationThickness: computed.textDecorationThickness,
+          minHeight: computed.minHeight,
+          minWidth: computed.minWidth,
+          padding: computed.paddingTop,
+          cursor: computed.cursor,
+          opacity: computed.opacity,
+        },
+      });
+    }
+    return reports;
+  }, CSS_TYPED_ACCEPTED);
+  for (const report of result) {
+    expect(report.ok, `${report.name}: ${report.error ?? ""}`).toBe(true);
+    const px = (raw: string) => Number.parseFloat(raw);
+    expect(["1", "1.0"], report.name).toContain(report.styles.opacity);
+    if (report.styles.outlineWidth !== "0px") {
+      expect(px(report.styles.outlineWidth), report.name).toBeGreaterThanOrEqual(1);
+      expect(px(report.styles.outlineWidth), report.name).toBeLessThanOrEqual(8);
+    }
+    if (report.styles.outlineOffset !== "0px") {
+      expect(px(report.styles.outlineOffset), report.name).toBeGreaterThanOrEqual(0);
+      expect(px(report.styles.outlineOffset), report.name).toBeLessThanOrEqual(8);
+    }
+    if (report.name === "font and spacing" || report.name === "font-size em") {
+      expect(px(report.styles.fontSize), report.name).toBeGreaterThanOrEqual(10);
+      expect(px(report.styles.fontSize), report.name).toBeLessThanOrEqual(48 * 3);
+    }
+    if (report.name === "decoration target padding cursor") {
+      expect(px(report.styles.minHeight), report.name).toBeLessThanOrEqual(64);
+      expect(px(report.styles.minWidth), report.name).toBeLessThanOrEqual(64);
+      expect(px(report.styles.padding), report.name).toBeLessThanOrEqual(24);
+      expect(report.styles.cursor, report.name).toMatch(/pointer|default/);
+    }
+    expect(report.styles.color, report.name).toMatch(/^rgb\(/);
+    expect(report.styles.color, report.name).not.toMatch(/rgba\(|\//);
+  }
+});
+
+test("bindEnterToClick ignores Enter on descendants", async ({ page }) => {
+  await page.goto("/checkout/?lift_variant=control");
+  const counts = await page.evaluate(async () => {
+    const href = new URL("/runtime/runtime.js", location.origin).href;
+    const runtime = (await import(href)) as {
+      applyPatchSpec: (input: unknown) => { ok: boolean };
+    };
+    const host = document.createElement("div");
+    host.id = "lift-enter-host";
+    host.innerHTML = `Pay<span id="lift-enter-kid">x</span>`;
+    document.body.append(host);
+    let clicks = 0;
+    host.addEventListener("click", () => {
+      clicks += 1;
+    });
+    const nested = runtime.applyPatchSpec({
+      id: "enter-nested",
+      version: 0,
+      ops: [
+        {
+          op: "bindEnterToClick",
+          selector: "#checkout-form",
+        },
+      ],
+    });
+    const applied = runtime.applyPatchSpec({
+      id: "enter-host",
+      version: 0,
+      ops: [{ op: "bindEnterToClick", selector: "#lift-enter-host" }],
+    });
+    document
+      .getElementById("lift-enter-kid")
+      ?.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    const afterChild = clicks;
+    host.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    return { nestedOk: nested.ok, appliedOk: applied.ok, afterChild, clicks };
+  });
+  expect(counts.nestedOk).toBe(false);
+  expect(counts.appliedOk).toBe(true);
+  expect(counts.afterChild).toBe(0);
+  expect(counts.clicks).toBe(1);
 });
 
 test("GET // returns 400 and the site still serves", async ({ request }) => {

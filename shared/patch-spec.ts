@@ -2,7 +2,6 @@ import { Window } from "happy-dom";
 import {
   isAllowedAttributeName as rulesAllowedAttr,
   isSafeAttributeValue as rulesSafeAttrValue,
-  isSafeCss as rulesSafeCss,
   isSafeHref as rulesSafeHref,
   isSafeInsertHtml as rulesSafeInsertHtml,
   isSafeMountId as rulesSafeMountId,
@@ -46,9 +45,62 @@ export interface SetTextOp {
   text: string;
 }
 
+export const CSS_STATES = [
+  "focus",
+  "focus-visible",
+  "focus-within",
+  "hover",
+  "active",
+  "disabled",
+  "checked",
+] as const;
+export type CssState = (typeof CSS_STATES)[number];
+
+export const CSS_PROPERTIES = [
+  "color",
+  "background-color",
+  "outline-style",
+  "outline-color",
+  "outline-width",
+  "outline-offset",
+  "border-color",
+  "border-width",
+  "border-style",
+  "font-size",
+  "font-weight",
+  "line-height",
+  "letter-spacing",
+  "word-spacing",
+  "text-decoration-line",
+  "text-decoration-thickness",
+  "min-height",
+  "min-width",
+  "padding",
+  "cursor",
+] as const;
+export type CssProperty = (typeof CSS_PROPERTIES)[number];
+
+export interface CssSelector {
+  tag?: string;
+  classes?: string[];
+  id?: string;
+  state?: CssState;
+}
+
+export interface CssDeclaration {
+  property: CssProperty;
+  value: string | number;
+}
+
+export interface CssRule {
+  selector: CssSelector;
+  declarations: CssDeclaration[];
+}
+
 export interface InjectCssOp {
   op: "injectCSS";
-  css: string;
+  rules: CssRule[];
+  css?: string;
   id?: string;
 }
 
@@ -116,10 +168,6 @@ export function isSafeHref(value: string): boolean {
 
 export function isSafeAttributeValue(name: string, value: string): boolean {
   return rulesSafeAttrValue(name, value);
-}
-
-export function isSafeCss(css: string): boolean {
-  return rulesSafeCss(css);
 }
 
 export function isSafeMountId(value: string): boolean {

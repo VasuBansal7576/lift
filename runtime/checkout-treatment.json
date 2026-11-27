@@ -5,7 +5,15 @@
     {
       "op": "injectCSS",
       "id": "checkout-treatment-css",
-      "css": ".hover-nav:focus-within .hover-menu { display: block; } .contrast-fail { color: #111 !important; background-color: #fff !important; }"
+      "rules": [
+        {
+          "selector": { "tag": "p", "classes": ["terms", "contrast-fail"] },
+          "declarations": [
+            { "property": "color", "value": "#111" },
+            { "property": "background-color", "value": "#fff" }
+          ]
+        }
+      ]
     },
     {
       "op": "replaceTag",

@@ -114,7 +114,7 @@ Eight fixture sites (checkout, signup, pricing, newsletter, donate, booking, log
 
 **Provenance:** every site doc has `producedBy` (`fleet` \| `snapshot` \| `reused` \| `experiment` \| `rebuild`). The fleet aggregate keeps `dataCommitSha` (the HEAD commit when the live run started) separate from `aggregationCommitSha`.
 
-**Bots vs live:** bots get a variant from the Node SDK, then the page is forced with `?lift_variant=` so they exercise the enrolled HTML. Footer says **URL override (no Flagsmith)** in that case. Live humans are assigned by the JS SDK with no query override.
+**Bots vs live:** bots get a variant from the Node SDK, then the page is forced with `?lift_variant=` so they exercise the enrolled HTML. Footer says **URL override (no Flagsmith)** in that case. Live humans are assigned by the JS SDK with no query override. `?lift_bot=1` identity override is loopback-only unless `LIFT_ALLOW_BOT_OVERRIDE=true`. The traffic runner fails loudly if `LIFT_SITE_URL` is not loopback and that flag is unset.
 
 ## Limitations / what's simulated
 

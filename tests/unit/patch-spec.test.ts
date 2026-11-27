@@ -67,7 +67,15 @@ describe("parsePatchSpec", () => {
     const samples: Record<(typeof PATCH_OPS)[number], object> = {
       setAttribute: { op: "setAttribute", selector: "#x", name: "aria-label", value: "Go" },
       setText: { op: "setText", selector: "#x", text: "Go" },
-      injectCSS: { op: "injectCSS", css: "a { color: #111; }" },
+      injectCSS: {
+        op: "injectCSS",
+        rules: [
+          {
+            selector: { classes: ["x"] },
+            declarations: [{ property: "color", value: "#111" }],
+          },
+        ],
+      },
       wrapLabel: { op: "wrapLabel", selector: "#email", text: "Email" },
       makeFocusable: { op: "makeFocusable", selector: "#x" },
       bindEnterToClick: { op: "bindEnterToClick", selector: "#x" },

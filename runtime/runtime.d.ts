@@ -3,7 +3,6 @@ import type { PatchSpec } from "../shared/patch-spec.ts";
 export {
   isAllowedAttributeName,
   isSafeAttributeValue,
-  isSafeCss,
   isSafeHref,
   isSafeInsertHtml,
   isSafeMountId,

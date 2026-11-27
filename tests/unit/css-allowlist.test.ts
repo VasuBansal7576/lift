@@ -1,32 +1,107 @@
 import { describe, expect, it } from "vitest";
-import { decodeCssEscapes, isSafeCss, parsePatchSpec } from "../../runtime/patch-rules.js";
-import { CSS_ATTACKS } from "../fixtures/patch-spec-corpus.ts";
+import { parsePatchSpec } from "../../runtime/patch-rules.js";
+import { serializeCss } from "../../runtime/css-typed.js";
+import { CSS_ATTACKS, CSS_TYPED_ACCEPTED, colorCss } from "../fixtures/patch-spec-corpus.ts";
 
-describe("isSafeCss allowlist", () => {
-  it("accepts the checkout treatment rules", () => {
-    expect(
-      isSafeCss(
-        ".hover-nav:focus-within .hover-menu { display: block; } .contrast-fail { color: #111 !important; background-color: #fff !important; }",
-      ),
-    ).toBe(true);
+describe("typed injectCSS", () => {
+  it("serializes the checkout contrast rule without !important or free text", () => {
+    const parsed = parsePatchSpec({
+      id: "css",
+      version: 0,
+      ops: [
+        {
+          op: "injectCSS",
+          rules: [
+            {
+              selector: { tag: "p", classes: ["terms", "contrast-fail"] },
+              declarations: [
+                { property: "color", value: "#111" },
+                { property: "background-color", value: "#fff" },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    const css = (parsed.spec.ops[0] as { css: string }).css;
+    expect(css).toBe("p.terms.contrast-fail { color: #111111; background-color: #ffffff; }");
+    expect(css.includes("!important")).toBe(false);
+    expect(css.includes("url(")).toBe(false);
+    expect(css.includes("/*")).toBe(false);
   });
 
-  it("rejects every CSS attack fixture after comment-strip and escape-decode", () => {
+  it("rejects every CSS attack fixture including round-4 bypass payloads", () => {
     for (const attack of CSS_ATTACKS) {
-      expect(isSafeCss(attack.css), attack.name).toBe(false);
+      const parsed = parsePatchSpec(attack.spec);
+      expect(parsed.ok, attack.name).toBe(false);
     }
   });
 
-  it("never throws on oversized CSS escapes and rejects them", () => {
-    const css = ".x { color: \\110000; }";
-    expect(() => decodeCssEscapes(css)).not.toThrow();
-    expect(() => isSafeCss(css)).not.toThrow();
-    expect(isSafeCss(css)).toBe(false);
-    expect(() =>
-      parsePatchSpec({ id: "esc", version: 0, ops: [{ op: "injectCSS", css }] }),
-    ).not.toThrow();
-    expect(parsePatchSpec({ id: "esc", version: 0, ops: [{ op: "injectCSS", css }] }).ok).toBe(
-      false,
-    );
+  it("must-reject comment smuggling, u\\72l(, #fff0, rgb slash-alpha, outline 3000px, bare types", () => {
+    const payloads = [
+      { op: "injectCSS", css: 'h1{color:"/*"; background-image:url(http://x/leak) /* */}' },
+      {
+        op: "injectCSS",
+        rules: [
+          {
+            selector: { classes: ["x"] },
+            declarations: [{ property: "color", value: "u\\72l(http://evil.example)" }],
+          },
+        ],
+      },
+      {
+        op: "injectCSS",
+        rules: [{ selector: { classes: ["x"] }, declarations: [{ property: "color", value: "#fff0" }] }],
+      },
+      {
+        op: "injectCSS",
+        rules: [
+          {
+            selector: { classes: ["x"] },
+            declarations: [{ property: "color", value: "rgb(0 0 0 / 0)" }],
+          },
+        ],
+      },
+      {
+        op: "injectCSS",
+        rules: [
+          {
+            selector: { classes: ["x"] },
+            declarations: [{ property: "outline", value: "3000px" }],
+          },
+        ],
+      },
+      {
+        op: "injectCSS",
+        rules: [
+          {
+            selector: { tag: "p" },
+            declarations: [{ property: "color", value: "#111" }],
+          },
+        ],
+      },
+    ];
+    for (const payload of payloads) {
+      expect(parsePatchSpec({ id: "atk", version: 0, ops: [payload] }).ok).toBe(false);
+    }
+  });
+
+  it("never emits !important and re-emits parsed values", () => {
+    const css = serializeCss([
+      {
+        selector: { classes: ["x"] },
+        declarations: [{ property: "color", value: "#111111" }],
+      },
+    ]);
+    expect(css).toBe(".x { color: #111111; }");
+    expect(parsePatchSpec({ id: "ok", version: 0, ops: [colorCss()] }).ok).toBe(true);
+    for (const item of CSS_TYPED_ACCEPTED) {
+      expect(
+        parsePatchSpec({ id: item.name, version: 0, ops: [{ op: "injectCSS", rules: item.rules }] }).ok,
+        item.name,
+      ).toBe(true);
+    }
   });
 });

@@ -11,6 +11,114 @@ export interface CorpusCase {
 
 const op = (ops: object[]) => ({ id: "corpus", version: 0, ops });
 
+export function colorCss(classes: string[] = ["x"], color = "#111", extra?: { id?: string }) {
+  const body: Record<string, unknown> = {
+    op: "injectCSS",
+    rules: [
+      {
+        selector: { classes },
+        declarations: [{ property: "color", value: color }],
+      },
+    ],
+  };
+  if (extra?.id) body.id = extra.id;
+  return body;
+}
+
+export const CSS_TYPED_ACCEPTED: {
+  name: string;
+  rules: object[];
+  probe: { attr: "class" | "id"; value: string; state?: string };
+}[] = [
+  {
+    name: "color hex3",
+    rules: [{ selector: { classes: ["c-color"] }, declarations: [{ property: "color", value: "#111" }] }],
+    probe: { attr: "class", value: "c-color" },
+  },
+  {
+    name: "background-color rgb",
+    rules: [
+      {
+        selector: { classes: ["c-bg"] },
+        declarations: [{ property: "background-color", value: "rgb(255, 255, 255)" }],
+      },
+    ],
+    probe: { attr: "class", value: "c-bg" },
+  },
+  {
+    name: "outline focus",
+    rules: [
+      {
+        selector: { id: "c-outline", state: "focus" },
+        declarations: [
+          { property: "outline-style", value: "solid" },
+          { property: "outline-color", value: "#000" },
+          { property: "outline-width", value: "2px" },
+          { property: "outline-offset", value: "1px" },
+        ],
+      },
+    ],
+    probe: { attr: "id", value: "c-outline", state: "focus" },
+  },
+  {
+    name: "border",
+    rules: [
+      {
+        selector: { classes: ["c-border"] },
+        declarations: [
+          { property: "border-style", value: "dashed" },
+          { property: "border-color", value: "#123456" },
+          { property: "border-width", value: "3px" },
+        ],
+      },
+    ],
+    probe: { attr: "class", value: "c-border" },
+  },
+  {
+    name: "font and spacing",
+    rules: [
+      {
+        selector: { classes: ["c-font"] },
+        declarations: [
+          { property: "font-size", value: "16px" },
+          { property: "font-weight", value: "700" },
+          { property: "line-height", value: 1.5 },
+          { property: "letter-spacing", value: "0.1em" },
+          { property: "word-spacing", value: "2px" },
+        ],
+      },
+    ],
+    probe: { attr: "class", value: "c-font" },
+  },
+  {
+    name: "decoration target padding cursor",
+    rules: [
+      {
+        selector: { classes: ["c-misc"] },
+        declarations: [
+          { property: "text-decoration-line", value: "underline" },
+          { property: "text-decoration-thickness", value: "2px" },
+          { property: "min-height", value: "44px" },
+          { property: "min-width", value: "44px" },
+          { property: "padding", value: "8px" },
+          { property: "cursor", value: "pointer" },
+        ],
+      },
+    ],
+    probe: { attr: "class", value: "c-misc" },
+  },
+  {
+    name: "font-size em",
+    rules: [
+      {
+        selector: { classes: ["c-em"] },
+        declarations: [{ property: "font-size", value: "1.25em" }],
+      },
+    ],
+    probe: { attr: "class", value: "c-em" },
+  },
+];
+
 export const PATCH_SPEC_CORPUS: CorpusCase[] = [
   { name: "empty ops", spec: { id: "x", version: 0, ops: [] }, ok: true },
   {
@@ -30,9 +138,33 @@ export const PATCH_SPEC_CORPUS: CorpusCase[] = [
   },
   {
     name: "injectCSS simple",
-    spec: op([{ op: "injectCSS", css: ".x { color: #111; }" }]),
+    spec: op([colorCss(["x"], "#111")]),
     ok: true,
   },
+  {
+    name: "injectCSS checkout contrast",
+    spec: op([
+      {
+        op: "injectCSS",
+        id: "checkout-treatment-css",
+        rules: [
+          {
+            selector: { tag: "p", classes: ["terms", "contrast-fail"] },
+            declarations: [
+              { property: "color", value: "#111" },
+              { property: "background-color", value: "#fff" },
+            ],
+          },
+        ],
+      },
+    ]),
+    ok: true,
+  },
+  ...CSS_TYPED_ACCEPTED.map((item) => ({
+    name: `injectCSS accepted ${item.name}`,
+    spec: op([{ op: "injectCSS", rules: item.rules }]),
+    ok: true,
+  })),
   {
     name: "insertHTML skip link",
     spec: op([
@@ -97,44 +229,283 @@ export const PATCH_SPEC_CORPUS: CorpusCase[] = [
     error: "ops[0] unsafe attribute value",
   },
   {
+    name: "raw css string rejected",
+    spec: op([{ op: "injectCSS", css: ".x { color: #111; }" }]),
+    ok: false,
+    error: "ops[0] rules required",
+  },
+  {
     name: "css @import",
     spec: op([{ op: "injectCSS", css: "@import url(https://evil.example/x.css);" }]),
     ok: false,
-    error: "ops[0] css is not allowlisted",
+    error: "ops[0] rules required",
   },
   {
     name: "css url()",
     spec: op([{ op: "injectCSS", css: "body { background: url(https://evil.example/x.png); }" }]),
     ok: false,
-    error: "ops[0] css is not allowlisted",
+    error: "ops[0] rules required",
   },
   {
     name: "css expression",
     spec: op([{ op: "injectCSS", css: "body { width: expression(alert(1)); }" }]),
     ok: false,
-    error: "ops[0] css is not allowlisted",
+    error: "ops[0] rules required",
   },
   {
-    name: "css behavior",
-    spec: op([{ op: "injectCSS", css: "body { behavior: url(x.htc); }" }]),
+    name: "css comment smuggling",
+    spec: op([
+      {
+        op: "injectCSS",
+        css: 'h1{color:"/*"; background-image:url(http://x/leak) /* */}',
+      },
+    ]),
+    ok: false,
+    error: "ops[0] rules required",
+  },
+  {
+    name: "css :is(body)",
+    spec: op([{ op: "injectCSS", css: ":is(body){opacity:0}" }]),
+    ok: false,
+    error: "ops[0] rules required",
+  },
+  {
+    name: "css escaped url as raw text",
+    spec: op([{ op: "injectCSS", css: ".x { color: \\75 rl(http://evil.example); }" }]),
+    ok: false,
+    error: "ops[0] rules required",
+  },
+  {
+    name: "typed comment smuggling value",
+    spec: op([
+      {
+        op: "injectCSS",
+        rules: [{ selector: { classes: ["x"] }, declarations: [{ property: "color", value: "/*" }] }],
+      },
+    ]),
     ok: false,
     error: "ops[0] css is not allowlisted",
   },
   {
-    name: "css -moz-binding",
-    spec: op([{ op: "injectCSS", css: "body { -moz-binding: url(x.xml); }" }]),
+    name: "typed u\\72l(",
+    spec: op([
+      {
+        op: "injectCSS",
+        rules: [
+          {
+            selector: { classes: ["x"] },
+            declarations: [{ property: "color", value: "u\\72l(http://evil.example)" }],
+          },
+        ],
+      },
+    ]),
     ok: false,
     error: "ops[0] css is not allowlisted",
   },
   {
-    name: "css position fixed overlay",
-    spec: op([{ op: "injectCSS", css: ".x { position: fixed; z-index: 9999; }" }]),
+    name: "typed #fff0 alpha hex",
+    spec: op([
+      {
+        op: "injectCSS",
+        rules: [{ selector: { classes: ["x"] }, declarations: [{ property: "color", value: "#fff0" }] }],
+      },
+    ]),
     ok: false,
     error: "ops[0] css is not allowlisted",
   },
   {
-    name: "css closes style tag",
-    spec: op([{ op: "injectCSS", css: "a{} </style><script>alert(1)</script>" }]),
+    name: "typed rgb slash alpha",
+    spec: op([
+      {
+        op: "injectCSS",
+        rules: [
+          {
+            selector: { classes: ["x"] },
+            declarations: [{ property: "color", value: "rgb(0 0 0 / 0)" }],
+          },
+        ],
+      },
+    ]),
+    ok: false,
+    error: "ops[0] css is not allowlisted",
+  },
+  {
+    name: "typed rgba",
+    spec: op([
+      {
+        op: "injectCSS",
+        rules: [
+          {
+            selector: { classes: ["x"] },
+            declarations: [{ property: "color", value: "rgba(0, 0, 0, 0)" }],
+          },
+        ],
+      },
+    ]),
+    ok: false,
+    error: "ops[0] css is not allowlisted",
+  },
+  {
+    name: "typed outline shorthand 3000px",
+    spec: op([
+      {
+        op: "injectCSS",
+        rules: [
+          {
+            selector: { classes: ["x"] },
+            declarations: [{ property: "outline", value: "3000px" }],
+          },
+        ],
+      },
+    ]),
+    ok: false,
+    error: "ops[0] css is not allowlisted",
+  },
+  {
+    name: "typed outline-width 3000px",
+    spec: op([
+      {
+        op: "injectCSS",
+        rules: [
+          {
+            selector: { classes: ["x"] },
+            declarations: [{ property: "outline-width", value: "3000px" }],
+          },
+        ],
+      },
+    ]),
+    ok: false,
+    error: "ops[0] css is not allowlisted",
+  },
+  {
+    name: "typed bare type selector",
+    spec: op([
+      {
+        op: "injectCSS",
+        rules: [
+          {
+            selector: { tag: "p" },
+            declarations: [{ property: "color", value: "#111" }],
+          },
+        ],
+      },
+    ]),
+    ok: false,
+    error: "ops[0] css is not allowlisted",
+  },
+  {
+    name: "typed compounding bare type selectors",
+    spec: op([
+      {
+        op: "injectCSS",
+        rules: [
+          {
+            selector: { tag: "div" },
+            declarations: [{ property: "color", value: "#111" }],
+          },
+          {
+            selector: { tag: "span" },
+            declarations: [{ property: "color", value: "#000" }],
+          },
+        ],
+      },
+    ]),
+    ok: false,
+    error: "ops[0] css is not allowlisted",
+  },
+  {
+    name: "typed html target",
+    spec: op([
+      {
+        op: "injectCSS",
+        rules: [
+          {
+            selector: { tag: "html", classes: ["x"] },
+            declarations: [{ property: "color", value: "#111" }],
+          },
+        ],
+      },
+    ]),
+    ok: false,
+    error: "ops[0] css is not allowlisted",
+  },
+  {
+    name: "typed body target",
+    spec: op([
+      {
+        op: "injectCSS",
+        rules: [
+          {
+            selector: { tag: "body", classes: ["x"] },
+            declarations: [{ property: "color", value: "#111" }],
+          },
+        ],
+      },
+    ]),
+    ok: false,
+    error: "ops[0] css is not allowlisted",
+  },
+  {
+    name: "typed head target",
+    spec: op([
+      {
+        op: "injectCSS",
+        rules: [
+          {
+            selector: { tag: "head", id: "x" },
+            declarations: [{ property: "color", value: "#111" }],
+          },
+        ],
+      },
+    ]),
+    ok: false,
+    error: "ops[0] css is not allowlisted",
+  },
+  {
+    name: "typed display none",
+    spec: op([
+      {
+        op: "injectCSS",
+        rules: [
+          {
+            selector: { classes: ["x"] },
+            declarations: [{ property: "display", value: "none" }],
+          },
+        ],
+      },
+    ]),
+    ok: false,
+    error: "ops[0] css is not allowlisted",
+  },
+  {
+    name: "typed opacity",
+    spec: op([
+      {
+        op: "injectCSS",
+        rules: [
+          {
+            selector: { classes: ["x"] },
+            declarations: [{ property: "opacity", value: "0" }],
+          },
+        ],
+      },
+    ]),
+    ok: false,
+    error: "ops[0] css is not allowlisted",
+  },
+  {
+    name: "typed important in value",
+    spec: op([
+      {
+        op: "injectCSS",
+        rules: [
+          {
+            selector: { classes: ["x"] },
+            declarations: [{ property: "color", value: "#111 !important" }],
+          },
+        ],
+      },
+    ]),
     ok: false,
     error: "ops[0] css is not allowlisted",
   },
@@ -264,101 +635,6 @@ export const PATCH_SPEC_CORPUS: CorpusCase[] = [
     error: "ops[0] html required",
   },
   {
-    name: "css escaped url",
-    spec: op([{ op: "injectCSS", css: ".x { color: \\75 rl(http://evil.example); }" }]),
-    ok: false,
-    error: "ops[0] css is not allowlisted",
-    schema: "skip",
-  },
-  {
-    name: "css escaped import",
-    spec: op([{ op: "injectCSS", css: "@\\69mport 'http://evil.example';" }]),
-    ok: false,
-    error: "ops[0] css is not allowlisted",
-    schema: "skip",
-  },
-  {
-    name: "css image-set",
-    spec: op([{ op: "injectCSS", css: ".x { color: image-set('//evil.example' 1x); }" }]),
-    ok: false,
-    error: "ops[0] css is not allowlisted",
-  },
-  {
-    name: "css escaped position fixed",
-    spec: op([{ op: "injectCSS", css: ".x { position: \\66 ixed; }" }]),
-    ok: false,
-    error: "ops[0] css is not allowlisted",
-    schema: "skip",
-  },
-  {
-    name: "css comment position fixed",
-    spec: op([{ op: "injectCSS", css: ".x { position:/**/fixed; }" }]),
-    ok: false,
-    error: "ops[0] css is not allowlisted",
-    schema: "skip",
-  },
-  {
-    name: "css comment import",
-    spec: op([{ op: "injectCSS", css: "@/**/import 'x';" }]),
-    ok: false,
-    error: "ops[0] css is not allowlisted",
-    schema: "skip",
-  },
-  {
-    name: "css src()",
-    spec: op([{ op: "injectCSS", css: ".x { color: src(http://evil.example); }" }]),
-    ok: false,
-    error: "ops[0] css is not allowlisted",
-  },
-  {
-    name: "css element()",
-    spec: op([{ op: "injectCSS", css: ".x { color: element(#x); }" }]),
-    ok: false,
-    error: "ops[0] css is not allowlisted",
-  },
-  {
-    name: "css paint()",
-    spec: op([{ op: "injectCSS", css: ".x { color: paint(foo); }" }]),
-    ok: false,
-    error: "ops[0] css is not allowlisted",
-  },
-  {
-    name: "css body display none",
-    spec: op([{ op: "injectCSS", css: "body{display:none}" }]),
-    ok: false,
-    error: "ops[0] css is not allowlisted",
-  },
-  {
-    name: "css html selector",
-    spec: op([{ op: "injectCSS", css: "html .x { color: #111; }" }]),
-    ok: false,
-    error: "ops[0] css is not allowlisted",
-  },
-  {
-    name: "css star selector",
-    spec: op([{ op: "injectCSS", css: "* { color: #111; }" }]),
-    ok: false,
-    error: "ops[0] css is not allowlisted",
-  },
-  {
-    name: "css :root selector",
-    spec: op([{ op: "injectCSS", css: ":root { color: #111; }" }]),
-    ok: false,
-    error: "ops[0] css is not allowlisted",
-  },
-  {
-    name: "css display none",
-    spec: op([{ op: "injectCSS", css: ".x { display: none; }" }]),
-    ok: false,
-    error: "ops[0] css is not allowlisted",
-  },
-  {
-    name: "css absolute overlay",
-    spec: op([{ op: "injectCSS", css: ".x { position: absolute; }" }]),
-    ok: false,
-    error: "ops[0] css is not allowlisted",
-  },
-  {
     name: "insertHTML id attr",
     spec: op([
       {
@@ -405,126 +681,6 @@ export const PATCH_SPEC_CORPUS: CorpusCase[] = [
     error: "ops[0] target is not allowlisted",
   },
   {
-    name: "css string-hidden comment url",
-    spec: op([
-      {
-        op: "injectCSS",
-        css: 'h1{color:"/*"; background-image:url(http://x/leak) /* */}',
-      },
-    ]),
-    ok: false,
-    error: "ops[0] css is not allowlisted",
-  },
-  {
-    name: "css :is(body)",
-    spec: op([{ op: "injectCSS", css: ":is(body){opacity:0}" }]),
-    ok: false,
-    error: "ops[0] css is not allowlisted",
-  },
-  {
-    name: "css :where(html)",
-    spec: op([{ op: "injectCSS", css: ":where(html){opacity:0}" }]),
-    ok: false,
-    error: "ops[0] css is not allowlisted",
-  },
-  {
-    name: "css :not(.zzz)",
-    spec: op([{ op: "injectCSS", css: ":not(.zzz){font-size:0}" }]),
-    ok: false,
-    error: "ops[0] css is not allowlisted",
-  },
-  {
-    name: "css :has(*)",
-    spec: op([{ op: "injectCSS", css: ":has(*){opacity:0}" }]),
-    ok: false,
-    error: "ops[0] css is not allowlisted",
-  },
-  {
-    name: "css :scope",
-    spec: op([{ op: "injectCSS", css: ":scope { color: #111; }" }]),
-    ok: false,
-    error: "ops[0] css is not allowlisted",
-  },
-  {
-    name: "css namespace *|*",
-    spec: op([{ op: "injectCSS", css: "*|* { color: #111; }" }]),
-    ok: false,
-    error: "ops[0] css is not allowlisted",
-  },
-  {
-    name: "css namespace *|body",
-    spec: op([{ op: "injectCSS", css: "*|body { color: #111; }" }]),
-    ok: false,
-    error: "ops[0] css is not allowlisted",
-  },
-  {
-    name: "css bare attribute selector",
-    spec: op([{ op: "injectCSS", css: "[lang] { color: #111; }" }]),
-    ok: false,
-    error: "ops[0] css is not allowlisted",
-    schema: "skip",
-  },
-  {
-    name: "css :first-child",
-    spec: op([{ op: "injectCSS", css: ".x:first-child { color: #111; }" }]),
-    ok: false,
-    error: "ops[0] css is not allowlisted",
-    schema: "skip",
-  },
-  {
-    name: "css visibility hidden",
-    spec: op([{ op: "injectCSS", css: ".x { visibility: hidden; }" }]),
-    ok: false,
-    error: "ops[0] css is not allowlisted",
-  },
-  {
-    name: "css clip-path",
-    spec: op([{ op: "injectCSS", css: ".x { clip-path: inset(0); }" }]),
-    ok: false,
-    error: "ops[0] css is not allowlisted",
-  },
-  {
-    name: "css opacity zero",
-    spec: op([{ op: "injectCSS", css: ".x { opacity: 0; }" }]),
-    ok: false,
-    error: "ops[0] css is not allowlisted",
-    schema: "skip",
-  },
-  {
-    name: "css font-size zero",
-    spec: op([{ op: "injectCSS", css: ".x { font-size: 0; }" }]),
-    ok: false,
-    error: "ops[0] css is not allowlisted",
-    schema: "skip",
-  },
-  {
-    name: "css transparent color",
-    spec: op([{ op: "injectCSS", css: ".x { color: transparent; }" }]),
-    ok: false,
-    error: "ops[0] css is not allowlisted",
-  },
-  {
-    name: "css huge margin",
-    spec: op([{ op: "injectCSS", css: ".x { margin: 999px; }" }]),
-    ok: false,
-    error: "ops[0] css is not allowlisted",
-    schema: "skip",
-  },
-  {
-    name: "css huge width",
-    spec: op([{ op: "injectCSS", css: ".x { width: 9999px; }" }]),
-    ok: false,
-    error: "ops[0] css is not allowlisted",
-    schema: "skip",
-  },
-  {
-    name: "css oversized hex escape",
-    spec: op([{ op: "injectCSS", css: ".x { color: \\110000; }" }]),
-    ok: false,
-    error: "ops[0] css is not allowlisted",
-    schema: "skip",
-  },
-  {
     name: "setAttribute type hidden",
     spec: op([{ op: "setAttribute", selector: "input", name: "type", value: "hidden" }]),
     ok: false,
@@ -560,6 +716,24 @@ export const PATCH_SPEC_CORPUS: CorpusCase[] = [
     ok: false,
     error: "ops[0] target is not allowlisted",
   },
+  {
+    name: "setAttribute form host",
+    spec: op([{ op: "setAttribute", selector: "form", name: "aria-label", value: "x" }]),
+    ok: false,
+    error: "ops[0] target is not allowlisted",
+  },
+  {
+    name: "makeFocusable body",
+    spec: op([{ op: "makeFocusable", selector: "body" }]),
+    ok: false,
+    error: "ops[0] target is not allowlisted",
+  },
+  {
+    name: "bindEnterToClick form",
+    spec: op([{ op: "bindEnterToClick", selector: "form" }]),
+    ok: false,
+    error: "ops[0] target is not allowlisted",
+  },
 ];
 
 export const CSS_ATTACKS = PATCH_SPEC_CORPUS.filter(
@@ -571,8 +745,7 @@ export const CSS_ATTACKS = PATCH_SPEC_CORPUS.filter(
     (fixture.spec as { ops: { op?: string }[] }).ops.some((item) => item.op === "injectCSS"),
 ).map((fixture) => ({
   name: fixture.name,
-  css: ((fixture.spec as { ops: { css: string }[] }).ops.find((item) => item.css) as { css: string })
-    .css,
+  spec: fixture.spec,
 }));
 
 export const INSERT_HTML_ATTACKS = PATCH_SPEC_CORPUS.filter(

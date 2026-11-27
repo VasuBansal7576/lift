@@ -4,8 +4,11 @@
  */
 
 import {
+  attributeWouldHideInteractive,
   cssKey,
   elementForbiddenAsTextOrTagHost,
+  elementHasElementChildren,
+  elementHasInteractiveDescendant,
   elementHasVoidOrControlDescendant,
   hashKey,
   isSafeInsertHtml,
@@ -18,7 +21,6 @@ import {
 export {
   isAllowedAttributeName,
   isSafeAttributeValue,
-  isSafeCss,
   isSafeHref,
   isSafeInsertHtml,
   isSafeMountId,
@@ -62,6 +64,9 @@ function applySetAttribute(root, op, index) {
   if (found.error) return miss(index, op.selector, found.error);
   const el = found.el;
   if (!(el instanceof Element)) return miss(index, op.selector);
+  if (elementForbiddenAsTextOrTagHost(el)) {
+    return { status: "miss", error: `ops[${index}] target is not allowlisted` };
+  }
   const attrName = op.name.toLowerCase();
   if (attrName.startsWith("data-lift-")) {
     return { status: "miss", error: `ops[${index}] disallowed attribute` };
@@ -71,6 +76,9 @@ function applySetAttribute(root, op, index) {
     if (tag === "input" || tag === "select" || tag === "textarea" || op.value.toLowerCase() === "hidden") {
       return { status: "miss", error: `ops[${index}] disallowed attribute` };
     }
+  }
+  if (attributeWouldHideInteractive(op.name, op.value, el)) {
+    return { status: "miss", error: `ops[${index}] target is not allowlisted` };
   }
   if (el.getAttribute(op.name) === op.value) return noop();
   const had = el.hasAttribute(op.name);
@@ -88,6 +96,9 @@ function applySetText(root, op, index) {
   const el = found.el;
   if (!(el instanceof Element)) return miss(index, op.selector);
   if (elementForbiddenAsTextOrTagHost(el)) {
+    return { status: "miss", error: `ops[${index}] target is not allowlisted` };
+  }
+  if (elementHasElementChildren(el) || elementHasVoidOrControlDescendant(el)) {
     return { status: "miss", error: `ops[${index}] target is not allowlisted` };
   }
   const prevChildren = [...el.childNodes];
@@ -167,6 +178,9 @@ function applyMakeFocusable(root, op, index) {
   if (found.error) return miss(index, op.selector, found.error);
   const el = found.el;
   if (!(el instanceof HTMLElement)) return miss(index, op.selector);
+  if (elementForbiddenAsTextOrTagHost(el)) {
+    return { status: "miss", error: `ops[${index}] target is not allowlisted` };
+  }
   if (el.getAttribute("data-lift-focusable") === "1") return noop();
   const hadTab = el.hasAttribute("tabindex");
   const prevTab = el.getAttribute("tabindex");
@@ -184,8 +198,15 @@ function applyBindEnterToClick(root, op, index) {
   if (found.error) return miss(index, op.selector, found.error);
   const el = found.el;
   if (!(el instanceof HTMLElement)) return miss(index, op.selector);
+  if (elementForbiddenAsTextOrTagHost(el)) {
+    return { status: "miss", error: `ops[${index}] target is not allowlisted` };
+  }
+  if (elementHasInteractiveDescendant(el)) {
+    return { status: "miss", error: `ops[${index}] target is not allowlisted` };
+  }
   if (el.getAttribute("data-lift-enter") === "1") return noop();
   const onKey = (event) => {
+    if (event.target !== el) return;
     if (event.key === "Enter") {
       event.preventDefault();
       el.click();

@@ -39,7 +39,7 @@ const CHECKOUT_HTML = `
       <input id="terms" type="checkbox">
       <span id="terms-copy">I agree to the terms of sale and understand this order is final.</span>
     </p>
-    <div id="place-order" class="div-pay" data-barrier="div_button" style="color: red">💳<span class="glyph">x</span></div>
+    <div id="place-order" class="div-pay" data-barrier="div_button" style="color: red">💳</div>
   </form>
 `;
 
@@ -168,7 +168,15 @@ describe("applyPatchSpec ops", () => {
         version: 0,
         ops: [
           { op: "wrapLabel", selector: "#email", text: "Email" },
-          { op: "injectCSS", css: "p { color: red; }" },
+          {
+            op: "injectCSS",
+            rules: [
+              {
+                selector: { classes: ["x"] },
+                declarations: [{ property: "color", value: "#111" }],
+              },
+            ],
+          },
         ],
       });
       expect(rolled.ok).toBe(false);
@@ -269,7 +277,15 @@ describe("applyPatchSpec ops", () => {
         version: 0,
         ops: [
           { op: "setText", selector: "#keep", text: "new" },
-          { op: "injectCSS", css: "p { color: red; }" },
+          {
+            op: "injectCSS",
+            rules: [
+              {
+                selector: { classes: ["x"] },
+                declarations: [{ property: "color", value: "#111" }],
+              },
+            ],
+          },
         ],
       });
       expect(result.ok).toBe(false);
@@ -305,28 +321,33 @@ describe("applyPatchSpec ops", () => {
     expect(document.getElementById("s1")?.textContent).toBe(before);
   });
 
-  it("restores child elements when setText is rolled back", () => {
-    document.body.innerHTML = `<p id="keep"><span id="kid">a</span>b</p>`;
-    const original = document.createElement.bind(document);
-    document.createElement = ((tag: string) => {
-      if (tag === "style") throw new Error("style boom");
-      return original(tag);
-    }) as typeof document.createElement;
-    try {
-      const result = applyPatchSpec({
-        id: "settext-undo",
-        version: 0,
-        ops: [
-          { op: "setText", selector: "#keep", text: "new" },
-          { op: "injectCSS", css: ".x { color: #111; }" },
-        ],
-      });
-      expect(result.ok).toBe(false);
-      expect(document.getElementById("kid")?.textContent).toBe("a");
-      expect(document.getElementById("keep")?.textContent).toBe("ab");
-    } finally {
-      document.createElement = original;
-    }
+  it("refuses setText when the target has element children", () => {
+    document.body.innerHTML = `<main id="keep"><form id="f"><input id="in"></form></main>`;
+    const snapshot = document.body.innerHTML;
+    const result = applyPatchSpec({
+      id: "settext-main",
+      version: 0,
+      ops: [{ op: "setText", selector: "#keep", text: "wiped" }],
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toContain("target is not allowlisted");
+    expect(document.body.innerHTML).toBe(snapshot);
+    expect(document.getElementById("in")).not.toBeNull();
+  });
+
+  it("restores leaf text when setText is rolled back", () => {
+    document.body.innerHTML = `<p id="keep">old</p>`;
+    const result = applyPatchSpec({
+      id: "settext-undo",
+      version: 0,
+      ops: [
+        { op: "setText", selector: "#keep", text: "new" },
+        { op: "setText", selector: "#missing", text: "nope" },
+      ],
+    });
+    expect(result.ok).toBe(false);
+    expect(document.getElementById("keep")?.textContent).toBe("old");
   });
 
   it("forwards chained replaceTag clicks to the original node once", () => {
@@ -371,14 +392,30 @@ describe("applyPatchSpec ops", () => {
     const first = applyPatchSpec({
       id: "css-1",
       version: 0,
-      ops: [{ op: "injectCSS", id: "s1", css: ".a { color: #111; }" }],
+      ops: [
+        {
+          op: "injectCSS",
+          id: "s1",
+          rules: [
+            { selector: { classes: ["a"] }, declarations: [{ property: "color", value: "#111" }] },
+          ],
+        },
+      ],
     });
     expect(first.ok).toBe(true);
     expect(document.getElementById("lift-patch-css-s1")?.textContent).toContain("#111");
     const second = applyPatchSpec({
       id: "css-2",
       version: 0,
-      ops: [{ op: "injectCSS", id: "s1", css: ".a { color: #222; }" }],
+      ops: [
+        {
+          op: "injectCSS",
+          id: "s1",
+          rules: [
+            { selector: { classes: ["a"] }, declarations: [{ property: "color", value: "#222" }] },
+          ],
+        },
+      ],
     });
     expect(second.ok).toBe(true);
     expect(document.getElementById("lift-patch-css-s1")?.textContent).toContain("#222");
@@ -500,18 +537,93 @@ describe("applyPatchSpec ops", () => {
       applyPatchSpec({
         id: "css-1",
         version: 0,
-        ops: [{ op: "injectCSS", id: "s1", css: ".a { color: #111; }" }],
+        ops: [
+          {
+            op: "injectCSS",
+            id: "s1",
+            rules: [
+              { selector: { classes: ["a"] }, declarations: [{ property: "color", value: "#111" }] },
+            ],
+          },
+        ],
       }).ok,
     ).toBe(true);
     const rolled = applyPatchSpec({
       id: "css-2",
       version: 0,
       ops: [
-        { op: "injectCSS", id: "s1", css: ".a { color: #222; }" },
+        {
+          op: "injectCSS",
+          id: "s1",
+          rules: [
+            { selector: { classes: ["a"] }, declarations: [{ property: "color", value: "#222" }] },
+          ],
+        },
         { op: "setText", selector: "#missing", text: "nope" },
       ],
     });
     expect(rolled.ok).toBe(false);
     expect(document.getElementById("lift-patch-css-s1")?.textContent).toContain("#111");
   });
+
+  it("bindEnterToClick acts only when event.target is the bound element", () => {
+    document.body.innerHTML = `<div id="host">Pay<span id="kid">x</span></div>`;
+    let clicks = 0;
+    document.getElementById("host")?.addEventListener("click", () => {
+      clicks += 1;
+    });
+    expect(
+      applyPatchSpec({
+        id: "enter-target",
+        version: 0,
+        ops: [{ op: "bindEnterToClick", selector: "#host" }],
+      }).ok,
+    ).toBe(true);
+    document.getElementById("kid")?.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    expect(clicks).toBe(0);
+    document.getElementById("host")?.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    expect(clicks).toBe(1);
+  });
+
+  it("refuses bindEnterToClick on hosts with interactive descendants", () => {
+    document.body.innerHTML = `<div id="host"><button type="button" id="inner">Go</button></div>`;
+    const result = applyPatchSpec({
+      id: "enter-nested",
+      version: 0,
+      ops: [{ op: "bindEnterToClick", selector: "#host" }],
+    });
+    expect(result.ok).toBe(false);
+  });
+
+  it("refuses setAttribute aria-hidden on an interactive host", () => {
+    document.body.innerHTML = `<button type="button" id="go">Go</button>`;
+    const result = applyPatchSpec({
+      id: "hide",
+      version: 0,
+      ops: [{ op: "setAttribute", selector: "#go", name: "aria-hidden", value: "true" }],
+    });
+    expect(result.ok).toBe(false);
+    expect(document.getElementById("go")?.getAttribute("aria-hidden")).toBeNull();
+  });
+
+  it("refuses makeFocusable and setAttribute on a form host matched by id", () => {
+    document.body.innerHTML = `<form id="f"><span id="x">x</span></form>`;
+    expect(
+      applyPatchSpec({
+        id: "form-focus",
+        version: 0,
+        ops: [{ op: "makeFocusable", selector: "#f" }],
+      }).ok,
+    ).toBe(false);
+    expect(
+      applyPatchSpec({
+        id: "form-attr",
+        version: 0,
+        ops: [{ op: "setAttribute", selector: "#f", name: "aria-label", value: "x" }],
+      }).ok,
+    ).toBe(false);
+    expect(document.getElementById("f")?.hasAttribute("tabindex")).toBe(false);
+    expect(document.getElementById("f")?.hasAttribute("aria-label")).toBe(false);
+  });
 });
+

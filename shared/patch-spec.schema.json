@@ -16,38 +16,207 @@
   },
   "$defs": {
     "selector": { "type": "string", "minLength": 1 },
-    "mountId": { "type": "string", "pattern": "^[A-Za-z0-9_-]+$" },
-    "css": {
-      "type": "string",
-      "minLength": 1,
+    "forbiddenHostSelector": {
       "not": {
-        "anyOf": [
-          { "pattern": "</\\s*style" },
-          { "pattern": "@import" },
-          { "pattern": "url\\s*\\(" },
-          { "pattern": "src\\s*\\(" },
-          { "pattern": "image-set" },
-          { "pattern": "element\\s*\\(" },
-          { "pattern": "paint\\s*\\(" },
-          { "pattern": "expression\\s*\\(" },
-          { "pattern": "behavior\\s*:" },
-          { "pattern": "-moz-binding" },
-          { "pattern": "position\\s*:\\s*(fixed|sticky|absolute)" },
-          { "pattern": "display\\s*:\\s*none" },
-          { "pattern": "(^|[,\\s>{])(html|body)([\\s>+~.#:,{]|$)" },
-          { "pattern": "(^|[,\\s>{])\\*" },
-          { "pattern": ":root" },
-          { "pattern": "[\"']" },
-          { "pattern": ":is\\s*\\(" },
-          { "pattern": ":not\\s*\\(" },
-          { "pattern": ":where\\s*\\(" },
-          { "pattern": ":has\\s*\\(" },
-          { "pattern": ":scope" },
-          { "pattern": "\\|" },
-          { "pattern": "visibility" },
-          { "pattern": "clip-path" },
-          { "pattern": "transparent" }
-        ]
+        "pattern": "(^|[\\s>+~,])(html|head|body|form|input|select|textarea|script|style|template|iframe|svg|noscript)($|[\\s.#[:>+~,])"
+      }
+    },
+    "mountId": { "type": "string", "pattern": "^[A-Za-z0-9_-]+$" },
+    "cssIdent": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$" },
+    "cssTag": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]*$",
+      "not": { "enum": ["html", "body", "head", "svg", "script", "style"] }
+    },
+    "cssState": {
+      "enum": ["focus", "focus-visible", "focus-within", "hover", "active", "disabled", "checked"]
+    },
+    "cssColor": {
+      "type": "string",
+      "pattern": "^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$|^rgb\\(\\s*(0|[1-9][0-9]?|1[0-9]{2}|2[0-4][0-9]|25[0-5])\\s*,\\s*(0|[1-9][0-9]?|1[0-9]{2}|2[0-4][0-9]|25[0-5])\\s*,\\s*(0|[1-9][0-9]?|1[0-9]{2}|2[0-4][0-9]|25[0-5])\\s*\\)$"
+    },
+    "px0to8": { "type": "string", "pattern": "^(?:[0-7](?:\\.[0-9]+)?|8(?:\\.0+)?)px$" },
+    "px1to8": { "type": "string", "pattern": "^(?:[1-7](?:\\.[0-9]+)?|8(?:\\.0+)?)px$" },
+    "px1to4": { "type": "string", "pattern": "^(?:[1-3](?:\\.[0-9]+)?|4(?:\\.0+)?)px$" },
+    "px0to4": { "type": "string", "pattern": "^(?:[0-3](?:\\.[0-9]+)?|4(?:\\.0+)?)px$" },
+    "px0to24": { "type": "string", "pattern": "^(?:[0-9]|1[0-9]|2[0-3])(?:\\.[0-9]+)?px$|^24(?:\\.0+)?px$" },
+    "px0to64": { "type": "string", "pattern": "^(?:[0-9]|[1-5][0-9]|6[0-3])(?:\\.[0-9]+)?px$|^64(?:\\.0+)?px$" },
+    "px10to48": { "type": "string", "pattern": "^(?:1[0-9]|[2-3][0-9]|4[0-7])(?:\\.[0-9]+)?px$|^48(?:\\.0+)?px$" },
+    "emRemFont": { "type": "string", "pattern": "^(?:0\\.(?:75|7[5-9]\\d*|[8-9]\\d*)|[12](?:\\.[0-9]+)?|3(?:\\.0+)?)(em|rem)$" },
+    "em0to02": { "type": "string", "pattern": "^(?:0(?:\\.[0-9]+)?|0\\.2(?:0+)?)em$" },
+    "lineHeight": {
+      "anyOf": [
+        { "type": "number", "minimum": 1, "maximum": 3 },
+        { "type": "string", "pattern": "^(?:[12](?:\\.[0-9]+)?|3(?:\\.0+)?)$" }
+      ]
+    },
+    "fontWeight": {
+      "anyOf": [
+        { "type": "integer", "minimum": 400, "maximum": 900, "multipleOf": 100 },
+        { "enum": ["400", "500", "600", "700", "800", "900", "normal", "bold"] }
+      ]
+    },
+    "borderStyle": { "enum": ["solid", "dashed", "dotted", "none"] },
+    "cssSelector": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "tag": { "$ref": "#/$defs/cssTag" },
+        "classes": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/cssIdent" }
+        },
+        "id": { "$ref": "#/$defs/cssIdent" },
+        "state": { "$ref": "#/$defs/cssState" }
+      },
+      "anyOf": [{ "required": ["classes"] }, { "required": ["id"] }]
+    },
+    "cssDeclaration": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["property", "value"],
+          "properties": {
+            "property": { "enum": ["color", "background-color", "outline-color", "border-color"] },
+            "value": { "$ref": "#/$defs/cssColor" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["property", "value"],
+          "properties": {
+            "property": { "enum": ["outline-style", "border-style"] },
+            "value": { "$ref": "#/$defs/borderStyle" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["property", "value"],
+          "properties": {
+            "property": { "const": "outline-width" },
+            "value": { "$ref": "#/$defs/px1to8" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["property", "value"],
+          "properties": {
+            "property": { "const": "outline-offset" },
+            "value": { "$ref": "#/$defs/px0to8" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["property", "value"],
+          "properties": {
+            "property": { "const": "border-width" },
+            "value": { "$ref": "#/$defs/px0to8" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["property", "value"],
+          "properties": {
+            "property": { "const": "font-size" },
+            "value": {
+              "anyOf": [{ "$ref": "#/$defs/px10to48" }, { "$ref": "#/$defs/emRemFont" }]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["property", "value"],
+          "properties": {
+            "property": { "const": "font-weight" },
+            "value": { "$ref": "#/$defs/fontWeight" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["property", "value"],
+          "properties": {
+            "property": { "const": "line-height" },
+            "value": { "$ref": "#/$defs/lineHeight" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["property", "value"],
+          "properties": {
+            "property": { "enum": ["letter-spacing", "word-spacing"] },
+            "value": {
+              "anyOf": [{ "$ref": "#/$defs/px0to4" }, { "$ref": "#/$defs/em0to02" }]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["property", "value"],
+          "properties": {
+            "property": { "const": "text-decoration-line" },
+            "value": { "enum": ["underline", "none"] }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["property", "value"],
+          "properties": {
+            "property": { "const": "text-decoration-thickness" },
+            "value": { "$ref": "#/$defs/px1to4" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["property", "value"],
+          "properties": {
+            "property": { "enum": ["min-height", "min-width"] },
+            "value": { "$ref": "#/$defs/px0to64" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["property", "value"],
+          "properties": {
+            "property": { "const": "padding" },
+            "value": { "$ref": "#/$defs/px0to24" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["property", "value"],
+          "properties": {
+            "property": { "const": "cursor" },
+            "value": { "enum": ["pointer", "default"] }
+          }
+        }
+      ]
+    },
+    "cssRule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["selector", "declarations"],
+      "properties": {
+        "selector": { "$ref": "#/$defs/cssSelector" },
+        "declarations": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/cssDeclaration" }
+        }
       }
     },
     "safeAttrName": {
@@ -67,7 +236,12 @@
           "required": ["op", "selector", "name", "value"],
           "properties": {
             "op": { "const": "setAttribute" },
-            "selector": { "$ref": "#/$defs/selector" },
+            "selector": {
+              "allOf": [
+                { "$ref": "#/$defs/selector" },
+                { "$ref": "#/$defs/forbiddenHostSelector" }
+              ]
+            },
             "name": {
               "allOf": [
                 { "$ref": "#/$defs/safeAttrName" },
@@ -88,11 +262,7 @@
             "selector": {
               "allOf": [
                 { "$ref": "#/$defs/selector" },
-                {
-                  "not": {
-                    "pattern": "(^|[\\s>+~,])(html|head|body|form|input|select|textarea|script|style|template|iframe|svg|noscript)($|[\\s.#[:>+~,])"
-                  }
-                }
+                { "$ref": "#/$defs/forbiddenHostSelector" }
               ]
             },
             "text": { "type": "string" }
@@ -101,10 +271,14 @@
         {
           "type": "object",
           "additionalProperties": false,
-          "required": ["op", "css"],
+          "required": ["op", "rules"],
           "properties": {
             "op": { "const": "injectCSS" },
-            "css": { "$ref": "#/$defs/css" },
+            "rules": {
+              "type": "array",
+              "minItems": 1,
+              "items": { "$ref": "#/$defs/cssRule" }
+            },
             "id": { "$ref": "#/$defs/mountId" }
           }
         },
@@ -124,7 +298,12 @@
           "required": ["op", "selector"],
           "properties": {
             "op": { "const": "makeFocusable" },
-            "selector": { "$ref": "#/$defs/selector" }
+            "selector": {
+              "allOf": [
+                { "$ref": "#/$defs/selector" },
+                { "$ref": "#/$defs/forbiddenHostSelector" }
+              ]
+            }
           }
         },
         {
@@ -133,7 +312,12 @@
           "required": ["op", "selector"],
           "properties": {
             "op": { "const": "bindEnterToClick" },
-            "selector": { "$ref": "#/$defs/selector" }
+            "selector": {
+              "allOf": [
+                { "$ref": "#/$defs/selector" },
+                { "$ref": "#/$defs/forbiddenHostSelector" }
+              ]
+            }
           }
         },
         {
@@ -145,11 +329,7 @@
             "selector": {
               "allOf": [
                 { "$ref": "#/$defs/selector" },
-                {
-                  "not": {
-                    "pattern": "(^|[\\s>+~,])(html|head|body|form|input|select|textarea|script|style|template|iframe|svg|noscript)($|[\\s.#[:>+~,])"
-                  }
-                }
+                { "$ref": "#/$defs/forbiddenHostSelector" }
               ]
             },
             "tag": { "enum": ["button", "label", "span", "a", "p", "strong", "em"] },

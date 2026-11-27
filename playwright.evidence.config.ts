@@ -1,4 +1,9 @@
+import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { defineConfig } from "@playwright/test";
+
+const repoRoot = resolve(fileURLToPath(new URL(".", import.meta.url)));
+const evidenceDir = resolve(process.env.EVIDENCE_DIR || resolve(repoRoot, "artifacts/fir-9-a"));
 
 export default defineConfig({
   testDir: "tests/evidence",
@@ -15,7 +20,7 @@ export default defineConfig({
     trace: "on",
     launchOptions: { slowMo: 350 },
   },
-  outputDir: "/opt/cursor/artifacts/fir-9-a/playwright",
+  outputDir: resolve(evidenceDir, "playwright"),
   webServer: {
     command: "npx tsx scripts/serve-site.ts --port 4174 --allow-mock",
     url: "http://127.0.0.1:4174",

@@ -1,14 +1,17 @@
 #!/usr/bin/env node
 import { copyFileSync, mkdirSync, readdirSync, statSync } from "node:fs";
-import { extname, join } from "node:path";
+import { dirname, extname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const ROOT = "/opt/cursor/artifacts/fir-9-a";
+const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const ROOT = resolve(process.env.EVIDENCE_DIR || join(repoRoot, "artifacts/fir-9-a"));
 const PLAY = join(ROOT, "playwright");
 const NAMES = [
   "01-control-barriers",
   "02-treatment-before-after",
   "03-keyboard-submit-once",
-  "04-malicious-fail-open",
+  "04-comment-smuggle",
+  "04-is-body-opacity",
   "05-sticky-identity",
 ];
 
@@ -29,6 +32,7 @@ function largest(paths) {
 
 mkdirSync(ROOT, { recursive: true });
 const files = walk(PLAY);
+let missing = 0;
 for (const key of NAMES) {
   const video = largest(files.filter((p) => p.includes(key) && extname(p) === ".webm"));
   const trace = largest(
@@ -44,6 +48,13 @@ for (const key of NAMES) {
     copyFileSync(trace, dest);
     process.stdout.write(`trace ${dest}\n`);
   }
-  if (!video) process.stderr.write(`missing video for ${key}\n`);
-  if (!trace) process.stderr.write(`missing trace for ${key}\n`);
+  if (!video) {
+    process.stderr.write(`missing video for ${key}\n`);
+    missing += 1;
+  }
+  if (!trace) {
+    process.stderr.write(`missing trace for ${key}\n`);
+    missing += 1;
+  }
 }
+if (missing) process.exit(1);

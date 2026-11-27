@@ -197,11 +197,10 @@ function fixesFromFlagsmith(flagsmith, bundledVariant) {
   return fixes;
 }
 
-async function initFromFlagsmith(config) {
+async function initFromFlagsmith(config, identity) {
   if (!config?.flagsmithEnvironmentKey) {
     throw new Error("Missing FLAGSMITH_ENVIRONMENT_KEY");
   }
-  const identity = resolveVisitorId(browserIdentityEnv());
   const { default: flagsmith } = await import(SDK_URL);
   await flagsmith.init({
     environmentID: config.flagsmithEnvironmentKey,
@@ -238,7 +237,7 @@ async function initFromFlagsmith(config) {
 }
 
 async function main() {
-  resolveVisitorId(browserIdentityEnv());
+  const identity = resolveVisitorId(browserIdentityEnv());
   const mock = params().get("lift_variant");
   const config = await loadConfig();
   const allowMock = Boolean(config?.allowMock);
@@ -247,7 +246,7 @@ async function main() {
     return;
   }
   try {
-    await initFromFlagsmith(config ?? {});
+    await initFromFlagsmith(config ?? {}, identity);
   } catch (err) {
     setStatus(
       `Flagsmith is required for variant assignment (${err instanceof Error ? err.message : err}).`,

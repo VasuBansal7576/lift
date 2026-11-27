@@ -1,0 +1,4 @@
+# Public Flagsmith *client* environment key (safe to embed in the page).
+# Never put an organisation admin token or server-side key here.
+# Copy to edge/.dev.vars (gitignored) for `wrangler dev`.
+FLAGSMITH_ENVIRONMENT_KEY=

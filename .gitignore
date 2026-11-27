@@ -16,3 +16,6 @@ sites/*/config.json
 .DS_Store
 .vite/
 blob-report/
+.wrangler/
+edge/.dev.vars
+edge/.wrangler/

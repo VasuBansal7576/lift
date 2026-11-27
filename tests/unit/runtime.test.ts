@@ -89,9 +89,9 @@ describe("applyPatchSpec ops", () => {
 
     expect(document.querySelector('label[for="email"]')?.textContent).toBe("Email");
     expect(document.getElementById("email")?.getAttribute("data-labelled")).toBe("1");
-    expect(document.getElementById("email-hint")).toBeNull();
+    expect(document.getElementById("email-hint")?.tagName).toBe("LABEL");
 
-    expect(document.getElementById("terms-copy")).toBeNull();
+    expect(document.getElementById("terms-copy")?.tagName).toBe("LABEL");
     expect(document.querySelector('label[for="terms"]')?.textContent).toContain("I agree to the terms");
 
     const pay = document.getElementById("place-order");
@@ -158,6 +158,17 @@ describe("applyPatchSpec ops", () => {
     expect(document.getElementById("email")?.previousElementSibling?.tagName).toBe("LABEL");
     expect(document.querySelectorAll('label[for="named"]')).toHaveLength(1);
     expect(document.querySelectorAll('label[for="aria"]')).toHaveLength(0);
+
+    document.body.innerHTML = `<p class="terms"><span class="visible-hint" id="terms-copy">I agree</span><input id="terms" type="checkbox"></p>`;
+    expect(
+      applyPatchSpec({
+        id: "wrap-terms",
+        version: 0,
+        ops: [{ op: "wrapLabel", selector: "#terms", text: "I agree" }],
+      }).ok,
+    ).toBe(true);
+    expect(document.getElementById("terms-copy")?.tagName).toBe("LABEL");
+    expect(document.getElementById("terms-copy")?.getAttribute("for")).toBe("terms");
 
     const originalCreate = document.createElement.bind(document);
     document.createElement = ((tag: string) => {

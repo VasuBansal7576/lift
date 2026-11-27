@@ -34,6 +34,7 @@ export const PHASES = [
   "flagging",
   "traffic",
   "analysing",
+  "KEEP_COLLECTING",
   "WAITING_FOR_HUMAN_APPROVAL",
   "rolling_out",
   "complete",

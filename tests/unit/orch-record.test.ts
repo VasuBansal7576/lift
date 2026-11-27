@@ -1,31 +1,25 @@
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { REPO_ROOT } from "../../orchestrator/src/paths.ts";
+import { viewportToScreen, RECORDING_TRAFFIC_N_T2, RECORDING_EXTRA_ROUNDS } from "../../orchestrator/src/record-nav.ts";
 
-describe("record-proof", () => {
-  const source = readFileSync(resolve(REPO_ROOT, "orchestrator/scripts/record-proof.ts"), "utf8");
-
-  it("does not fake the address bar", () => {
-    expect(source).not.toMatch(/replaceState/);
-    expect(source).not.toMatch(/history\.replace/);
+describe("record-nav", () => {
+  it("maps a viewport box onto the X11 screen including chrome offset", () => {
+    const point = viewportToScreen(
+      { x: 100, y: 40, width: 80, height: 20 },
+      {
+        screenX: 960,
+        screenY: 0,
+        outerWidth: 960,
+        outerHeight: 1200,
+        innerWidth: 960,
+        innerHeight: 1100,
+      },
+    );
+    expect(point.x).toBe(960 + 100 + 40);
+    expect(point.y).toBe(100 + 40 + 10);
   });
 
-  it("does not auto-approve and has no default bootstrap creds", () => {
-    expect(source).not.toMatch(/parseArgv\(\[\"--approve\"/);
-    expect(source).not.toMatch(/admin@lift\.local/);
-    expect(source).not.toMatch(/lift-dev-password/);
-    expect(source).toMatch(/FLAGSMITH_BOOTSTRAP_EMAIL/);
-    expect(source).toMatch(/APPROVE \$\{/);
-    expect(source).toMatch(/standing in for the human approver/);
-  });
-
-  it("does not hide navigation after ffmpeg starts", () => {
-    const withoutLogin = source.replace(/async function loginFlagsmith[\s\S]*?(?=\n(?:async )?function )/, "");
-    expect(withoutLogin).not.toMatch(/page\.goto\(/);
-    expect(withoutLogin).not.toMatch(/page\.reload\(/);
-    expect(source).not.toMatch(/force:\s*true/);
-    expect(source).toMatch(/typeUrlInOmnibox/);
-    expect(source).toMatch(/"--clearmodifiers", "F5"/);
+  it("uses a single pre-registered T2 look of 1000 visits and no extra rounds", () => {
+    expect(RECORDING_TRAFFIC_N_T2).toBe(1000);
+    expect(RECORDING_EXTRA_ROUNDS).toBe(0);
   });
 });

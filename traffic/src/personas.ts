@@ -4,6 +4,7 @@ import { contrastRatio, parseCssColor } from "./contrast.ts";
 import type { AttemptResult } from "./attempt.ts";
 import { expectedBlockedForSite, runGenericPersona } from "./generic-personas.ts";
 import { applyLowVisionZoom, CONTRAST_FLOOR } from "./vision.ts";
+import { focusIndicatorVisible, type CssFocusStyle } from "./focus-visible.ts";
 
 export type { AttemptResult };
 export { applyLowVisionZoom, CONTRAST_FLOOR };
@@ -132,6 +133,37 @@ export async function runKeyboard(page: Page): Promise<AttemptResult> {
       reason: "Place order is not in the tab order",
     };
   }
+  const unfocused = await page.evaluate((): CssFocusStyle | null => {
+    const el = document.getElementById("place-order");
+    if (!el) return null;
+    el.blur();
+    const style = getComputedStyle(el);
+    return {
+      outlineStyle: style.outlineStyle,
+      outlineWidth: style.outlineWidth,
+      outlineColor: style.outlineColor,
+      boxShadow: style.boxShadow,
+    };
+  });
+  await page.locator("#place-order").focus();
+  const focused = await page.evaluate((): CssFocusStyle | null => {
+    const el = document.activeElement as HTMLElement | null;
+    if (!el) return null;
+    const style = getComputedStyle(el);
+    return {
+      outlineStyle: style.outlineStyle,
+      outlineWidth: style.outlineWidth,
+      outlineColor: style.outlineColor,
+      boxShadow: style.boxShadow,
+    };
+  });
+  if (!unfocused || !focused || !focusIndicatorVisible(focused, unfocused)) {
+    return {
+      converted: false,
+      blockedBy: ["div_button"],
+      reason: "Place order has no visible focus indicator (WCAG 2.4.7)",
+    };
+  }
   await page.keyboard.press("Enter");
   const converted = await waitForConversion(page);
   return {
@@ -232,7 +264,7 @@ export async function runLowVision(page: Page): Promise<AttemptResult> {
     };
   }
 
-  const contrast = await page.locator("#terms-copy").evaluate(
+  const contrast = await page.locator("#terms-copy, label[for=terms], .terms").first().evaluate(
     (el) => {
       const style = getComputedStyle(el);
       const parent = el.parentElement ? getComputedStyle(el.parentElement) : style;

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   APPROVAL_PHASE,
+  KEEP_COLLECTING_PHASE,
   approvalSummary,
   assertApproveArgs,
   requireTypedApproval,
@@ -19,6 +20,26 @@ describe("human approval gate", () => {
     expect(paused.phase).toBe(APPROVAL_PHASE);
     expect(paused.summary).toMatch(/--approve/);
     expect(log.phase).toBe("WAITING_FOR_HUMAN_APPROVAL");
+  });
+
+  it("uses KEEP_COLLECTING when Flagsmith is still below the threshold", () => {
+    const log = new EventLog(false);
+    const paused = pauseForHumanApproval(log, {
+      generation: 1,
+      passed: [],
+      rejected: [],
+      recommendation: {
+        kind: "keep_collecting",
+        threshold: 0.95,
+        arms: [],
+        source: "flagsmith",
+        chanceToWin: 0.91,
+        leading: "full-v1",
+        reason: "chance_to_win 0.910 < 0.95. Keep collecting.",
+      },
+    });
+    expect(paused.phase).toBe(KEEP_COLLECTING_PHASE);
+    expect(log.phase).toBe("KEEP_COLLECTING");
   });
 
   it("refuses rollout without --approve <id>", () => {

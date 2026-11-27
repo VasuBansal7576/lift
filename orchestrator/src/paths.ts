@@ -23,5 +23,7 @@ export function eventsPath(): string {
 }
 
 export function specsDir(): string {
-  return resolve(DATA_DIR, "specs");
+  const override = process.env.LIFT_ORCH_SPECS_DIR?.trim();
+  if (override) return resolve(override);
+  return resolve(dataDir(), "specs");
 }

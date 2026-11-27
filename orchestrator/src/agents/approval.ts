@@ -5,6 +5,7 @@ import type { AnalystRecommendation, FlagSetup, GateResult, Phase } from "../typ
 import { assertNever } from "../types.ts";
 
 export const APPROVAL_PHASE: Phase = "WAITING_FOR_HUMAN_APPROVAL";
+export const KEEP_COLLECTING_PHASE: Phase = "KEEP_COLLECTING";
 
 export interface ApprovalIo {
   isTTY: boolean;
@@ -83,9 +84,11 @@ export function pauseForHumanApproval(
   },
 ): { phase: Phase; summary: string } {
   const summary = approvalSummary(input);
-  log.setPhase(APPROVAL_PHASE);
+  const phase: Phase =
+    input.recommendation?.kind === "keep_collecting" ? KEEP_COLLECTING_PHASE : APPROVAL_PHASE;
+  log.setPhase(phase);
   log.emit("approval", "wait", summary, {
-    phase: APPROVAL_PHASE,
+    phase,
     generation: input.generation,
     passed: input.passed.map((item) => item.specId),
     rejected: input.rejected.map((item) => item.specId),
@@ -93,7 +96,7 @@ export function pauseForHumanApproval(
     flagId: input.flag?.flagId,
     experimentId: input.flag?.experimentId,
   });
-  return { phase: APPROVAL_PHASE, summary };
+  return { phase, summary };
 }
 
 export function assertApproveArgs(approve: boolean, experimentId: number | null): void {

@@ -52,7 +52,7 @@ test("full orchestrator flow against self-hosted Flagsmith", async () => {
     expect(gen.flag?.flagId).toBeGreaterThan(0);
     expect(gen.flag?.experimentId).toBeGreaterThan(0);
     expect(gen.flag?.metricId).toBeGreaterThan(0);
-    expect(state.phase).toBe("WAITING_FOR_HUMAN_APPROVAL");
+    expect(["WAITING_FOR_HUMAN_APPROVAL", "KEEP_COLLECTING"]).toContain(state.phase);
     expect(gen.visits?.length ?? 0).toBeGreaterThan(0);
 
     if (state.recommendation?.kind === "winner" && gen.flag?.experimentId) {

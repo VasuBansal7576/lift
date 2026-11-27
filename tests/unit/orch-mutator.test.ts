@@ -63,5 +63,8 @@ describe("mutator templates", () => {
     const log = new EventLog(false);
     const extra = await maybeLlmCandidates(axe, log);
     expect(extra).toEqual([]);
+    expect(log.events.some((event) => /deterministic template mutator; LLM path available with a key/.test(event.message))).toBe(
+      true,
+    );
   });
 });

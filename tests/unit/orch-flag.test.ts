@@ -122,6 +122,23 @@ describe("flag agent", () => {
     expect(JSON.stringify(calls)).not.toMatch(/admin-token/);
   });
 
+  it("labels gen-2 control as the gen-1 champion in the experiment hypothesis", async () => {
+    const log = new EventLog(false);
+    const { bodies, fetchImpl } = mockFetch();
+    const http = new FlagsmithHttp({
+      baseUrl: "http://127.0.0.1:8000/api/v1/",
+      token: "admin-token",
+      fetch: fetchImpl,
+    });
+    await runFlagAgent(opts(true), passed, 2, "control", log, {
+      http,
+      runCli: async () => ({ code: 127, stdout: "", stderr: "cli missing" }),
+      championId: "full-v1",
+    });
+    expect(bodies.join("\n")).toMatch(/Control = gen-1 champion full-v1/);
+    expect(log.events.some((event) => /Control = gen-1 champion full-v1/.test(event.message))).toBe(true);
+  });
+
   it("refuses a foreign flag that lacks the orch description marker", async () => {
     const log = new EventLog(false);
     const http = new FlagsmithHttp({

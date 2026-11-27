@@ -45,8 +45,14 @@ function featureIdOf(exp: ExperimentRecord): number | undefined {
   return typeof exp.feature === "number" ? exp.feature : exp.feature?.id;
 }
 
-function orchDescription(): string {
-  return `${DESCRIPTION_MARKER}. Payloads are axe-gated spec ids.`;
+function orchDescription(championId?: string): string {
+  const extra = championId ? ` Control = gen-1 champion ${championId}.` : "";
+  return `${DESCRIPTION_MARKER}.${extra} Payloads are axe-gated spec ids.`;
+}
+
+export function controlArmLabel(generation: number, championId?: string): string {
+  if (generation >= 2 && championId) return `Control = gen-1 champion ${championId}`;
+  return "Control";
 }
 
 function dashboardExperimentUrl(opts: OrchOptions, experimentId: number): string {
@@ -210,6 +216,7 @@ async function createViaCli(
   controlValue: string,
   variantKeys: string[],
   log: EventLog,
+  championId?: string,
 ): Promise<{ usedCli: boolean; feature?: FeatureRecord }> {
   if (!opts.adminToken || !opts.projectId || !opts.environmentKey) {
     return { usedCli: false };
@@ -230,7 +237,7 @@ async function createViaCli(
       controlValue,
       "--enabled",
       "--description",
-      orchDescription(),
+      orchDescription(championId),
       "-p",
       opts.projectId,
       "-e",
@@ -242,6 +249,7 @@ async function createViaCli(
     log.emit("flag", "warn", `CLI feature create unavailable; using Admin API (${created.error.slice(0, 160)})`);
     return { usedCli: false };
   }
+  let cliVariantMisses = 0;
   for (const key of variantKeys) {
     const added = await tryCliJson(
       run,
@@ -263,9 +271,10 @@ async function createViaCli(
       ],
       env,
     );
-    if (!added.ok) {
-      log.emit("flag", "warn", `CLI variant add failed for ${key}; Admin API will fill in`);
-    }
+    if (!added.ok) cliVariantMisses += 1;
+  }
+  if (cliVariantMisses > 0) {
+    log.emit("flag", "info", `CLI variant add skipped for ${cliVariantMisses} keys; Admin API filled in`);
   }
   log.emit("flag", "info", `CLI created feature ${flagName} with ${variantKeys.length} keyed variants`);
   return { usedCli: true, feature: created.data };
@@ -366,7 +375,7 @@ export async function runFlagAgent(
   generation: number,
   controlKey: string,
   log: EventLog,
-  deps?: { http?: FlagsmithHttp; runCli?: RunCli },
+  deps?: { http?: FlagsmithHttp; runCli?: RunCli; championId?: string },
 ): Promise<FlagSetup> {
   const flagName = genFlagName(opts.flagName, generation);
   assertOrchFlagName(flagName);
@@ -409,6 +418,8 @@ export async function runFlagAgent(
       token: opts.adminToken,
     });
   const runCli = deps?.runCli ?? runFlagsmithCli;
+  const championId = deps?.championId;
+  const controlLabel = controlArmLabel(generation, championId);
   const cli = await createViaCli(
     runCli,
     opts,
@@ -416,6 +427,7 @@ export async function runFlagAgent(
     controlKey,
     passed.map((item) => item.specId),
     log,
+    championId,
   );
 
   const feature =
@@ -424,7 +436,7 @@ export async function runFlagAgent(
       http,
       opts.projectId,
       flagName,
-      orchDescription(),
+      orchDescription(championId),
       controlKey,
     ));
 
@@ -444,7 +456,21 @@ export async function runFlagAgent(
   }
 
   const metric = await ensureMetric(http, opts.environmentKey, opts.metricEvent);
-  const experimentName = `Lift orch g${generation} ${flagName}`;
+  const experimentName =
+    generation >= 2
+      ? `Lift orch g${generation} ${flagName} (${controlLabel})`
+      : `Lift orch g${generation} ${flagName}`;
+  const hypothesis =
+    generation >= 2
+      ? `${controlLabel}. Challengers compete against that champion. Traffic is simulated.`
+      : "Axe-gated accessibility patch specs compete on checkout_completed. Traffic is simulated.";
+  if (generation >= 2) {
+    log.emit(
+      "flag",
+      "info",
+      `${controlLabel} (payload key remains "control")`,
+    );
+  }
   const experiment = await createExperiment(
     http,
     opts.environmentKey,
@@ -452,7 +478,7 @@ export async function runFlagAgent(
     variants,
     metric.id,
     experimentName,
-    "Axe-gated accessibility patch specs compete on checkout_completed. Traffic is simulated.",
+    hypothesis,
     controlKey,
   );
   const running = await startExperiment(http, opts.environmentKey, experiment);

@@ -1,6 +1,9 @@
 import { pickPersona } from "../../shared/mix.ts";
 import { mixSeed, mulberry32 } from "../../shared/rng.ts";
 import { DEFAULT_PERSONA_MIX, type Persona, type PersonaMix } from "../../shared/types.ts";
+import { focusIndicatorVisible, type CssFocusStyle } from "../../traffic/src/focus-visible.ts";
+
+export { focusIndicatorVisible, type CssFocusStyle };
 
 /** Same keep probability for every arm after the persona succeeds on the served surface. */
 export const SHARED_KEEP_RATE = 0.9;
@@ -12,6 +15,11 @@ export interface PersonaSurface {
   submitReachableByTab: boolean;
   /** Keyboard can activate submit with Enter once focused. */
   submitActivatesWithEnter: boolean;
+  /**
+   * WCAG 2.4.7: focused submit has a visible outline or box-shadow vs unfocused.
+   * Undefined means "not measured" (treated as visible so existing open surfaces stay open).
+   */
+  focusVisible?: boolean;
   /** Screen-reader: required fields/controls missing accessible names. */
   unlabeledControls: boolean;
   /** Low-vision: worst contrast among essential copy (computed styles / axe). */
@@ -22,6 +30,7 @@ export interface PersonaSurface {
 export const OPEN_SURFACE: PersonaSurface = {
   submitReachableByTab: true,
   submitActivatesWithEnter: true,
+  focusVisible: true,
   unlabeledControls: false,
   minContrast: 7,
 };
@@ -29,6 +38,7 @@ export const OPEN_SURFACE: PersonaSurface = {
 export const BLOCKED_SURFACE: PersonaSurface = {
   submitReachableByTab: false,
   submitActivatesWithEnter: false,
+  focusVisible: false,
   unlabeledControls: true,
   minContrast: 2.1,
 };
@@ -38,7 +48,11 @@ export function personaConvertsOnSurface(persona: Persona, surface: PersonaSurfa
     case "mouse":
       return true;
     case "keyboard":
-      return surface.submitReachableByTab && surface.submitActivatesWithEnter;
+      return (
+        surface.submitReachableByTab &&
+        surface.submitActivatesWithEnter &&
+        surface.focusVisible !== false
+      );
     case "screen-reader":
       return !surface.unlabeledControls;
     case "low-vision":

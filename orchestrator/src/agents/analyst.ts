@@ -70,6 +70,21 @@ export function recommendWinner(
   };
 }
 
+export function formatDecisionLine(rec: AnalystRecommendation): string {
+  const chance =
+    rec.kind === "winner" ? rec.chanceToWin : rec.kind === "keep_collecting" ? rec.chanceToWin : undefined;
+  const flagsmithPct = chance == null ? "n/a" : `${Math.round(chance * 100)}%`;
+  const decision = rec.kind === "winner" ? "APPROVE" : "KEEP COLLECTING";
+  return `Flagsmith: ${flagsmithPct} | Agent threshold: ${Math.round(rec.threshold * 100)}% | Decision: ${decision}`;
+}
+
+export function formatGen2Inconclusive(rec: AnalystRecommendation, visits: number): string {
+  const chance =
+    rec.kind === "winner" ? rec.chanceToWin : rec.kind === "keep_collecting" ? rec.chanceToWin : undefined;
+  const x = chance == null ? "n/a" : chance.toFixed(3);
+  return `Gen-2 inconclusive (chance_to_win ${x} < 0.95 after ${visits} visits); champion stays`;
+}
+
 export function runAnalyst(
   envelope: FlagsmithResultsLike | null,
   log: EventLog,
@@ -78,6 +93,7 @@ export function runAnalyst(
   log.emit("analyst", "start", `Read experiment results (threshold ${threshold})`);
   const arms = parseArmChances(envelope);
   const recommendation = recommendWinner(arms, threshold, arms.length ? "flagsmith" : "none");
+  log.emit("analyst", "info", formatDecisionLine(recommendation));
   if (recommendation.kind === "winner") {
     log.emit("analyst", "done", `Recommend ${recommendation.arm} (chance_to_win=${recommendation.chanceToWin.toFixed(3)})`, {
       arm: recommendation.arm,

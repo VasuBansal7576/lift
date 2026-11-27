@@ -232,11 +232,14 @@ export async function runOrchestrator(
 
       const controlKey = "control";
       const controlSpec = generation === 1 ? null : previousChampion;
+      process.env.LIFT_ORCH_CONTROL_SPEC = generation >= 2 ? "1" : "";
       writePassedSpecs(passed, controlSpec);
       process.env.LIFT_ORCH_FLAG = generation === 1 ? opts.flagName : `${opts.flagName}_g${generation}`;
 
       log.setPhase("flagging");
-      const flag = await runFlagAgent(opts, passed, generation, controlKey, log);
+      const flag = await runFlagAgent(opts, passed, generation, controlKey, log, {
+        championId: previousChampion?.id,
+      });
       site.setAllowMock(false);
       log.snapshot = {
         generations,

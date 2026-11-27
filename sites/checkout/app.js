@@ -63,11 +63,17 @@ function bindCheckoutActions() {
   }
 }
 
-async function applyOrchVariant(variant) {
+async function applyOrchVariant(variant, controlSpecRequired = false) {
   if (variant === "control") {
     try {
       await applyPatchFromUrl("/orch-specs/control.json");
-    } catch {
+    } catch (err) {
+      if (controlSpecRequired) {
+        setAppliedVariant("");
+        throw new Error(
+          `orch control spec required (gen>=2): ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
       /* gen-1 control is the unpatched page */
     }
     bindCheckoutActions();
@@ -282,7 +288,7 @@ async function initFromFlagsmith(config, identity) {
         /* keep control */
       }
     }
-    await applyOrchVariant(String(orchVariant));
+    await applyOrchVariant(String(orchVariant), Boolean(config.orchControlSpecRequired));
     return;
   }
   const flag = flagsmith.getExperimentFlag(config.flagName || FLAG_NAME);

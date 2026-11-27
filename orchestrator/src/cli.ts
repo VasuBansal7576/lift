@@ -15,7 +15,7 @@ Options:
   --cleanup               Delete lift_orch_ flags marked as orchestrator-owned
   --allow-remote          Allow non-loopback FLAGSMITH_API_URL / site URL
   --generations N         1 (default) or 2 for the L2 evolutionary step
-  --traffic-n N           Simulated identities per generation (default 220; Flagsmith floors are 50/arm)
+  --traffic-n N           Simulated identities per generation (default 220; recordings use 1000 for T2, 400 for L2)
   --threshold 0.95        chance_to_win required to recommend a winner
   --site-url URL          Demo page (default http://127.0.0.1:4174/checkout)
   --ui-port N             Timeline UI (default 4177)
@@ -27,12 +27,14 @@ Env: FLAGSMITH_API_URL, FLAGSMITH_ADMIN_API_TOKEN, FLAGSMITH_ENVIRONMENT_KEY,
 FLAGSMITH_SERVER_KEY, FLAGSMITH_PROJECT_ID. Keys are never printed.
 No default Flagsmith credentials — set them in the environment.
 
-The Flag agent drives Flagsmith (CLI v2 + Admin API). Mutator is template-only;
-LLM is optional when a key is set.
+The Flag agent drives Flagsmith (CLI v2 + Admin API). Mutator is a
+deterministic template mutator; LLM path available with a key.
 
-Human approval: the run stops at WAITING_FOR_HUMAN_APPROVAL. Rollout only
-happens on a second invocation with --approve <experimentId> AND typing
-APPROVE <id> on a TTY. There is no non-interactive bypass.
+Human approval: a winner pauses at WAITING_FOR_HUMAN_APPROVAL. Below 0.95
+the phase is KEEP_COLLECTING. Rollout only happens on a second invocation
+with --approve <experimentId> AND typing APPROVE <id> on a TTY. There is
+no non-interactive bypass. Recordings use LIFT_ORCH_MAX_EXTRA_ROUNDS=0
+(one pre-registered look).
 `;
 }
 
@@ -47,13 +49,17 @@ async function main() {
     ? ` wall=${formatDuration(state.timeSaved.wallClockMs)} ${TIME_SAVED_LABEL} saved=${formatDuration(state.timeSaved.savedMs)}`
     : "";
   process.stdout.write(`phase=${state.phase} generations=${state.generations.length}${saved}\n`);
-  if (state.phase === "WAITING_FOR_HUMAN_APPROVAL") {
+  if (state.phase === "WAITING_FOR_HUMAN_APPROVAL" || state.phase === "KEEP_COLLECTING") {
     const id = state.flag?.experimentId;
-    process.stdout.write(
-      id
-        ? `Re-run with --approve ${id} and type APPROVE ${id} on a TTY to roll out the winner.\n`
-        : "Re-run with --approve <experimentId> and type APPROVE <id> on a TTY to roll out the winner.\n",
-    );
+    if (state.phase === "KEEP_COLLECTING") {
+      process.stdout.write("No winner yet (KEEP_COLLECTING). Do not type APPROVE.\n");
+    } else {
+      process.stdout.write(
+        id
+          ? `Re-run with --approve ${id} and type APPROVE ${id} on a TTY to roll out the winner.\n`
+          : "Re-run with --approve <experimentId> and type APPROVE <id> on a TTY to roll out the winner.\n",
+      );
+    }
   }
 }
 

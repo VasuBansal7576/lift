@@ -269,7 +269,7 @@ export async function maybeLlmCandidates(
   const gemini = process.env.GEMINI_API_KEY?.trim();
   const generic = process.env.LIFT_LLM_API_KEY?.trim();
   if (!client && !groq && !gemini && !generic) {
-    log.emit("mutator", "info", "template mutator; LLM optional when a key is set");
+    log.emit("mutator", "info", "deterministic template mutator; LLM path available with a key");
     return [];
   }
   const prompt = `Return JSON only: a Lift PatchSpec (id, version: 0, ops) that fixes these axe violations without using injectCSS color equal to background: ${JSON.stringify(axe.violations.map((v) => v.id))}`;
@@ -300,7 +300,18 @@ export async function runMutator(
   opts?: { generation?: number; champion?: PatchSpec | null },
 ): Promise<CandidateSpec[]> {
   const generation = opts?.generation ?? 1;
-  log.emit("mutator", "start", `template mutator; LLM optional when a key is set (generation ${generation})`);
+  log.emit(
+    "mutator",
+    "start",
+    `deterministic template mutator; LLM path available with a key (generation ${generation})`,
+  );
+  if (generation >= 2) {
+    log.emit(
+      "mutator",
+      "info",
+      "Champion already at the measured ceiling: UA :focus-visible on Place order; gen-2 challengers do not change persona outcomes",
+    );
+  }
   const templates = templatesFromViolations(axe, generation, opts?.champion);
   const llm = generation === 1 ? await maybeLlmCandidates(axe, log) : [];
   const all = [...templates, ...llm];

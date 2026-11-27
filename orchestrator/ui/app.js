@@ -131,7 +131,7 @@ function renderResults(state) {
 function render(state) {
   const phase = state.phase || "idle";
   setText(phaseEl, `phase: ${phase}`);
-  phaseEl.className = `phase ${phase === "WAITING_FOR_HUMAN_APPROVAL" ? "wait" : phase}`;
+  phaseEl.className = `phase ${phase === "WAITING_FOR_HUMAN_APPROVAL" || phase === "KEEP_COLLECTING" ? "wait" : phase}`;
   renderAgents(state);
   renderLog(state.events || []);
   renderVariants(state);

@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_WIN_THRESHOLD,
+  formatDecisionLine,
+  formatGen2Inconclusive,
   parseArmChances,
   recommendWinner,
 } from "../../orchestrator/src/agents/analyst.ts";
@@ -53,6 +55,29 @@ describe("analyst threshold", () => {
       expect(rec.reason).toMatch(/keep collecting/i);
       expect(rec.leading).toBe("full-v1");
     }
+  });
+
+  it("prints a readable decision line, not only JSON", () => {
+    const rec = recommendWinner(
+      [
+        { key: "full-v1", chanceToWin: 0.91, n: 250, sum: 200, lift: 0.3 },
+        { key: "control", chanceToWin: 0.09, n: 250, sum: 140, lift: 0 },
+      ],
+      0.95,
+    );
+    expect(formatDecisionLine(rec)).toBe(
+      "Flagsmith: 91% | Agent threshold: 95% | Decision: KEEP COLLECTING",
+    );
+  });
+
+  it("wording for gen-2 below threshold does not claim a loss", () => {
+    const rec = recommendWinner(
+      [{ key: "g2-focus", chanceToWin: 0.62, n: 100, sum: 80, lift: 0.01 }],
+      0.95,
+    );
+    expect(formatGen2Inconclusive(rec, 400)).toBe(
+      "Gen-2 inconclusive (chance_to_win 0.620 < 0.95 after 400 visits); champion stays",
+    );
   });
 
   it("keeps collecting when Flagsmith has no inference yet", () => {

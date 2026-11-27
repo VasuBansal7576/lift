@@ -16,7 +16,7 @@ import { runRollout } from "./agents/rollout.ts";
 import { runScanner } from "./agents/scanner.ts";
 import { runTrafficAgent } from "./agents/traffic.ts";
 import { FlagsmithHttp } from "./flagsmith/http.ts";
-import { fetchExperimentResults, waitForResults } from "./flagsmith/results.ts";
+import { fetchExperimentResults, resultsIdentityCount, waitForResults } from "./flagsmith/results.ts";
 import { EventLog } from "./log.ts";
 import { assertAllowedUrl } from "./loopback.ts";
 import { statePath } from "./paths.ts";
@@ -65,7 +65,8 @@ async function collectUntilWinner(
 ): Promise<{ visits: TrafficVisit[]; recommendation: AnalystRecommendation }> {
   let visits = await runTrafficAgent(opts, flag, passed, controlSpec, log);
   log.setPhase("analysing");
-  let results = await waitForResults(opts, flag.experimentId, opts.resultsWaitMs);
+  let minIdentities = Math.max(50, Math.floor(visits.length * 0.4));
+  let results = await waitForResults(opts, flag.experimentId, opts.resultsWaitMs, undefined, minIdentities);
   let recommendation = runAnalyst(results, log, opts.threshold);
   const maxExtra = Math.max(0, Math.floor(Number(process.env.LIFT_ORCH_MAX_EXTRA_ROUNDS ?? 6)));
   let extra = 0;
@@ -80,7 +81,8 @@ async function collectUntilWinner(
     const more = await runTrafficAgent(opts, flag, passed, controlSpec, log);
     visits = visits.concat(more);
     log.setPhase("analysing");
-    results = await waitForResults(opts, flag.experimentId, opts.resultsWaitMs);
+    minIdentities = resultsIdentityCount(results) + 1;
+    results = await waitForResults(opts, flag.experimentId, opts.resultsWaitMs, undefined, minIdentities);
     recommendation = runAnalyst(results, log, opts.threshold);
   }
   return { visits, recommendation };

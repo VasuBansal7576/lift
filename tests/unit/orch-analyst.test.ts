@@ -4,6 +4,7 @@ import {
   parseArmChances,
   recommendWinner,
 } from "../../orchestrator/src/agents/analyst.ts";
+import { resultsAreReady, resultsIdentityCount } from "../../orchestrator/src/flagsmith/results.ts";
 
 const envelope = {
   results: {
@@ -57,5 +58,12 @@ describe("analyst threshold", () => {
   it("keeps collecting when Flagsmith has no inference yet", () => {
     const rec = recommendWinner([], 0.95);
     expect(rec.kind).toBe("keep_collecting");
+  });
+
+  it("does not treat stale /results as ready when identity counts have not grown", () => {
+    expect(resultsIdentityCount(envelope)).toBe(160);
+    expect(resultsAreReady(envelope, 160)).toBe(true);
+    expect(resultsAreReady(envelope, 161)).toBe(false);
+    expect(resultsAreReady({ results: { payload: { metrics: [{ variants: {}, inference: {} }] } } }, 0)).toBe(false);
   });
 });

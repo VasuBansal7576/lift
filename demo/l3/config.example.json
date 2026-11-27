@@ -1,0 +1,8 @@
+{
+  "site": "l3",
+  "flagsmithApiUrl": "http://127.0.0.1:8000/api/v1/",
+  "flagsmithEnvironmentKey": "",
+  "flagName": "l3_sensory_safe",
+  "segmentName": "sensory_safe",
+  "traitName": "overstimulated"
+}

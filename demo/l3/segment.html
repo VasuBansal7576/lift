@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Flagsmith · sensory_safe · Lift L3</title>
+  <style>
+    :root { font-family: ui-sans-serif, system-ui, sans-serif; }
+    body { margin: 0; background: #0f172a; color: #e2e8f0; }
+    header { padding: 0.8rem 1.2rem; background: #1e293b; border-bottom: 1px solid #334155; }
+    header strong { color: #38bdf8; }
+    .note { margin: 0; font-size: 0.85rem; color: #fde68a; }
+    main { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; padding: 1rem; }
+    section { background: #1e293b; border: 1px solid #334155; border-radius: 8px; padding: 1rem; }
+    h1, h2 { margin: 0 0 0.6rem; font-size: 1.1rem; }
+    .rule { background: #0b1220; padding: 0.8rem; border-radius: 6px; }
+    .pill { display: inline-block; padding: 0.15rem 0.5rem; border-radius: 999px; font-size: 0.8rem; font-weight: 700; }
+    .on { background: #14532d; color: #bbf7d0; }
+    .off { background: #3f1d1d; color: #fecaca; }
+    table { width: 100%; border-collapse: collapse; }
+    td { padding: 0.4rem 0.3rem; border-bottom: 1px solid #334155; }
+    pre { overflow: auto; font-size: 0.8rem; background: #0b1220; padding: 0.8rem; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Flagsmith Admin API · project Lift · environment Development</h1>
+    <p class="note">Objects created by <code>npm run l3:bootstrap</code>. Segment rule and override below. No API tokens are shown.</p>
+  </header>
+  <main>
+    <section>
+      <h2>Segment <strong>sensory_safe</strong></h2>
+      <p>Match if <em>all</em> of the following are true:</p>
+      <div class="rule">
+        <table>
+          <tr>
+            <td>Property</td>
+            <td><code>overstimulated</code></td>
+          </tr>
+          <tr>
+            <td>Operator</td>
+            <td>Exactly Matches (=)</td>
+          </tr>
+          <tr>
+            <td>Value</td>
+            <td><code>true</code></td>
+          </tr>
+        </table>
+      </div>
+      <p>Identities with trait <code>overstimulated=true</code> are members. Membership is evaluated by Flagsmith, not by the page.</p>
+    </section>
+    <section>
+      <h2>Flag <strong>l3_sensory_safe</strong></h2>
+      <p>Environment default <span class="pill off">OFF</span></p>
+      <p>Segment override · sensory_safe <span class="pill on">ON</span></p>
+      <p>Value (JSON remote config):</p>
+      <pre>{
+  "pauseMedia": true,
+  "pauseMotion": true,
+  "softenContrast": true,
+  "showSummaries": true,
+  "hideMarketing": true,
+  "fadeMs": 2000,
+  "ink": "#2c3038",
+  "paper": "#f4f0e8"
+}</pre>
+    </section>
+  </main>
+</body>
+</html>

@@ -22,7 +22,10 @@
     "test:unit": "vitest run tests/unit",
     "test:e2e": "playwright test",
     "typecheck": "tsc --noEmit",
-    "test:all": "vitest run tests/unit && playwright test"
+    "test:all": "vitest run tests/unit && playwright test",
+    "l3:bootstrap": "tsx scripts/l3-bootstrap.ts",
+    "l3:demo": "tsx scripts/serve-l3.ts",
+    "l3:record": "tsx scripts/l3-record.ts"
   },
   "engines": {
     "node": ">=20"

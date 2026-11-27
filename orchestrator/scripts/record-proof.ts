@@ -4,7 +4,7 @@
  * Real Flagsmith URLs (public client env key in the path is acceptable).
  */
 import { spawn } from "node:child_process";
-import { appendFileSync, mkdirSync, copyFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, copyFileSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { chromium } from "@playwright/test";
 import { parseArgv } from "../src/config.ts";
@@ -17,12 +17,13 @@ const STORE = "/cursor/stores/self/recordings/t1-t2";
 const OPT_ART = "/opt/cursor/artifacts";
 
 function copyOut(file: string) {
+  const name = file.split("/").pop()!;
   for (const dir of [ARTIFACTS, STORE, OPT_ART]) {
     try {
       mkdirSync(dir, { recursive: true });
-      copyFileSync(file, resolve(dir, file.split("/").pop()!));
+      copyFileSync(file, resolve(dir, name));
     } catch {
-      /* optional destinations */
+      /* optional destinations (size caps on some mounts) */
     }
   }
 }
@@ -236,6 +237,7 @@ async function main() {
   }
 
   await stopFfmpeg(ff);
+  copyOut(t2);
 
   const t1 = resolve(OUT, "t1-experiment.mp4");
   const ff1 = startFfmpeg(t1);
@@ -257,6 +259,7 @@ async function main() {
     throw new Error("t1 ended on sign-in");
   }
   await stopFfmpeg(ff1);
+  copyOut(t1);
 
   const l2 = resolve(OUT, "l2-generation-2.mp4");
   const ff2 = startFfmpeg(l2);
@@ -300,13 +303,12 @@ async function main() {
     throw new Error("l2 ended on sign-in");
   }
   await stopFfmpeg(ff2);
+  copyOut(l2);
 
-  await context.close();
-  await browser.close();
-
-  for (const file of [t2, t1, l2]) {
-    if (existsSync(file)) copyOut(file);
-  }
+  await Promise.race([
+    context.close().then(() => browser.close()),
+    new Promise((r) => setTimeout(r, 8000)),
+  ]);
 }
 
 main().catch((err) => {

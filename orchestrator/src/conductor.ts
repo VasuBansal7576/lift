@@ -3,7 +3,12 @@ import { dirname } from "node:path";
 import type { PatchSpec } from "../../shared/patch-spec.ts";
 import { serveSites } from "../../agent/src/serve.ts";
 import { runAnalyst } from "./agents/analyst.ts";
-import { assertApproveArgs, pauseForHumanApproval, requireTypedApproval } from "./agents/approval.ts";
+import {
+  assertApproveArgs,
+  pauseForHumanApproval,
+  requireTypedApproval,
+  type ApprovalIo,
+} from "./agents/approval.ts";
 import {
   cleanupOrchFlags,
   loadFlagSetupFromExperiment,
@@ -88,7 +93,14 @@ async function collectUntilWinner(
   return { visits, recommendation };
 }
 
-export async function runOrchestrator(opts: OrchOptions): Promise<PersistedState> {
+export interface RunOrchestratorExtras {
+  approvalIo?: ApprovalIo;
+}
+
+export async function runOrchestrator(
+  opts: OrchOptions,
+  extras: RunOrchestratorExtras = {},
+): Promise<PersistedState> {
   const started = Date.now();
   const log = new EventLog();
   assertAllowedUrl(opts.siteUrl, opts.allowRemote, "site URL");
@@ -124,7 +136,7 @@ export async function runOrchestrator(opts: OrchOptions): Promise<PersistedState
 
   if (opts.approve) {
     try {
-      return await approveExisting(opts, log, started);
+      return await approveExisting(opts, log, started, extras.approvalIo);
     } finally {
       if (ui && !opts.keepUi) await ui.close();
     }
@@ -217,6 +229,7 @@ export async function runOrchestrator(opts: OrchOptions): Promise<PersistedState
 
       log.setPhase("flagging");
       const flag = await runFlagAgent(opts, passed, generation, controlKey, log);
+      site.setAllowMock(false);
       log.snapshot = {
         generations,
         flag,
@@ -253,6 +266,7 @@ export async function runOrchestrator(opts: OrchOptions): Promise<PersistedState
       generations.push(record);
       previousChampion = pickChampion(record);
       previousFlag = flag;
+      site.setAllowMock(true);
       log.snapshot = {
         generations,
         flag,
@@ -316,10 +330,11 @@ async function approveExisting(
   opts: OrchOptions,
   log: EventLog,
   started: number,
+  approvalIo?: ApprovalIo,
 ): Promise<PersistedState> {
   assertApproveArgs(opts.approve, opts.approveExperimentId);
   const experimentId = opts.approveExperimentId as number;
-  await requireTypedApproval(experimentId);
+  await requireTypedApproval(experimentId, approvalIo);
   const http = flagsmithHttp(opts);
   const flag = await loadFlagSetupFromExperiment(opts, experimentId, http);
   log.emit("approval", "info", `Re-fetching Flagsmith /results for experiment ${experimentId}`);

@@ -52,15 +52,20 @@ export async function waitForResults(
 ): Promise<FlagsmithResultsLike | null> {
   const deadline = Date.now() + waitMs;
   let latest: FlagsmithResultsLike | null = null;
-  let delay = 8_000;
+  let delay = 4_000;
   let lastRefresh = 0;
+  const initialWait = Math.max(0, Number(process.env.LIFT_ORCH_RESULTS_INITIAL_MS ?? 8_000));
   // Let the SDK flush and the warehouse land rows before the first refresh.
-  if (waitMs > 0) await sleep(Math.min(15_000, waitMs));
+  if (waitMs > 0) await sleep(Math.min(initialWait, waitMs));
   while (Date.now() < deadline) {
     const now = Date.now();
-    const refresh = lastRefresh === 0 || now - lastRefresh >= 5 * 60 * 1000;
+    const refresh = lastRefresh === 0 || now - lastRefresh >= 45 * 1000;
     latest = await fetchExperimentResults(opts, experimentId, refresh);
     if (refresh) lastRefresh = now;
+    const identities = resultsIdentityCount(latest);
+    process.stdout.write(
+      `results poll identities=${identities} min=${minIdentities} ready=${resultsAreReady(latest, minIdentities)}\n`,
+    );
     if (resultsAreReady(latest, minIdentities)) return latest;
     await sleep(Math.min(delay, Math.max(0, deadline - Date.now())));
     delay = Math.min(Math.floor(delay * 1.4), 30_000);

@@ -1,21 +1,91 @@
-/** Seeded keep-rate after the page conversion. Higher = more conversions kept. SIMULATED. */
-export function dropoutKeepRate(variant: string): number {
-  switch (variant) {
-    case "g2-type":
-      return 0.97;
-    case "full-v1":
-      return 0.92;
-    case "g2-focus":
-      return 0.55;
-    case "labels-v1":
-      return 0.62;
-    case "contrast-v1":
-      return 0.58;
-    case "g2-cursor":
-      return 0.4;
-    default:
-      return 0.75;
+import { pickPersona } from "../../shared/mix.ts";
+import { mixSeed, mulberry32 } from "../../shared/rng.ts";
+import { DEFAULT_PERSONA_MIX, type Persona, type PersonaMix } from "../../shared/types.ts";
+
+/** Same keep probability for every arm after the persona succeeds on the served surface. */
+export const SHARED_KEEP_RATE = 0.9;
+
+export const DEFAULT_CONTRAST_FLOOR = 4.5;
+
+export interface PersonaSurface {
+  /** Keyboard can Tab to the submit control. */
+  submitReachableByTab: boolean;
+  /** Keyboard can activate submit with Enter once focused. */
+  submitActivatesWithEnter: boolean;
+  /** Screen-reader: required fields/controls missing accessible names. */
+  unlabeledControls: boolean;
+  /** Low-vision: worst contrast among essential copy (computed styles / axe). */
+  minContrast: number;
+  contrastFloor?: number;
+}
+
+export const OPEN_SURFACE: PersonaSurface = {
+  submitReachableByTab: true,
+  submitActivatesWithEnter: true,
+  unlabeledControls: false,
+  minContrast: 7,
+};
+
+export const BLOCKED_SURFACE: PersonaSurface = {
+  submitReachableByTab: false,
+  submitActivatesWithEnter: false,
+  unlabeledControls: true,
+  minContrast: 2.1,
+};
+
+export function personaConvertsOnSurface(persona: Persona, surface: PersonaSurface): boolean {
+  switch (persona) {
+    case "mouse":
+      return true;
+    case "keyboard":
+      return surface.submitReachableByTab && surface.submitActivatesWithEnter;
+    case "screen-reader":
+      return !surface.unlabeledControls;
+    case "low-vision":
+      return surface.minContrast >= (surface.contrastFloor ?? DEFAULT_CONTRAST_FLOOR);
+    default: {
+      const _exhaustive: never = persona;
+      throw new Error(`Unhandled persona ${String(_exhaustive)}`);
+    }
   }
+}
+
+export function applySharedKeep(
+  converted: boolean,
+  rand: () => number,
+  keepRate = SHARED_KEEP_RATE,
+): { converted: boolean; dropped: boolean } {
+  if (!converted) return { converted: false, dropped: false };
+  if (rand() < keepRate) return { converted: true, dropped: false };
+  return { converted: false, dropped: true };
+}
+
+export interface ArmRateResult {
+  converted: number;
+  n: number;
+  rate: number;
+}
+
+/** Seeded Monte Carlo of persona mix + shared keep on one surface. Arm name does not change the keep rate. */
+export function simulateArmRate(input: {
+  surface: PersonaSurface;
+  n: number;
+  seed: number;
+  arm?: string;
+  mix?: PersonaMix;
+  keepRate?: number;
+}): ArmRateResult {
+  const mix = input.mix ?? DEFAULT_PERSONA_MIX;
+  const keepRate = input.keepRate ?? SHARED_KEEP_RATE;
+  const runId = input.arm ?? "arm";
+  let converted = 0;
+  for (let i = 0; i < input.n; i += 1) {
+    const persona = pickPersona(mulberry32(mixSeed(input.seed, runId, i, "persona")), mix);
+    const personaOk = personaConvertsOnSurface(persona, input.surface);
+    const keepRand = mulberry32(mixSeed(input.seed, runId, i, "dropout"));
+    if (applySharedKeep(personaOk, keepRand, keepRate).converted) converted += 1;
+  }
+  return { converted, n: input.n, rate: input.n === 0 ? 0 : converted / input.n };
 }
 
 export function cookieMatchesIdentity(

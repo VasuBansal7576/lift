@@ -5,16 +5,16 @@ import { pickPersona } from "../../../shared/mix.ts";
 import { DEFAULT_PERSONA_MIX } from "../../../shared/types.ts";
 import { mixSeed, mulberry32 } from "../../../shared/rng.ts";
 import { identityFor } from "../../../traffic/src/identity.ts";
-import { applyBaselineDropout } from "../../../traffic/src/runner.ts";
-import { runPersona } from "../../../traffic/src/personas.ts";
+import { runPersona, type AttemptResult } from "../../../traffic/src/personas.ts";
 import { gotoSite } from "../browser.ts";
 import type { EventLog } from "../log.ts";
 import { assertAllowedUrl } from "../loopback.ts";
 import {
+  SHARED_KEEP_RATE,
   TrafficAbortError,
   appliedVariantMatches,
+  applySharedKeep,
   cookieMatchesIdentity,
-  dropoutKeepRate,
 } from "../traffic-guard.ts";
 import type { FlagSetup, GateResult, OrchOptions, TrafficVisit } from "../types.ts";
 
@@ -31,6 +31,24 @@ export function variantKeyFromFlag(flag: {
   return flag.variant;
 }
 
+export function trafficSeedFromEnv(): number {
+  const raw = process.env.LIFT_TRAFFIC_SEED?.trim();
+  if (raw) {
+    const n = Number(raw);
+    if (Number.isFinite(n)) return n >>> 0;
+  }
+  return 20261127;
+}
+
+export function trafficConcurrencyFromEnv(): number {
+  const raw = process.env.LIFT_ORCH_TRAFFIC_CONCURRENCY?.trim();
+  if (raw) {
+    const n = Math.floor(Number(raw));
+    if (Number.isFinite(n) && n >= 1) return Math.min(n, 24);
+  }
+  return 12;
+}
+
 async function waitForAppliedVariant(page: import("@playwright/test").Page, expected: string): Promise<string> {
   await page.waitForFunction(
     (wanted) => document.documentElement.dataset.liftAppliedVariant === wanted,
@@ -40,6 +58,20 @@ async function waitForAppliedVariant(page: import("@playwright/test").Page, expe
   return page.evaluate(() => document.documentElement.dataset.liftAppliedVariant ?? "");
 }
 
+async function mapPool(count: number, limit: number, fn: (index: number) => Promise<void>): Promise<void> {
+  let next = 0;
+  async function worker(): Promise<void> {
+    while (true) {
+      const index = next;
+      next += 1;
+      if (index >= count) return;
+      await fn(index);
+    }
+  }
+  const n = Math.min(Math.max(1, limit), count);
+  await Promise.all(Array.from({ length: n }, () => worker()));
+}
+
 export async function runTrafficAgent(
   opts: OrchOptions,
   flag: FlagSetup,
@@ -47,7 +79,14 @@ export async function runTrafficAgent(
   _controlSpec: unknown,
   log: EventLog,
 ): Promise<TrafficVisit[]> {
-  log.emit("traffic", "start", `SIMULATED personas × ${opts.trafficN} sticky identities`);
+  const seed = trafficSeedFromEnv();
+  const concurrency = trafficConcurrencyFromEnv();
+  log.emit(
+    "traffic",
+    "start",
+    `SIMULATED personas × ${opts.trafficN} sticky identities (seed=${seed}, keep=${SHARED_KEEP_RATE} all arms, concurrency=${concurrency})`,
+    { seed, keepRate: SHARED_KEEP_RATE, concurrency, mix: DEFAULT_PERSONA_MIX },
+  );
   assertAllowedUrl(opts.siteUrl, opts.allowRemote, "LIFT_SITE_URL");
 
   if (!opts.apply || flag.dryRun) {
@@ -68,15 +107,14 @@ export async function runTrafficAgent(
   });
 
   const runId = `orch${Date.now().toString().slice(-8)}`;
-  const seed = 20261127;
-  const personaRand = mulberry32(mixSeed(seed, runId, 0, "persona"));
-  const dropoutRand = mulberry32(mixSeed(seed, runId, 0, "dropout"));
   const browser = await chromium.launch({ headless: true });
   const visits: TrafficVisit[] = [];
   const siteOrigin = new URL(opts.siteUrl);
 
   try {
-    for (let i = 0; i < opts.trafficN; i += 1) {
+    await mapPool(opts.trafficN, concurrency, async (i) => {
+      const personaRand = mulberry32(mixSeed(seed, runId, i, "persona"));
+      const dropoutRand = mulberry32(mixSeed(seed, runId, i, "dropout"));
       const persona = pickPersona(personaRand, DEFAULT_PERSONA_MIX);
       const identity = identityFor(runId, seed, i);
       const flagResult = (await flagsmith.getExperimentFlag(flag.flagName, identity, {
@@ -119,9 +157,23 @@ export async function runTrafficAgent(
           );
         }
 
-        let attempt;
+        let attempt: AttemptResult;
         try {
-          attempt = await runPersona(page, persona);
+          const budgetMs = 15_000;
+          attempt = await Promise.race([
+            runPersona(page, persona),
+            new Promise<AttemptResult>((resolve) => {
+              setTimeout(
+                () =>
+                  resolve({
+                    converted: false,
+                    blockedBy: [],
+                    reason: `persona timed out after ${budgetMs}ms`,
+                  }),
+                budgetMs,
+              );
+            }),
+          ]);
         } catch (err) {
           attempt = {
             converted: false,
@@ -129,7 +181,7 @@ export async function runTrafficAgent(
             reason: `persona failed: ${err instanceof Error ? err.message : String(err)}`.slice(0, 160),
           };
         }
-        const baseline = applyBaselineDropout(attempt.converted, dropoutRand, dropoutKeepRate(variant));
+        const baseline = applySharedKeep(attempt.converted, dropoutRand, SHARED_KEEP_RATE);
         const converted = baseline.converted;
 
         if (converted) {
@@ -143,7 +195,7 @@ export async function runTrafficAgent(
           persona,
           variant,
           converted,
-          reason: baseline.dropped ? "baseline drop-off (seeded)" : attempt.reason,
+          reason: baseline.dropped ? "baseline drop-off (seeded, shared keep)" : attempt.reason,
           simulated: true,
           at: new Date().toISOString(),
         };
@@ -151,10 +203,13 @@ export async function runTrafficAgent(
         process.stdout.write(
           `${identity} ${persona} ${variant} ${converted ? "converted" : "blocked"} ${visit.reason}\n`,
         );
+        if (visits.length % 20 === 0) {
+          process.stdout.write(`traffic progress ${visits.length}/${opts.trafficN} (seed=${seed})\n`);
+        }
       } finally {
         await context.close();
       }
-    }
+    });
   } finally {
     await browser.close();
     await flagsmith.flushEvents();
@@ -162,9 +217,11 @@ export async function runTrafficAgent(
   }
 
   const converted = visits.filter((item) => item.converted).length;
-  log.emit("traffic", "done", `${visits.length} visits, ${converted} conversions (SIMULATED)`, {
+  log.emit("traffic", "done", `${visits.length} visits, ${converted} conversions (SIMULATED, seed=${seed})`, {
     visits: visits.length,
     conversions: converted,
+    seed,
+    keepRate: SHARED_KEEP_RATE,
   });
   return visits;
 }

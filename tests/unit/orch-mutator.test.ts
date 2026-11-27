@@ -43,9 +43,9 @@ describe("mutator templates", () => {
     }
   });
 
-  it("hostile contrast spec fails the patch-spec contrast backstop", () => {
+  it("hostile contrast spec is allowlisted (axe, not parse, must reject it)", () => {
     const parsed = parsePatchSpec(badContrastSpec());
-    expect(parsed.ok).toBe(false);
+    expect(parsed.ok).toBe(true);
   });
 
   it("generation 2 uses the champion as control and emits gated challengers", () => {

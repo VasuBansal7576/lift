@@ -17,5 +17,15 @@ describe("record-proof", () => {
     expect(source).not.toMatch(/lift-dev-password/);
     expect(source).toMatch(/FLAGSMITH_BOOTSTRAP_EMAIL/);
     expect(source).toMatch(/APPROVE \$\{/);
+    expect(source).toMatch(/standing in for the human approver/);
+  });
+
+  it("does not hide navigation after ffmpeg starts", () => {
+    const withoutLogin = source.replace(/async function loginFlagsmith[\s\S]*?(?=\n(?:async )?function )/, "");
+    expect(withoutLogin).not.toMatch(/page\.goto\(/);
+    expect(withoutLogin).not.toMatch(/page\.reload\(/);
+    expect(source).not.toMatch(/force:\s*true/);
+    expect(source).toMatch(/typeUrlInOmnibox/);
+    expect(source).toMatch(/"--clearmodifiers", "F5"/);
   });
 });

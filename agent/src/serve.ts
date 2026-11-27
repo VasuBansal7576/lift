@@ -19,6 +19,7 @@ const MIME: Record<string, string> = {
 export interface StaticServer {
   close: () => Promise<void>;
   reused: boolean;
+  setAllowMock: (value: boolean) => void;
 }
 
 function overlaySiteConfig(
@@ -46,7 +47,7 @@ export function serveSites(
   opts?: { allowMock?: boolean; root?: string },
 ): Promise<StaticServer> {
   const root = opts?.root ?? resolve(ROOT, "sites");
-  const allowMock = opts?.allowMock ?? true;
+  let allowMock = opts?.allowMock ?? true;
   const server = createServer(async (req, res) => {
     try {
       const url = parseIncomingUrl(req.url, `http://127.0.0.1:${port}`);
@@ -114,7 +115,7 @@ export function serveSites(
         res.writeHead(200, { "Content-Type": MIME[extname(filePath)] ?? "text/plain" });
         res.end(raw);
       } catch {
-        if (allowMock && relative.endsWith("config.json")) {
+        if (relative.endsWith("config.json")) {
           const parsed = configForRelative(relative) ?? {};
           const body = overlaySiteConfig(parsed, { allowMock });
           res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
@@ -131,26 +132,32 @@ export function serveSites(
       }
     }
   });
-  return listen(server, port, "sites");
+  return listen(server, port, "sites").then((started) => ({
+    ...started,
+    setAllowMock(value: boolean) {
+      allowMock = value;
+    },
+  }));
 }
 
 function listen(server: Server, port: number, label: string): Promise<StaticServer> {
   return new Promise((resolveServer, reject) => {
     server.listen(port, "127.0.0.1", () => {
-      resolveServer({
-        reused: false,
-        close: () =>
-          new Promise((resClose, rejClose) => {
-            server.close((err) => (err ? rejClose(err) : resClose()));
-          }),
-      });
+        resolveServer({
+          reused: false,
+          setAllowMock: () => undefined,
+          close: () =>
+            new Promise((resClose, rejClose) => {
+              server.close((err) => (err ? rejClose(err) : resClose()));
+            }),
+        });
     });
     server.on("error", (err: NodeJS.ErrnoException) => {
       if (err.code === "EADDRINUSE") {
         process.stderr.write(
           `Port ${port} already in use; reusing the existing ${label} server. If bots need URL override, start it with npm run site -- --allow-mock.\n`,
         );
-        resolveServer({ reused: true, close: async () => undefined });
+        resolveServer({ reused: true, close: async () => undefined, setAllowMock: () => undefined });
         return;
       }
       reject(err);

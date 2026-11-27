@@ -1,12 +1,13 @@
 /**
  * Continuous live recordings for Track 1 / Track 2.
  * Logs in to Flagsmith before ffmpeg starts so credentials are not on screen.
+ * After ffmpeg starts: visible pointer clicks, omnibox URL typing, or F5 only.
  * Real Flagsmith URLs (public client env key in the path is acceptable).
  */
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { appendFileSync, mkdirSync, copyFileSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { chromium } from "@playwright/test";
+import { chromium, type Page } from "@playwright/test";
 import { parseArgv } from "../src/config.ts";
 import { runOrchestrator } from "../src/conductor.ts";
 import { LIVE_PATH, REPO_ROOT } from "../src/paths.ts";
@@ -15,6 +16,7 @@ const OUT = resolve(REPO_ROOT, "recordings/t1-t2");
 const ARTIFACTS = resolve(REPO_ROOT, "artifacts/t1-t2");
 const STORE = "/cursor/stores/self/recordings/t1-t2";
 const OPT_ART = "/opt/cursor/artifacts";
+const DISPLAY_ENV = { ...process.env, DISPLAY: ":1" };
 
 function copyOut(file: string) {
   const name = file.split("/").pop()!;
@@ -26,6 +28,79 @@ function copyOut(file: string) {
       /* optional destinations (size caps on some mounts) */
     }
   }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+function xdo(args: string[]): void {
+  execFileSync("xdotool", args, { env: DISPLAY_ENV, stdio: "pipe" });
+}
+
+function wiggleMouse(): void {
+  try {
+    xdo(["mousemove_relative", "--", "6", "0"]);
+    xdo(["mousemove_relative", "--", "-6", "0"]);
+  } catch {
+    /* display optional */
+  }
+}
+
+function activateChromium(): void {
+  const classes = ["Chromium", "chromium", "Google-chrome", "chrome"];
+  for (const cls of classes) {
+    try {
+      const ids = execFileSync("xdotool", ["search", "--onlyvisible", "--class", cls], {
+        env: DISPLAY_ENV,
+        encoding: "utf8",
+      })
+        .trim()
+        .split("\n")
+        .filter(Boolean);
+      if (ids[0]) {
+        xdo(["windowactivate", "--sync", ids[0]]);
+        return;
+      }
+    } catch {
+      /* try next class */
+    }
+  }
+  try {
+    xdo(["search", "--onlyvisible", "--name", "Chromium", "windowactivate", "--sync"]);
+  } catch {
+    /* headed window may already be focused */
+  }
+}
+
+async function typeUrlInOmnibox(page: Page, url: string): Promise<void> {
+  activateChromium();
+  await sleep(200);
+  xdo(["key", "--clearmodifiers", "ctrl+l"]);
+  await sleep(200);
+  xdo(["key", "--clearmodifiers", "ctrl+a"]);
+  await sleep(80);
+  xdo(["type", "--delay", "18", url]);
+  await sleep(150);
+  xdo(["key", "--clearmodifiers", "Return"]);
+  const target = new URL(url);
+  const prefix = `${target.origin}${target.pathname.replace(/\/$/, "")}`;
+  await page.waitForURL((next) => next.toString().startsWith(prefix) || next.href.includes(target.pathname), {
+    timeout: 20_000,
+  });
+  await page.waitForLoadState("domcontentloaded");
+}
+
+async function visibleReload(page: Page): Promise<void> {
+  activateChromium();
+  await page.bringToFront();
+  await sleep(200);
+  xdo(["key", "--clearmodifiers", "F5"]);
+  await page.waitForFunction(() => {
+    const nav = performance.getEntriesByType("navigation")[0] as PerformanceNavigationTiming | undefined;
+    return nav?.type === "reload";
+  }, { timeout: 15_000 });
+  await page.waitForLoadState("domcontentloaded");
 }
 
 function startFfmpeg(path: string) {
@@ -70,7 +145,7 @@ function requireBootstrapCreds(): { email: string; password: string } {
   return { email, password };
 }
 
-async function loginFlagsmith(page: import("@playwright/test").Page) {
+async function loginFlagsmith(page: Page) {
   const { email, password } = requireBootstrapCreds();
   await page.goto("http://127.0.0.1:8000/login", { waitUntil: "domcontentloaded", timeout: 20_000 });
   const emailBox = page.getByLabel(/email/i);
@@ -81,47 +156,148 @@ async function loginFlagsmith(page: import("@playwright/test").Page) {
   await page.waitForURL((url) => !url.pathname.includes("login"), { timeout: 15_000 });
 }
 
-async function typeApproveOnCamera(experimentId: number): Promise<void> {
-  const title = "lift-approve";
-  const cmd = `cd ${REPO_ROOT} && npx tsx orchestrator/src/cli.ts --approve ${experimentId} --apply --no-ui; echo DONE; sleep 14`;
-  spawn("xterm", ["-T", title, "-geometry", "80x18+20+640", "-fa", "Monospace", "-fs", "14", "-e", "bash", "-lc", cmd], {
-    env: { ...process.env, DISPLAY: ":1" },
-    stdio: "ignore",
-  });
-  await new Promise((r) => setTimeout(r, 5000));
-  spawn(
-    "xdotool",
-    ["search", "--name", title, "windowactivate", "--sync", "type", "--delay", "110", `APPROVE ${experimentId}`],
-    { env: { ...process.env, DISPLAY: ":1" }, stdio: "ignore" },
-  );
-  await new Promise((r) => setTimeout(r, 2800));
-  spawn("xdotool", ["search", "--name", title, "windowactivate", "--sync", "key", "Return"], {
-    env: { ...process.env, DISPLAY: ":1" },
-    stdio: "ignore",
-  });
-  await new Promise((r) => setTimeout(r, 16_000));
+function assertNotLogin(page: Page, label: string): void {
+  if (page.url().includes("login")) {
+    throw new Error(`${label}: Flagsmith session expired; landed on sign-in`);
+  }
 }
 
-function liveDashboardUrl(): string {
+interface LiveSnap {
+  phase?: string;
+  dashboardExperimentUrl?: string;
+  flag?: { experimentId?: number; flagName?: string; dashboardUrl?: string };
+  recommendation?: { kind?: string; arm?: string; chanceToWin?: number; reason?: string };
+  generations?: Array<{
+    generation?: number;
+    recommendation?: { kind?: string; arm?: string; chanceToWin?: number };
+    gated?: Array<{ specId: string; passed: boolean; reason: string }>;
+    rejected?: Array<{ specId: string; reason: string }>;
+    flag?: { experimentId?: number; flagName?: string; dashboardUrl?: string };
+  }>;
+}
+
+function readLive(): LiveSnap {
   try {
-    const live = JSON.parse(readFileSync(LIVE_PATH, "utf8")) as { dashboardExperimentUrl?: string };
-    return live.dashboardExperimentUrl?.trim() || "";
+    return JSON.parse(readFileSync(LIVE_PATH, "utf8")) as LiveSnap;
   } catch {
-    return "";
+    return {};
   }
+}
+
+async function waitLive(
+  predicate: (snap: LiveSnap) => boolean,
+  timeoutMs: number,
+  label: string,
+): Promise<LiveSnap> {
+  const deadline = Date.now() + timeoutMs;
+  let lastBeat = 0;
+  while (Date.now() < deadline) {
+    const snap = readLive();
+    if (predicate(snap)) return snap;
+    const now = Date.now();
+    if (now - lastBeat >= 2500) {
+      lastBeat = now;
+      process.stdout.write(`[record] waiting ${label} phase=${snap.phase ?? "?"} ${new Date().toISOString()}\n`);
+      wiggleMouse();
+    }
+    await sleep(400);
+  }
+  throw new Error(`Timed out waiting for ${label}`);
+}
+
+async function clickNav(page: Page, name: RegExp, urlPart: RegExp, label: string): Promise<void> {
+  const link = page.getByRole("link", { name });
+  await link.first().waitFor({ state: "visible", timeout: 12_000 });
+  await link.first().click();
+  await page.waitForURL((url) => urlPart.test(url.pathname + url.search), { timeout: 15_000 });
+  const heading = page.getByRole("heading").first();
+  await heading.waitFor({ state: "visible", timeout: 10_000 });
+  assertNotLogin(page, label);
+}
+
+async function openExperimentOnCamera(page: Page, flagName: string, dashboardUrl: string): Promise<void> {
+  const experiments = page.getByRole("link", { name: /^Experiments$/ });
+  if (await experiments.count()) {
+    await experiments.first().click();
+    await page.waitForTimeout(1200);
+  } else {
+    await typeUrlInOmnibox(page, dashboardUrl);
+  }
+  assertNotLogin(page, "openExperiment");
+  const row = page.getByText(flagName, { exact: false }).first();
+  await row.waitFor({ state: "visible", timeout: 15_000 });
+  await row.scrollIntoViewIfNeeded();
+  await row.click();
+  await page.waitForTimeout(1200);
+  const heading = page.getByRole("heading").first();
+  await heading.waitFor({ state: "visible", timeout: 10_000 });
+  assertNotLogin(page, `experiment ${flagName}`);
+}
+
+async function showRolledOutFeature(page: Page, flagName: string): Promise<void> {
+  const features = page.getByRole("link", { name: /^Features$/ });
+  if (!(await features.count())) {
+    throw new Error("Features sidebar link not visible");
+  }
+  await features.first().click();
+  await page.waitForTimeout(1500);
+  const row = page.getByText(flagName, { exact: false }).first();
+  await row.waitFor({ state: "visible", timeout: 12_000 });
+  await row.scrollIntoViewIfNeeded();
+  await row.click();
+  await page.waitForTimeout(2000);
+  await page.getByRole("heading").first().waitFor({ state: "visible", timeout: 10_000 });
+  assertNotLogin(page, "features winner");
+}
+
+async function typeApproveOnCamera(experimentId: number): Promise<void> {
+  const title = "lift-approve";
+  const cmd = [
+    `echo "Recording harness typing APPROVE ${experimentId} standing in for the human approver."`,
+    "echo",
+    `cd ${REPO_ROOT} && npx tsx orchestrator/src/cli.ts --approve ${experimentId} --apply --no-ui`,
+    "echo DONE",
+    "sleep 8",
+  ].join("; ");
+  spawn("xterm", ["-T", title, "-geometry", "80x18+20+640", "-fa", "Monospace", "-fs", "14", "-e", "bash", "-lc", cmd], {
+    env: DISPLAY_ENV,
+    stdio: "ignore",
+  });
+  await sleep(4000);
+  xdo(["search", "--name", title, "windowactivate", "--sync"]);
+  await sleep(200);
+  xdo(["type", "--delay", "110", `APPROVE ${experimentId}`]);
+  await sleep(600);
+  xdo(["search", "--name", title, "windowactivate", "--sync", "key", "Return"]);
+  await sleep(12_000);
+}
+
+async function withClip(name: string, fn: () => Promise<void>): Promise<string> {
+  const path = resolve(OUT, `${name}.mp4`);
+  const ff = startFfmpeg(path);
+  await sleep(500);
+  try {
+    await fn();
+  } finally {
+    await stopFfmpeg(ff);
+    copyOut(path);
+  }
+  return path;
 }
 
 async function main() {
   mkdirSync(OUT, { recursive: true });
   writeFileSync("/tmp/lift-orch.log", "");
   writeFileSync(LIVE_PATH, "{}\n");
+  process.env.LIFT_ORCH_TRAFFIC_CONCURRENCY = process.env.LIFT_ORCH_TRAFFIC_CONCURRENCY || "16";
+  process.env.LIFT_ORCH_RESULTS_INITIAL_MS = process.env.LIFT_ORCH_RESULTS_INITIAL_MS || "4000";
+  process.env.LIFT_TRAFFIC_SEED = process.env.LIFT_TRAFFIC_SEED || "20261127";
+  process.env.LIFT_ORCH_MAX_EXTRA_ROUNDS = process.env.LIFT_ORCH_MAX_EXTRA_ROUNDS || "3";
+
   spawn(
     "xterm",
     ["-geometry", "92x28+0+40", "-fa", "Monospace", "-fs", "12", "-e", "bash", "-lc", "tail -n +1 -f /tmp/lift-orch.log"],
-    {
-      env: { ...process.env, DISPLAY: ":1" },
-      stdio: "ignore",
-    },
+    { env: DISPLAY_ENV, stdio: "ignore" },
   );
   const origWrite = process.stdout.write.bind(process.stdout);
   process.stdout.write = ((chunk: string | Uint8Array, ...rest: unknown[]) => {
@@ -142,127 +318,91 @@ async function main() {
   const page = await context.newPage();
   page.setDefaultTimeout(20_000);
   await loginFlagsmith(page);
-  await page.goto("http://127.0.0.1:8000/organisation/1/projects", { waitUntil: "domcontentloaded", timeout: 20_000 });
-
-  async function showExperiment(dashboardUrl: string) {
-    await page.goto(dashboardUrl, { waitUntil: "domcontentloaded", timeout: 20_000 });
-    await page.waitForTimeout(4000);
-    if (page.url().includes("login")) {
-      throw new Error("Flagsmith session expired; landed on sign-in");
-    }
-  }
-
-  async function showWinner(dashboardUrl: string, flagName: string) {
-    await page.goto(dashboardUrl, { waitUntil: "domcontentloaded", timeout: 20_000 });
-    await page.waitForTimeout(5000);
-    const featuresLink = page.getByRole("link", { name: /^Features$/ });
-    if (await featuresLink.count()) {
-      await featuresLink.first().click().catch(() => undefined);
-      await page.waitForTimeout(2500);
-      const row = page.getByText(flagName, { exact: false }).first();
-      await row.scrollIntoViewIfNeeded().catch(() => undefined);
-      await row.click({ force: true, timeout: 8_000 }).catch(() => undefined);
-      await page.waitForTimeout(5000);
-    }
-    if (page.url().includes("login")) {
-      throw new Error("Flagsmith session expired; landed on sign-in");
-    }
-  }
-
-  async function watchExperiment(stop: { done: boolean }) {
-    let last = "";
-    while (!stop.done) {
-      const url = liveDashboardUrl();
-      try {
-        if (url && url !== last) {
-          last = url;
-          await page.goto(url, { waitUntil: "domcontentloaded", timeout: 15_000 });
-          await page.waitForTimeout(2500);
-        } else if (url && !page.url().includes("login")) {
-          await page.reload({ waitUntil: "domcontentloaded", timeout: 15_000 }).catch(() => undefined);
-        }
-        if (page.url().includes("login")) {
-          throw new Error("Flagsmith session expired; landed on sign-in");
-        }
-      } catch (err) {
-        if (String(err).includes("sign-in")) throw err;
-      }
-      for (let i = 0; i < 16 && !stop.done; i += 1) {
-        await new Promise((r) => setTimeout(r, 500));
-      }
-    }
-  }
-
-  const t2 = resolve(OUT, "t2-orchestrator-run.mp4");
-  const ff = startFfmpeg(t2);
-  await page.waitForTimeout(1000);
 
   const stamp = Date.now().toString().slice(-6);
+  const t2Flag = `lift_orch_t2_${stamp}`;
   const opts = parseArgv([
     "--apply",
     "--keep-ui",
     "--traffic-n",
     "220",
     "--flag-name",
-    `lift_orch_t2_${stamp}`,
+    t2Flag,
     "--site-url",
     "http://127.0.0.1:4184/checkout",
     "--ui-port",
     "4177",
   ]);
-  const t2Stop = { done: false };
-  let t2WatchErr: unknown;
-  const t2Watch = watchExperiment(t2Stop).catch((err) => {
-    t2WatchErr = err;
+
+  const orchPromise = runOrchestrator(opts);
+  orchPromise.catch((err) => {
+    process.stderr.write(`t2 orchestrator failed: ${err instanceof Error ? err.stack ?? err.message : err}\n`);
   });
-  const state = await runOrchestrator(opts);
-  t2Stop.done = true;
-  await t2Watch;
-  if (t2WatchErr) throw t2WatchErr;
 
-  await page.goto("http://127.0.0.1:4177/", { waitUntil: "domcontentloaded", timeout: 15_000 }).catch(() => undefined);
-  await page.waitForTimeout(2500);
-  if (state.flag?.dashboardUrl) {
-    await showExperiment(state.flag.dashboardUrl);
-  }
+  await withClip("t2a-gate-launch", async () => {
+    await waitLive((s) => s.phase === "gating" || s.phase === "flagging" || s.phase === "traffic", 180_000, "t2 gate");
+    const live = await waitLive((s) => Boolean(s.flag?.dashboardUrl || s.dashboardExperimentUrl), 180_000, "t2 flag");
+    const dash = live.flag?.dashboardUrl || live.dashboardExperimentUrl || "";
+    await typeUrlInOmnibox(page, dash);
+    await openExperimentOnCamera(page, t2Flag, dash);
+    await waitLive((s) => s.phase === "traffic", 120_000, "t2 traffic start");
+    await sleep(2800);
+  });
 
-  if (state.recommendation?.kind === "winner" && state.flag) {
-    await typeApproveOnCamera(state.flag.experimentId);
-    if (state.flag.dashboardUrl) {
-      await showExperiment(state.flag.dashboardUrl);
-      await showWinner(state.flag.dashboardUrl, state.flag.flagName);
+  await waitLive(
+    (s) =>
+      s.phase === "analysing" ||
+      s.phase === "WAITING_FOR_HUMAN_APPROVAL" ||
+      s.phase === "complete" ||
+      s.phase === "aborted",
+    420_000,
+    "t2 traffic finishing",
+  );
+
+  const stateP = orchPromise;
+  await withClip("t2b-approve-rollout", async () => {
+    const state = await stateP;
+    process.stdout.write(
+      `t2 seed=${process.env.LIFT_TRAFFIC_SEED} recommendation=${JSON.stringify(state.recommendation)}\n`,
+    );
+    if (state.flag?.dashboardUrl) {
+      await typeUrlInOmnibox(page, state.flag.dashboardUrl);
+      await visibleReload(page);
     }
-  } else {
-    process.stdout.write("No winner yet; --approve skipped (keep collecting).\n");
-  }
+    if (state.recommendation?.kind === "winner" && state.flag) {
+      process.stdout.write(
+        `Recording harness will type APPROVE ${state.flag.experimentId} standing in for the human approver.\n`,
+      );
+      await typeApproveOnCamera(state.flag.experimentId);
+      await typeUrlInOmnibox(page, state.flag.dashboardUrl);
+      await visibleReload(page);
+      await showRolledOutFeature(page, state.flag.flagName);
+    } else {
+      process.stdout.write("No winner; harness is not typing APPROVE.\n");
+      await sleep(2500);
+    }
+  });
+  const state = await stateP;
 
-  await stopFfmpeg(ff);
-  copyOut(t2);
+  await withClip("t1-experiment", async () => {
+    await typeUrlInOmnibox(page, "http://127.0.0.1:8000/organisation/1/projects");
+    const lift = page.getByText("Lift", { exact: true });
+    await lift.nth(1).waitFor({ state: "visible", timeout: 10_000 });
+    await lift.nth(1).click();
+    await page.waitForTimeout(1200);
+    await clickNav(page, /^Experiments$/, /experiment/i, "t1 experiments");
+    if (state.flag) {
+      const row = page.getByText(state.flag.flagName, { exact: false }).first();
+      await row.waitFor({ state: "visible", timeout: 12_000 });
+      await row.click();
+      await page.getByRole("heading").first().waitFor({ state: "visible", timeout: 10_000 });
+    }
+    await sleep(2500);
+    assertNotLogin(page, "t1");
+  });
 
-  const t1 = resolve(OUT, "t1-experiment.mp4");
-  const ff1 = startFfmpeg(t1);
-  await page.goto("http://127.0.0.1:8000/organisation/1/projects", { waitUntil: "domcontentloaded", timeout: 20_000 });
-  await page.waitForTimeout(1500);
-  await page.getByText("Lift", { exact: true }).nth(1).click();
-  await page.waitForTimeout(2000);
-  await page.getByRole("link", { name: /^Experiments$/ }).click();
-  await page.waitForTimeout(2000);
-  if (state.flag) {
-    const row = page.getByText(state.flag.flagName, { exact: false }).first();
-    await row.scrollIntoViewIfNeeded().catch(() => undefined);
-    await row.click({ force: true, timeout: 8_000 }).catch(async () => {
-      if (state.flag?.dashboardUrl) await page.goto(state.flag.dashboardUrl, { waitUntil: "domcontentloaded", timeout: 20_000 });
-    });
-  }
-  await page.waitForTimeout(6000);
-  if (page.url().includes("login")) {
-    throw new Error("t1 ended on sign-in");
-  }
-  await stopFfmpeg(ff1);
-  copyOut(t1);
-
-  const l2 = resolve(OUT, "l2-generation-2.mp4");
-  const ff2 = startFfmpeg(l2);
+  writeFileSync(LIVE_PATH, "{}\n");
+  const l2Flag = `lift_orch_l2_${Date.now().toString().slice(-6)}`;
   const opts2 = parseArgv([
     "--apply",
     "--keep-ui",
@@ -271,39 +411,65 @@ async function main() {
     "--traffic-n",
     "220",
     "--flag-name",
-    `lift_orch_l2_${Date.now().toString().slice(-6)}`,
+    l2Flag,
     "--site-url",
     "http://127.0.0.1:4185/checkout",
     "--ui-port",
     "4178",
   ]);
-  writeFileSync(LIVE_PATH, "{}\n");
-  const l2Stop = { done: false };
-  let l2WatchErr: unknown;
-  const l2Watch = watchExperiment(l2Stop).catch((err) => {
-    l2WatchErr = err;
+  const gen2Promise = runOrchestrator(opts2);
+  gen2Promise.catch((err) => {
+    process.stderr.write(`l2 orchestrator failed: ${err instanceof Error ? err.stack ?? err.message : err}\n`);
   });
-  const gen2 = await runOrchestrator(opts2);
-  l2Stop.done = true;
-  await l2Watch;
-  if (l2WatchErr) throw l2WatchErr;
-  await page.goto("http://127.0.0.1:4178/", { waitUntil: "domcontentloaded", timeout: 15_000 }).catch(() => undefined);
-  await page.waitForTimeout(2500);
-  if (gen2.flag?.dashboardUrl) {
-    await showExperiment(gen2.flag.dashboardUrl);
-  }
-  if (gen2.recommendation?.kind === "winner" && gen2.flag) {
-    await typeApproveOnCamera(gen2.flag.experimentId);
-    if (gen2.flag.dashboardUrl) {
-      await showExperiment(gen2.flag.dashboardUrl);
-      await showWinner(gen2.flag.dashboardUrl, gen2.flag.flagName);
+
+  await waitLive((s) => Boolean(s.generations?.[0]?.recommendation), 420_000, "l2 gen-1 result");
+
+  await withClip("l2a-gen1-champion", async () => {
+    const live = readLive();
+    const rec = live.generations?.[0]?.recommendation;
+    const dash = live.generations?.[0]?.flag?.dashboardUrl || live.dashboardExperimentUrl || "";
+    process.stdout.write(`gen-1 champion ${rec?.arm ?? "?"} chance_to_win=${rec?.chanceToWin ?? "?"}\n`);
+    if (dash) {
+      await typeUrlInOmnibox(page, dash);
+      await openExperimentOnCamera(page, live.generations?.[0]?.flag?.flagName || l2Flag, dash);
     }
-  }
-  if (page.url().includes("login")) {
-    throw new Error("l2 ended on sign-in");
-  }
-  await stopFfmpeg(ff2);
-  copyOut(l2);
+    await sleep(2500);
+  });
+
+  await withClip("l2b-gen2-gate-rollout", async () => {
+    const gen2 = await gen2Promise;
+    const rejected = gen2.generations[1]?.rejected ?? [];
+    for (const item of rejected) {
+      process.stdout.write(`gen-2 rejected ${item.specId}: ${item.reason}\n`);
+    }
+    const rec = gen2.recommendation;
+    process.stdout.write(`gen-2 recommendation ${JSON.stringify(rec)}\n`);
+    if (gen2.flag?.dashboardUrl) {
+      await typeUrlInOmnibox(page, gen2.flag.dashboardUrl);
+      await visibleReload(page);
+    }
+    if (rec?.kind === "winner" && gen2.flag) {
+      if (rec.arm === "control") {
+        process.stdout.write("Gen-2 did not beat the champion; rolling out control (keep the champion).\n");
+      }
+      process.stdout.write(
+        `Recording harness will type APPROVE ${gen2.flag.experimentId} standing in for the human approver.\n`,
+      );
+      await typeApproveOnCamera(gen2.flag.experimentId);
+      await typeUrlInOmnibox(page, gen2.flag.dashboardUrl);
+      await visibleReload(page);
+      await showRolledOutFeature(page, gen2.flag.flagName);
+    } else {
+      process.stdout.write(
+        "Gen-2 did not beat the champion; keeping the champion. Harness is not typing APPROVE.\n",
+      );
+      if (gen2.flag?.dashboardUrl) {
+        await visibleReload(page);
+      }
+      await sleep(2800);
+    }
+    assertNotLogin(page, "l2b");
+  });
 
   await Promise.race([
     context.close().then(() => browser.close()),

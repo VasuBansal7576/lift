@@ -55,7 +55,11 @@ export function fullTreatmentSpec(id = "full-v1"): PatchSpec {
   return { ...raw, id };
 }
 
-/** Hostile canary: white-on-white. parsePatchSpec rejects equal fg/bg; the runtime CSS allowlist also rejects it. */
+/**
+ * Hostile canary the CSS allowlist and runtime accept: `#767676` on white
+ * `.lede` (4.54:1, the parse floor) plus `role=checkbox` without `aria-checked`.
+ * Axe then rejects with `added axe rules: aria-required-attr`.
+ */
 export function badContrastSpec(id = "bad-contrast-v1"): PatchSpec {
   return spec(id, [
     {
@@ -63,13 +67,21 @@ export function badContrastSpec(id = "bad-contrast-v1"): PatchSpec {
       id: `${id}-css`,
       rules: [
         {
-          selector: { tag: "p", classes: ["terms", "contrast-fail"] },
+          selector: { tag: "p", classes: ["lede"] },
           declarations: [
-            { property: "color", value: "#ffffff" },
+            { property: "color", value: "#767676" },
             { property: "background-color", value: "#ffffff" },
+            { property: "font-size", value: "12px" },
+            { property: "letter-spacing", value: "0.2em" },
           ],
         },
       ],
+    },
+    {
+      op: "setAttribute",
+      selector: "p.lede",
+      name: "role",
+      value: "checkbox",
     },
   ]);
 }
@@ -170,9 +182,12 @@ export function templatesFromViolations(
       ),
     );
     out.push(
-      candidate(badContrastSpec(`g${generation}-bad-contrast`), "canary-reject", "Hostile contrast (must reject)", [
-        "color-contrast",
-      ]),
+      candidate(
+        badContrastSpec(`g${generation}-bad-contrast`),
+        "canary-reject",
+        "Hostile near-threshold lede contrast (must reject via axe)",
+        ["color-contrast"],
+      ),
     );
     return out;
   }
@@ -191,7 +206,9 @@ export function templatesFromViolations(
     ]),
   );
   out.push(
-    candidate(badContrastSpec(), "canary-reject", "Hostile white-on-white (must reject)", ["color-contrast"]),
+    candidate(badContrastSpec(), "canary-reject", "Hostile near-threshold lede contrast (must reject via axe)", [
+      "color-contrast",
+    ]),
   );
   return out;
 }

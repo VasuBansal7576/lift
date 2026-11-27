@@ -77,6 +77,20 @@ export function allocationsAreWinner(
   });
 }
 
+/** Control win: every multivariate option is at 0% (environment default is the control value). */
+export function allocationsAreControl(
+  rows: Array<{
+    percentage_allocation: number;
+  }>,
+): boolean {
+  if (rows.length === 0) return true;
+  return rows.every((row) => Math.abs(row.percentage_allocation) < 0.51);
+}
+
+export function isControlWinner(arm: string, controlKey: string): boolean {
+  return arm === controlKey || arm === "control";
+}
+
 export async function runRollout(
   opts: OrchOptions,
   flag: FlagSetup,
@@ -115,9 +129,15 @@ export async function runRollout(
     }>(states),
   );
   const winnerOptionId = winnerOption?.optionId;
+  const controlWon = isControlWinner(recommendation.arm, flag.controlKey);
   let current = state.multivariate_feature_state_values ?? [];
-  if (!allocationsAreWinner(current, winnerOptionId)) {
-    const mv = winnerAllocations(current, winnerOptionId);
+
+  const allocationsMatch = controlWon
+    ? allocationsAreControl(current)
+    : allocationsAreWinner(current, winnerOptionId);
+
+  if (!allocationsMatch) {
+    const mv = winnerAllocations(current, controlWon ? undefined : winnerOptionId);
     // Do not send feature_state_value: Flagsmith 2.295.2 complete() already
     // rolls the winner, and a typed/string value 500s the env-default PATCH.
     try {
@@ -137,11 +157,16 @@ export async function runRollout(
         }>(retried),
       );
       current = again.multivariate_feature_state_values ?? [];
-      if (!allocationsAreWinner(current, winnerOptionId)) {
-        throw err instanceof Error ? err : new Error("Failed to set environment-default winner to 100%");
+      const recovered = controlWon
+        ? allocationsAreControl(current)
+        : allocationsAreWinner(current, winnerOptionId);
+      if (!recovered) {
+        throw err instanceof Error ? err : new Error("Failed to set environment-default winner allocations");
       }
-      log.emit("rollout", "warn", "PATCH skipped after complete(): winner already at 100/0");
+      log.emit("rollout", "warn", "PATCH skipped after complete(): allocations already match the winner");
     }
+  } else if (controlWon) {
+    log.emit("rollout", "info", "Control won; all variant allocations are 0%; skipping featurestate PATCH");
   } else {
     log.emit("rollout", "info", "complete() already set winner to 100/0; skipping featurestate PATCH");
   }
@@ -156,7 +181,12 @@ export async function runRollout(
       multivariate_feature_state_values?: typeof current;
     }>(verifiedRaw),
   );
-  if (!allocationsAreWinner(verified.multivariate_feature_state_values ?? [], winnerOptionId)) {
+  const verifiedRows = verified.multivariate_feature_state_values ?? [];
+  if (controlWon) {
+    if (!allocationsAreControl(verifiedRows)) {
+      throw new Error(`Control won but variant allocations are not all 0% on the environment-default featurestate`);
+    }
+  } else if (!allocationsAreWinner(verifiedRows, winnerOptionId)) {
     throw new Error(`Winner ${recommendation.arm} is not at 100% on the environment-default featurestate`);
   }
 

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  allocationsAreControl,
   allocationsAreWinner,
   completeBody,
   pickEnvDefaultFeatureState,
@@ -185,6 +186,50 @@ describe("rollout agent", () => {
     expect(result.winner).toBe("full-v1");
     expect(result.cleaned).toContain("labels-v1");
     expect(calls.some((line) => line.includes("/complete/"))).toBe(true);
+  });
+
+  it("skips PATCH when control wins and all variant allocations are 0", async () => {
+    const methods: string[] = [];
+    const http = new FlagsmithHttp({
+      baseUrl: "http://127.0.0.1:8000/api/v1/",
+      token: "admin-token",
+      fetch: async (url, init) => {
+        methods.push(`${init.method} ${url}`);
+        if (url.includes("/complete/")) {
+          expect(JSON.parse(init.body ?? "{}")).toMatchObject({ rollout_decision: "control" });
+          return { status: 200, text: async () => "{}" };
+        }
+        if (url.includes("/featurestates/") && init.method === "GET") {
+          return {
+            status: 200,
+            text: async () => JSON.stringify(envDefault([{ option: 22, pct: 0 }, { option: 23, pct: 0 }])),
+          };
+        }
+        if (init.method === "PATCH") {
+          return { status: 500, text: async () => "<h1>Server Error (500)</h1>" };
+        }
+        return { status: 200, text: async () => "{}" };
+      },
+    });
+    const log = new EventLog(false);
+    const result = await runRollout(
+      options,
+      flag,
+      { ...winner, arm: "control" },
+      log,
+      http,
+    );
+    expect(result.winner).toBe("control");
+    expect(methods.some((line) => line.startsWith("PATCH "))).toBe(false);
+    expect(allocationsAreWinner([{ multivariate_feature_option: 22, percentage_allocation: 0 }], undefined)).toBe(
+      false,
+    );
+    expect(
+      allocationsAreControl([
+        { percentage_allocation: 0 },
+        { percentage_allocation: 0 },
+      ]),
+    ).toBe(true);
   });
 
   it("refuses to roll out keep collecting", async () => {

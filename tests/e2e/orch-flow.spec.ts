@@ -16,7 +16,7 @@ const hasFlagsmith = Boolean(
     process.env.FLAGSMITH_PROJECT_ID,
 );
 
-test.describe.configure({ timeout: 600_000 });
+test.describe.configure({ timeout: 1_200_000 });
 
 test("full orchestrator flow against self-hosted Flagsmith", async () => {
   test.skip(!hasFlagsmith, "self-hosted Flagsmith env is not configured");
@@ -30,7 +30,7 @@ test("full orchestrator flow against self-hosted Flagsmith", async () => {
       "--apply",
       "--no-ui",
       "--traffic-n",
-      "8",
+      "220",
       "--generations",
       "1",
       "--flag-name",
@@ -38,12 +38,15 @@ test("full orchestrator flow against self-hosted Flagsmith", async () => {
       "--site-url",
       "http://127.0.0.1:4184/checkout",
     ]);
-    opts.resultsWaitMs = 20_000;
-    process.env.LIFT_ORCH_MAX_EXTRA_ROUNDS = "0";
+    opts.resultsWaitMs = 90_000;
+    process.env.LIFT_ORCH_MAX_EXTRA_ROUNDS = "1";
+    process.env.LIFT_ORCH_TRAFFIC_CONCURRENCY = process.env.LIFT_ORCH_TRAFFIC_CONCURRENCY || "16";
     const state = await runOrchestrator(opts);
     expect(state.generations).toHaveLength(1);
     const gen = state.generations[0];
     expect(gen.rejected.some((item) => item.specId.includes("bad-contrast"))).toBe(true);
+    const hostile = gen.rejected.find((item) => item.specId.includes("bad-contrast"));
+    expect(hostile?.reason).toMatch(/added axe rules|nodes increased/i);
     expect(gen.passed.length).toBeGreaterThan(0);
     expect(gen.flag?.flagName.startsWith("lift_orch_")).toBe(true);
     expect(gen.flag?.flagId).toBeGreaterThan(0);
@@ -51,6 +54,18 @@ test("full orchestrator flow against self-hosted Flagsmith", async () => {
     expect(gen.flag?.metricId).toBeGreaterThan(0);
     expect(state.phase).toBe("WAITING_FOR_HUMAN_APPROVAL");
     expect(gen.visits?.length ?? 0).toBeGreaterThan(0);
+
+    if (state.recommendation?.kind === "winner" && gen.flag?.experimentId) {
+      const approveOpts = parseArgv(["--approve", String(gen.flag.experimentId), "--apply", "--no-ui"]);
+      const rolled = await runOrchestrator(approveOpts, {
+        approvalIo: {
+          isTTY: true,
+          readLine: async () => `APPROVE ${gen.flag?.experimentId}`,
+        },
+      });
+      expect(rolled.phase).toBe("complete");
+      expect(rolled.recommendation?.kind).toBe("winner");
+    }
   } finally {
     try {
       const cleanup = parseArgv(["--cleanup", "--apply", "--no-ui"]);

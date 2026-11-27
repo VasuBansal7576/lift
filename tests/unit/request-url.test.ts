@@ -67,3 +67,43 @@ describe("serveSites GET //", () => {
     }
   });
 });
+
+describe("serveSites config overlay without allowMock", () => {
+  const port = 4189;
+  let server: StaticServer;
+
+  beforeAll(async () => {
+    process.env.LIFT_ORCH_FLAG = "lift_orch_unit";
+    process.env.FLAGSMITH_ENVIRONMENT_KEY = "env-from-overlay";
+    server = await serveSites(port, { allowMock: false });
+  });
+
+  afterAll(async () => {
+    await server.close();
+    delete process.env.LIFT_ORCH_FLAG;
+    delete process.env.FLAGSMITH_ENVIRONMENT_KEY;
+  });
+
+  it("still serves orch Flagsmith keys when mock override is off", async () => {
+    const body = await new Promise<string>((resolve, reject) => {
+      const req = http.request(
+        { hostname: "127.0.0.1", port, path: "/checkout/config.json", method: "GET" },
+        (res) => {
+          const chunks: Buffer[] = [];
+          res.on("data", (chunk) => chunks.push(chunk as Buffer));
+          res.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
+        },
+      );
+      req.on("error", reject);
+      req.end();
+    });
+    const parsed = JSON.parse(body) as {
+      allowMock?: boolean;
+      orchFlagName?: string;
+      flagsmithEnvironmentKey?: string;
+    };
+    expect(parsed.allowMock).toBeFalsy();
+    expect(parsed.orchFlagName).toBe("lift_orch_unit");
+    expect(parsed.flagsmithEnvironmentKey).toBe("env-from-overlay");
+  });
+});

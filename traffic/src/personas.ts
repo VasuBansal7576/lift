@@ -232,11 +232,15 @@ export async function runLowVision(page: Page): Promise<AttemptResult> {
     };
   }
 
-  const contrast = await page.locator("#terms-copy").evaluate((el) => {
-    const style = getComputedStyle(el);
-    const parent = el.parentElement ? getComputedStyle(el.parentElement) : style;
-    return { color: style.color, background: parent.backgroundColor };
-  });
+  const contrast = await page.locator("#terms-copy").evaluate(
+    (el) => {
+      const style = getComputedStyle(el);
+      const parent = el.parentElement ? getComputedStyle(el.parentElement) : style;
+      return { color: style.color, background: parent.backgroundColor };
+    },
+    undefined,
+    { timeout: 4000 },
+  );
   const bg = parseCssColor(contrast.background);
   const fg = parseCssColor(contrast.color, bg);
   const ratio = contrastRatio(fg, bg);

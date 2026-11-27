@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { appliedVariantMatches, cookieMatchesIdentity, dropoutKeepRate } from "../../orchestrator/src/traffic-guard.ts";
+import {
+  BLOCKED_SURFACE,
+  OPEN_SURFACE,
+  SHARED_KEEP_RATE,
+  appliedVariantMatches,
+  cookieMatchesIdentity,
+  simulateArmRate,
+} from "../../orchestrator/src/traffic-guard.ts";
 import { resolveOrchSpecPath } from "../../shared/orch-site.ts";
 import { REPO_ROOT } from "../../orchestrator/src/paths.ts";
 
@@ -17,11 +24,26 @@ describe("traffic identity + marker", () => {
     expect(appliedVariantMatches(undefined, "control")).toBe(false);
   });
 
-  it("keeps more g2-type conversions than control or g2-cursor (SIMULATED)", () => {
-    expect(dropoutKeepRate("g2-type")).toBeGreaterThan(dropoutKeepRate("control"));
-    expect(dropoutKeepRate("g2-type")).toBeGreaterThan(dropoutKeepRate("g2-cursor"));
-    expect(dropoutKeepRate("full-v1")).toBeGreaterThan(dropoutKeepRate("labels-v1"));
-    expect(dropoutKeepRate("ghost")).toBe(0.75);
+  it("uses the same keep rate for every arm name", () => {
+    expect(SHARED_KEEP_RATE).toBeGreaterThan(0.5);
+    expect(SHARED_KEEP_RATE).toBeLessThan(1);
+  });
+
+  it("gives two identical surfaces statistically equal conversion rates", () => {
+    const a = simulateArmRate({ surface: OPEN_SURFACE, n: 4000, seed: 42, arm: "full-v1" });
+    const b = simulateArmRate({ surface: OPEN_SURFACE, n: 4000, seed: 42, arm: "control" });
+    expect(Math.abs(a.rate - b.rate)).toBeLessThan(0.04);
+    expect(a.rate).toBeGreaterThan(0.7);
+  });
+
+  it("flips the winner when the accessibility barrier moves to the other arm", () => {
+    const aBlocked = simulateArmRate({ surface: BLOCKED_SURFACE, n: 3000, seed: 7, arm: "arm-a" });
+    const bOpen = simulateArmRate({ surface: OPEN_SURFACE, n: 3000, seed: 7, arm: "arm-b" });
+    expect(bOpen.rate).toBeGreaterThan(aBlocked.rate + 0.12);
+
+    const aOpen = simulateArmRate({ surface: OPEN_SURFACE, n: 3000, seed: 7, arm: "arm-a" });
+    const bBlocked = simulateArmRate({ surface: BLOCKED_SURFACE, n: 3000, seed: 7, arm: "arm-b" });
+    expect(aOpen.rate).toBeGreaterThan(bBlocked.rate + 0.12);
   });
 
   it("only serves orch-specs with valid spec ids", () => {

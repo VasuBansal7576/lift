@@ -4,20 +4,20 @@ The Lift bot is the conductor. It coordinates typed agents with a terminal event
 
 The **Flag agent** is the only role that creates Flagsmith resources (multivariate flag, conversion metric, experiment) and later completes/pauses them. The mutator is a **template mutator; LLM optional when a key is set**.
 
-Dry-run is the default. `--apply` mutates self-hosted Flagsmith. Rollout happens only on a second invocation with `--approve <experimentId>` **and** a TTY prompt where a human types `APPROVE <id>`. There is no non-interactive bypass. At approve time the conductor re-fetches Flagsmith `/results` and re-checks `chance_to_win`; it does not trust `run-state.json`.
+Dry-run is the default. `--apply` mutates self-hosted Flagsmith. Rollout happens only on a second invocation with `--approve <experimentId>` **and** a TTY prompt where someone types `APPROVE <id>`. There is no non-interactive production bypass. At approve time the conductor re-fetches Flagsmith `/results` and re-checks `chance_to_win`; it does not trust `run-state.json`. Proof recordings type that phrase with the recording harness standing in for the human approver (disclosed on screen and in `recordings/t1-t2/README.md`).
 
 Flag names must use the `lift_orch_` prefix. Features carry the description marker `Lift orchestrator gated accessibility variants`. Foreign flags are refused. `--cleanup` deletes only prefix+marker flags.
 
 ## Agents
 
 1. **Scanner** — Playwright + axe-core on the demo checkout page.
-2. **Mutator** — Template mutator; LLM optional when a key is set. Deterministic PatchSpec templates from axe violations (labels, contrast, full treatment) plus a hostile white-on-white canary (`parsePatchSpec` rejects equal fg/bg; the runtime CSS allowlist also rejects it).
+2. **Mutator** — Template mutator; LLM optional when a key is set. Deterministic PatchSpec templates from axe violations (labels, contrast, full treatment) plus a hostile canary: allowlisted `#767676` on white `.lede` plus `role=checkbox` without `aria-checked`. Parse and runtime accept it; axe rejects with `added axe rules: aria-required-attr`.
 3. **Gatekeeper** — Applies each candidate with `runtime/runtime.js` in a real browser and re-runs axe **before** any traffic. Generation ≥ 2 gates against an axe baseline with the **champion applied**.
 4. **Flag** — Drives Flagsmith (CLI v2 `feature create` / `variant add` when available, Admin API otherwise). Creates the conversion metric and experiment, then starts it. Variant payloads are gated spec ids (`^[a-z0-9-]{1,40}$`). Dashboard links use the real environment key in the URL.
-5. **Traffic** — Mouse, keyboard, screen-reader, and low-vision personas (Playwright) under a sticky `lift_vid` identity. The site’s own Flagsmith path serves the variant; a `data-lift-applied-variant` runtime marker must match or the visit is dropped (no `trackEvent`) and the run aborts. Labelled SIMULATED.
+5. **Traffic** — Mouse (70%), keyboard (10%), screen-reader (10%), and low-vision (10%) personas (Playwright) under a sticky `lift_vid` identity. Conversion is what that persona actually does on the served variant: keyboard must Tab/Enter to submit, screen-reader uses the accessibility tree (unlabeled controls fail), low-vision fails if essential copy contrast is below 4.5:1 (computed styles). Every arm then shares the same seeded random keep rate (`SHARED_KEEP_RATE`, not a per-variant table). The RNG seed is logged (`LIFT_TRAFFIC_SEED`, default `20261127`). The site’s own Flagsmith path serves the variant; a `data-lift-applied-variant` runtime marker must match or the visit is dropped (no `trackEvent`) and the run aborts. Labelled SIMULATED. `?lift_variant=` mock override is on only during scan/gate, not during traffic.
 6. **Analyst** — `GET .../experiments/{id}/results/`. Recommends a winner only if `chance_to_win >= 0.95`; otherwise **keep collecting**. Flagsmith withholds inference until each arm has **50 identities and 5 conversions**. Default `--traffic-n 220` plus extra rounds until a real result. No fewest-axe-hits fallback.
 7. **Human approval** — Phase `WAITING_FOR_HUMAN_APPROVAL`. `--approve <experimentId>` plus typed `APPROVE <id>` on a TTY.
-8. **Rollout** — Completes the experiment, sets the environment-default featurestate (`identity==null && feature_segment==null`) winner to 100% / losers 0%, and deletes losing multivariate options. Unknown arms throw.
+8. **Rollout** — Completes the experiment, sets the environment-default featurestate (`identity==null && feature_segment==null`) winner to 100% / losers 0%, and deletes losing multivariate options. A control winner verifies every variant allocation is 0% and skips the featurestate PATCH. Unknown arms throw. If generation 2 does not beat the champion, the champion stays.
 
 ## Commands
 

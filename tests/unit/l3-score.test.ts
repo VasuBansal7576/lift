@@ -12,6 +12,12 @@ import {
   scoreFromSamples,
   scoreScrollThrash,
 } from "../../runtime/l3-balancer.js";
+import {
+  NOFLAP_SLIDER_HI,
+  NOFLAP_SLIDER_HIGH_LO,
+  NOFLAP_SLIDER_LO,
+  NOFLAP_SLIDER_LOW_HI,
+} from "../../scripts/l3-record.ts";
 
 const WEIGHTS = L3_CONSTANTS.WEIGHTS;
 
@@ -176,5 +182,33 @@ describe("L3 detectors and score", () => {
     expect(scored.score).toBeGreaterThan(0.7);
     expect(scored.components.rageClicks).toBe(1);
     expect(scored.components.biometric).toBeCloseTo(0.8);
+  });
+
+  it("no-flap slider sweep stays in 0.38-0.62 and can meet the movement bar", () => {
+    const hold = (biometric: number) =>
+      combineStress({
+        erraticMouse: 1,
+        rageClicks: 0,
+        scrollThrash: 0,
+        biometric,
+      });
+    const endpoints = [
+      hold(NOFLAP_SLIDER_LO),
+      hold(NOFLAP_SLIDER_HIGH_LO),
+      hold(NOFLAP_SLIDER_LOW_HI),
+      hold(NOFLAP_SLIDER_HI),
+    ];
+    for (const score of endpoints) {
+      expect(score).toBeGreaterThanOrEqual(0.38);
+      expect(score).toBeLessThan(0.62);
+    }
+    const min = Math.min(...endpoints);
+    const max = Math.max(...endpoints);
+    expect(min).toBeLessThanOrEqual(0.43);
+    expect(max).toBeGreaterThanOrEqual(0.47);
+    expect(max - min).toBeGreaterThanOrEqual(0.04);
+    expect(hold(1)).toBeCloseTo(0.5);
+    expect(hold(1)).toBeLessThan(0.53);
+    expect(hold(0.18)).toBeLessThan(0.38);
   });
 });

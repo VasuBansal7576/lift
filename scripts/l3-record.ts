@@ -46,6 +46,12 @@ const SEGMENT_IDENTITY = "lift-aaaaaaaa-bbbb-4ccc-8ddd-666666666666";
 const FAILOPEN_IDENTITY = "lift-aaaaaaaa-bbbb-4ccc-8ddd-888888888888";
 const TILE = { w: 960, h: 1020 };
 
+/** No-flap hold uses mouse (0.30) + biometric (0.20) only, so score caps at 0.50. */
+export const NOFLAP_SLIDER_LO = 0.45;
+export const NOFLAP_SLIDER_HI = 0.97;
+export const NOFLAP_SLIDER_HIGH_LO = 0.55;
+export const NOFLAP_SLIDER_LOW_HI = 0.82;
+
 interface L3State {
   dashboardUrl: string;
   projectId: string;
@@ -287,22 +293,24 @@ async function unfocusUrlBar(win: HeadedWindow, dx = 400, dy = 620): Promise<voi
   await sleep(200);
 }
 
-/** Blur the admin URL bar by clicking a visible non-interactive heading — never a fixed pixel. */
+/** Blur the admin URL bar by clicking one non-interactive text target for the current page. */
 async function unfocusAdminPage(win: HeadedWindow): Promise<void> {
   xdo(["windowactivate", "--sync", win.winId]);
   xdo(["key", "--window", win.winId, "Escape"]);
   await sleep(120);
   xdo(["key", "--window", win.winId, "Escape"]);
   await sleep(80);
-  const heading = win.page.getByRole("heading").first();
-  const identifier = win.page.getByText(/^Identifier:/).first();
-  const viewManage = win.page
+  const identityCopy = win.page
     .getByText("View and manage feature states and traits for this identity.")
     .first();
-  const includeUsers = win.page
+  const segmentCopy = win.page
     .getByText("Include users when all of the following rules apply")
     .first();
-  await clickLocatorVisible(win, heading.or(identifier).or(viewManage).or(includeUsers));
+  const identityVisible = await identityCopy
+    .waitFor({ state: "visible", timeout: 2_500 })
+    .then(() => true)
+    .catch(() => false);
+  await clickLocatorVisible(win, identityVisible ? identityCopy : segmentCopy);
 }
 
 async function clickLocatorVisible(win: HeadedWindow, locator: Locator): Promise<void> {
@@ -558,41 +566,6 @@ async function hudScore(page: Page): Promise<{
   };
 }
 
-async function bandPointerWiggle(win: HeadedWindow, ms: number, energetic: boolean): Promise<void> {
-  xdo(["windowactivate", "--sync", win.winId]);
-  await win.page.locator("#lift-biometric").waitFor({ state: "visible" });
-  const layout = await sliderLayout(win.page);
-  if (layout.y < 240 || layout.y > 520) {
-    throw new Error(`slider left the frame (top=${layout.y})`);
-  }
-  const y0 = Math.round(layout.screenY + layout.topChrome + layout.y + layout.h / 2);
-  const lo = energetic ? 0.18 : 0.38;
-  const hi = energetic ? 0.98 : 0.82;
-  const xLo = Math.round(layout.screenX + layout.x + layout.w * lo);
-  const xHi = Math.round(layout.screenX + layout.x + layout.w * hi);
-  xdo(["mousemove", "--sync", String(xHi), String(y0)]);
-  await sleep(80);
-  xdo(["mousedown", "1"]);
-  const t0 = Date.now();
-  let n = 0;
-  try {
-    while (Date.now() - t0 < ms) {
-      const sweep = (n % 36) / 35;
-      const goingRight = Math.floor(n / 36) % 2 === 0;
-      const frac = goingRight ? sweep : 1 - sweep;
-      const x = Math.round(xLo + (xHi - xLo) * frac);
-      const spanY = energetic ? 22 : 8;
-      const y = y0 + (n % 6 < 3 ? spanY : -spanY);
-      xdo(["mousemove", "--sync", String(x), String(y)]);
-      await sleep(energetic ? 16 : 28);
-      n += 1;
-    }
-  } finally {
-    xdo(["mousemove", "--sync", String(xHi), String(y0)]);
-    xdo(["mouseup", "1"]);
-  }
-}
-
 function assertNoFlapCalm(
   snap: { score: number; trait: string; flag: string; segment: string },
   where: string,
@@ -613,8 +586,8 @@ async function holdScoreInBand(win: HeadedWindow, page: Page, holdMs = 15_000): 
     throw new Error(`slider left the frame (top=${layout.y})`);
   }
   const y0 = Math.round(layout.screenY + layout.topChrome + layout.y + layout.h / 2);
-  const xHi = Math.round(layout.screenX + layout.x + layout.w * 0.97);
-  const xLoWide = Math.round(layout.screenX + layout.x + layout.w * 0.18);
+  const xHi = Math.round(layout.screenX + layout.x + layout.w * NOFLAP_SLIDER_HI);
+  const xLoWide = Math.round(layout.screenX + layout.x + layout.w * NOFLAP_SLIDER_LO);
   xdo(["mousemove", "--sync", String(xHi), String(y0)]);
   await sleep(80);
   xdo(["mousedown", "1"]);
@@ -629,8 +602,12 @@ async function holdScoreInBand(win: HeadedWindow, page: Page, holdMs = 15_000): 
   try {
     while (Date.now() - t0 < holdMs) {
       const high = Math.floor((Date.now() - t0) / 3_000) % 2 === 0;
-      const xLo = high ? Math.round(layout.screenX + layout.x + layout.w * 0.52) : xLoWide;
-      const xHiNow = high ? xHi : Math.round(layout.screenX + layout.x + layout.w * 0.82);
+      const xLo = high
+        ? Math.round(layout.screenX + layout.x + layout.w * NOFLAP_SLIDER_HIGH_LO)
+        : xLoWide;
+      const xHiNow = high
+        ? xHi
+        : Math.round(layout.screenX + layout.x + layout.w * NOFLAP_SLIDER_LOW_HI);
       const sweep = (n % 36) / 35;
       const goingRight = Math.floor(n / 36) % 2 === 0;
       const frac = goingRight ? sweep : 1 - sweep;
@@ -671,9 +648,9 @@ async function holdScoreInBand(win: HeadedWindow, page: Page, holdMs = 15_000): 
       `no-flap spent ${inBandMs}ms in 0.40-0.60 (need ≥12000, min=${min}, max=${max}, last=${last.score})`,
     );
   }
-  if (max - min < 0.08 || min > 0.47 || max < 0.53) {
+  if (max - min < 0.04 || min > 0.43 || max < 0.47) {
     throw new Error(
-      `no-flap band was too flat (min=${min}, max=${max}; need max-min>=0.08, min<=0.47, max>=0.53)`,
+      `no-flap band was too flat (min=${min}, max=${max}; need max-min>=0.04, min<=0.43, max>=0.47)`,
     );
   }
 }
@@ -744,19 +721,23 @@ async function blockFlagsmithInDevTools(
 async function reloadAppWithBlockedFlagsmith(demo: HeadedWindow): Promise<void> {
   const failed: string[] = [];
   const responses: string[] = [];
+  const seen: string[] = [];
   let armed = false;
   const onFail = (req: {
     url: () => string;
     failure: () => { errorText: string } | null;
   }) => {
-    if (!armed) return;
     if (!req.url().includes("127.0.0.1:8000")) return;
     const text = req.failure()?.errorText ?? "";
-    if (/BLOCKED_BY_(CLIENT|DEVTOOLS)/i.test(text)) failed.push(req.url());
+    seen.push(`${armed ? "armed" : "pre"} fail:${text || "unknown"}`);
+    if (!armed) return;
+    if (/BLOCKED_BY_(CLIENT|DEVTOOLS)|inspector/i.test(text)) failed.push(req.url());
   };
   const onRes = (res: { url: () => string }) => {
+    if (!res.url().includes("127.0.0.1:8000")) return;
+    seen.push(`${armed ? "armed" : "pre"} resp`);
     if (!armed) return;
-    if (res.url().includes("127.0.0.1:8000")) responses.push(res.url());
+    responses.push(res.url());
   };
   const onFrame = (frame: { parentFrame: () => unknown }) => {
     if (!frame.parentFrame()) armed = true;
@@ -779,7 +760,7 @@ async function reloadAppWithBlockedFlagsmith(demo: HeadedWindow): Promise<void> 
     }
     if (failed.length === 0) {
       throw new Error(
-        "reload did not fail a Flagsmith fetch with BLOCKED_BY_CLIENT/DEVTOOLS after the visible reload",
+        `reload did not fail a Flagsmith fetch with BLOCKED_BY_CLIENT/DEVTOOLS after the visible reload (armed=${armed}, seen=${seen.join(" | ") || "none"})`,
       );
     }
   } finally {
@@ -1185,7 +1166,7 @@ async function failOpenClip(): Promise<void> {
     if (clipErr && reachErr) {
       const clipMsg = clipErr instanceof Error ? clipErr.message : String(clipErr);
       const reachMsg = reachErr instanceof Error ? reachErr.message : String(reachErr);
-      throw new Error(`${clipMsg}; also reachability: ${reachMsg}`);
+      throw new Error(`${clipMsg}; also reachability: ${reachMsg}`, { cause: clipErr });
     }
     if (clipErr) throw clipErr;
     if (reachErr) throw reachErr;

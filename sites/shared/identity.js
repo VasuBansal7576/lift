@@ -119,7 +119,7 @@ export function resolveVisitorId(env) {
   return fresh;
 }
 
-export function browserIdentityEnv() {
+export function browserIdentityEnv(overrides) {
   return {
     search: typeof location === "undefined" ? "" : location.search,
     getCookie: () => (typeof document === "undefined" ? "" : document.cookie),
@@ -143,5 +143,6 @@ export function browserIdentityEnv() {
     randomId: () => crypto.randomUUID(),
     secure: typeof location !== "undefined" && location.protocol === "https:",
     host: typeof location !== "undefined" ? location.hostname : "",
+    allowBotOverride: Boolean(overrides && overrides.allowBotOverride === true),
   };
 }

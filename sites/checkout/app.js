@@ -237,9 +237,11 @@ async function initFromFlagsmith(config, identity) {
 }
 
 async function main() {
-  const identity = resolveVisitorId(browserIdentityEnv());
   const mock = params().get("lift_variant");
   const config = await loadConfig();
+  const identity = resolveVisitorId(
+    browserIdentityEnv({ allowBotOverride: config?.allowBotOverride === true }),
+  );
   const allowMock = Boolean(config?.allowMock);
   if (allowMock && (mock === "control" || mock === "treatment")) {
     applyFixes(allFixes(mock === "treatment"), "URL override (no Flagsmith)");

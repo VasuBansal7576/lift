@@ -10,8 +10,11 @@ const NAMES = [
   "01-control-barriers",
   "02-treatment-before-after",
   "03-keyboard-submit-once",
-  "04-comment-smuggle",
-  "04-is-body-opacity",
+  "04-typed-body-tag",
+  "04-typed-opacity",
+  "04-typed-not-state",
+  "04-typed-body-class-anchor",
+  "04-typed-color-eq-background",
   "05-sticky-identity",
 ];
 

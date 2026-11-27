@@ -27,8 +27,11 @@ const MIME: Record<string, string> = {
   ".svg": "image/svg+xml",
 };
 
-function overlayAllowMock(parsed: Record<string, unknown>): string {
-  return JSON.stringify({ ...parsed, allowMock: true });
+function overlaySiteConfig(parsed: Record<string, unknown>): string {
+  const extra: Record<string, unknown> = {};
+  if (allowMock) extra.allowMock = true;
+  if (process.env.LIFT_ALLOW_BOT_OVERRIDE === "true") extra.allowBotOverride = true;
+  return JSON.stringify({ ...parsed, ...extra });
 }
 
 function placeholderFor(relative: string): Record<string, unknown> {
@@ -79,17 +82,19 @@ const server = createServer(async (req, res) => {
       res.end("forbidden");
       return;
     }
-    if (!dashboard && allowMock && relative.endsWith("config.json")) {
-      let parsed: Record<string, unknown> = {};
+    if (!dashboard && relative.endsWith("config.json")) {
+      let parsed: Record<string, unknown> | null = null;
       try {
         parsed = JSON.parse(await readFile(filePath, "utf8")) as Record<string, unknown>;
       } catch {
-        parsed = placeholderFor(relative);
+        if (allowMock) parsed = placeholderFor(relative);
       }
-      const body = overlayAllowMock(parsed);
-      res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
-      res.end(body);
-      return;
+      if (parsed) {
+        const body = overlaySiteConfig(parsed);
+        res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
+        res.end(body);
+        return;
+      }
     }
     try {
       const body = await readFile(filePath);

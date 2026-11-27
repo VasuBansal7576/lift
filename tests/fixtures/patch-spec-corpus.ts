@@ -108,14 +108,14 @@ export const CSS_TYPED_ACCEPTED: {
     probe: { attr: "class", value: "c-misc" },
   },
   {
-    name: "font-size em",
+    name: "font-size rem",
     rules: [
       {
-        selector: { classes: ["c-em"] },
-        declarations: [{ property: "font-size", value: "1.25em" }],
+        selector: { classes: ["c-rem"] },
+        declarations: [{ property: "font-size", value: "1.25rem" }],
       },
     ],
-    probe: { attr: "class", value: "c-em" },
+    probe: { attr: "class", value: "c-rem" },
   },
 ];
 
@@ -170,12 +170,17 @@ export const PATCH_SPEC_CORPUS: CorpusCase[] = [
     spec: op([
       {
         op: "insertHTML",
-        selector: "body",
+        selector: "main",
         position: "prepend",
         html: '<a href="#main">Skip</a>',
         mountId: "skip",
       },
     ]),
+    ok: true,
+  },
+  {
+    name: "toggleDisclosure shop",
+    spec: op([{ op: "toggleDisclosure", trigger: "#shop-trigger", panel: "#shop-menu" }]),
     ok: true,
   },
   { name: "not an object", spec: null, ok: false, error: "spec must be an object" },
@@ -232,25 +237,25 @@ export const PATCH_SPEC_CORPUS: CorpusCase[] = [
     name: "raw css string rejected",
     spec: op([{ op: "injectCSS", css: ".x { color: #111; }" }]),
     ok: false,
-    error: "ops[0] rules required",
+    error: "ops[0] unknown key",
   },
   {
     name: "css @import",
     spec: op([{ op: "injectCSS", css: "@import url(https://evil.example/x.css);" }]),
     ok: false,
-    error: "ops[0] rules required",
+    error: "ops[0] unknown key",
   },
   {
     name: "css url()",
     spec: op([{ op: "injectCSS", css: "body { background: url(https://evil.example/x.png); }" }]),
     ok: false,
-    error: "ops[0] rules required",
+    error: "ops[0] unknown key",
   },
   {
     name: "css expression",
     spec: op([{ op: "injectCSS", css: "body { width: expression(alert(1)); }" }]),
     ok: false,
-    error: "ops[0] rules required",
+    error: "ops[0] unknown key",
   },
   {
     name: "css comment smuggling",
@@ -261,19 +266,19 @@ export const PATCH_SPEC_CORPUS: CorpusCase[] = [
       },
     ]),
     ok: false,
-    error: "ops[0] rules required",
+    error: "ops[0] unknown key",
   },
   {
     name: "css :is(body)",
     spec: op([{ op: "injectCSS", css: ":is(body){opacity:0}" }]),
     ok: false,
-    error: "ops[0] rules required",
+    error: "ops[0] unknown key",
   },
   {
     name: "css escaped url as raw text",
     spec: op([{ op: "injectCSS", css: ".x { color: \\75 rl(http://evil.example); }" }]),
     ok: false,
-    error: "ops[0] rules required",
+    error: "ops[0] unknown key",
   },
   {
     name: "typed comment smuggling value",
@@ -733,6 +738,276 @@ export const PATCH_SPEC_CORPUS: CorpusCase[] = [
     spec: op([{ op: "bindEnterToClick", selector: "form" }]),
     ok: false,
     error: "ops[0] target is not allowlisted",
+  },
+  {
+    name: "tabindex padded -1",
+    spec: op([{ op: "setAttribute", selector: "#x", name: "tabindex", value: " -1" }]),
+    ok: false,
+    error: "ops[0] unsafe attribute value",
+    schema: "skip",
+  },
+  {
+    name: "tabindex -01",
+    spec: op([{ op: "setAttribute", selector: "#x", name: "tabindex", value: "-01" }]),
+    ok: false,
+    error: "ops[0] unsafe attribute value",
+    schema: "skip",
+  },
+  {
+    name: "tabindex -1x",
+    spec: op([{ op: "setAttribute", selector: "#x", name: "tabindex", value: "-1x" }]),
+    ok: false,
+    error: "ops[0] unsafe attribute value",
+    schema: "skip",
+  },
+  {
+    name: "tabindex -0001",
+    spec: op([{ op: "setAttribute", selector: "#x", name: "tabindex", value: "-0001" }]),
+    ok: false,
+    error: "ops[0] unsafe attribute value",
+    schema: "skip",
+  },
+  {
+    name: "aria-hidden padded true",
+    spec: op([{ op: "setAttribute", selector: "#x", name: "aria-hidden", value: " true" }]),
+    ok: false,
+    error: "ops[0] unsafe attribute value",
+    schema: "skip",
+  },
+  {
+    name: "aria-hidden trailing true",
+    spec: op([{ op: "setAttribute", selector: "#x", name: "aria-hidden", value: "true " }]),
+    ok: false,
+    error: "ops[0] unsafe attribute value",
+    schema: "skip",
+  },
+  {
+    name: "role presentation foo",
+    spec: op([{ op: "setAttribute", selector: "#x", name: "role", value: "presentation foo" }]),
+    ok: false,
+    error: "ops[0] unsafe attribute value",
+    schema: "skip",
+  },
+  {
+    name: "role none token",
+    spec: op([{ op: "setAttribute", selector: "#x", name: "role", value: "none" }]),
+    ok: false,
+    error: "ops[0] unsafe attribute value",
+    schema: "skip",
+  },
+  {
+    name: "typed color equals background",
+    spec: op([
+      {
+        op: "injectCSS",
+        rules: [
+          {
+            selector: { classes: ["x"] },
+            declarations: [
+              { property: "color", value: "#fff" },
+              { property: "background-color", value: "#fff" },
+            ],
+          },
+        ],
+      },
+    ]),
+    ok: false,
+    error: "ops[0] css is not allowlisted",
+    schema: "skip",
+  },
+  {
+    name: "typed font-size em",
+    spec: op([
+      {
+        op: "injectCSS",
+        rules: [
+          {
+            selector: { classes: ["x"] },
+            declarations: [{ property: "font-size", value: "1.25em" }],
+          },
+        ],
+      },
+    ]),
+    ok: false,
+    error: "ops[0] css is not allowlisted",
+  },
+  {
+    name: "typed font-size 10px",
+    spec: op([
+      {
+        op: "injectCSS",
+        rules: [
+          {
+            selector: { classes: ["x"] },
+            declarations: [{ property: "font-size", value: "10px" }],
+          },
+        ],
+      },
+    ]),
+    ok: false,
+    error: "ops[0] css is not allowlisted",
+  },
+  {
+    name: "typed outline-style none",
+    spec: op([
+      {
+        op: "injectCSS",
+        rules: [
+          {
+            selector: { classes: ["x"] },
+            declarations: [{ property: "outline-style", value: "none" }],
+          },
+        ],
+      },
+    ]),
+    ok: false,
+    error: "ops[0] css is not allowlisted",
+  },
+  {
+    name: "typed text-decoration-line none",
+    spec: op([
+      {
+        op: "injectCSS",
+        rules: [
+          {
+            selector: { classes: ["x"] },
+            declarations: [{ property: "text-decoration-line", value: "none" }],
+          },
+        ],
+      },
+    ]),
+    ok: false,
+    error: "ops[0] css is not allowlisted",
+  },
+  {
+    name: "typed border-style none",
+    spec: op([
+      {
+        op: "injectCSS",
+        rules: [
+          {
+            selector: { classes: ["x"] },
+            declarations: [{ property: "border-style", value: "none" }],
+          },
+        ],
+      },
+    ]),
+    ok: false,
+    error: "ops[0] css is not allowlisted",
+  },
+  {
+    name: "typed unknown state not(x)",
+    spec: op([
+      {
+        op: "injectCSS",
+        rules: [
+          {
+            selector: { classes: ["x"], state: "not(x)" },
+            declarations: [{ property: "color", value: "#111" }],
+          },
+        ],
+      },
+    ]),
+    ok: false,
+    error: "ops[0] css is not allowlisted",
+  },
+  {
+    name: "insertHTML for attr",
+    spec: op([
+      {
+        op: "insertHTML",
+        selector: "main",
+        position: "append",
+        html: '<label for="x">X</label>',
+      },
+    ]),
+    ok: false,
+    error: "ops[0] html is not allowlisted",
+    schema: "skip",
+  },
+  {
+    name: "insertHTML into body",
+    spec: op([
+      {
+        op: "insertHTML",
+        selector: "body",
+        position: "prepend",
+        html: '<a href="#main">Skip</a>',
+      },
+    ]),
+    ok: false,
+    error: "ops[0] target is not allowlisted",
+  },
+  {
+    name: "wrapLabel body",
+    spec: op([{ op: "wrapLabel", selector: "body", text: "Nope" }]),
+    ok: false,
+    error: "ops[0] target is not allowlisted",
+    schema: "skip",
+  },
+  {
+    name: "unknown spec key",
+    spec: { id: "x", version: 0, ops: [], extra: true },
+    ok: false,
+    error: "unknown key",
+  },
+  {
+    name: "unknown op key",
+    spec: op([{ op: "setText", selector: "#x", text: "Go", extra: true }]),
+    ok: false,
+    error: "ops[0] unknown key",
+  },
+  {
+    name: "class ident too long",
+    spec: op([
+      {
+        op: "injectCSS",
+        rules: [
+          {
+            selector: { classes: ["c".repeat(65)] },
+            declarations: [{ property: "color", value: "#111" }],
+          },
+        ],
+      },
+    ]),
+    ok: false,
+    error: "ops[0] css is not allowlisted",
+  },
+  {
+    name: "too many ops",
+    spec: { id: "x", version: 0, ops: Array.from({ length: 51 }, () => ({ op: "setText", selector: "#x", text: "a" })) },
+    ok: false,
+    error: "too many ops",
+  },
+  {
+    name: "too many css rules",
+    spec: op([
+      {
+        op: "injectCSS",
+        rules: Array.from({ length: 21 }, (_, i) => ({
+          selector: { classes: [`c${i}`] },
+          declarations: [{ property: "color", value: "#111" }],
+        })),
+      },
+    ]),
+    ok: false,
+    error: "ops[0] css is not allowlisted",
+  },
+  {
+    name: "too many css declarations",
+    spec: op([
+      {
+        op: "injectCSS",
+        rules: [
+          {
+            selector: { classes: ["x"] },
+            declarations: Array.from({ length: 21 }, () => ({ property: "color", value: "#111" })),
+          },
+        ],
+      },
+    ]),
+    ok: false,
+    error: "ops[0] css is not allowlisted",
   },
 ];
 

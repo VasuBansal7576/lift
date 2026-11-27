@@ -19,6 +19,7 @@ export const PATCH_OPS = [
   "bindEnterToClick",
   "replaceTag",
   "insertHTML",
+  "toggleDisclosure",
 ] as const;
 
 export type PatchOpName = (typeof PATCH_OPS)[number];
@@ -135,6 +136,12 @@ export interface InsertHtmlOp {
   mountId?: string;
 }
 
+export interface ToggleDisclosureOp {
+  op: "toggleDisclosure";
+  trigger: string;
+  panel: string;
+}
+
 export type PatchOp =
   | SetAttributeOp
   | SetTextOp
@@ -143,7 +150,8 @@ export type PatchOp =
   | MakeFocusableOp
   | BindEnterToClickOp
   | ReplaceTagOp
-  | InsertHtmlOp;
+  | InsertHtmlOp
+  | ToggleDisclosureOp;
 
 export interface PatchSpec {
   id: string;

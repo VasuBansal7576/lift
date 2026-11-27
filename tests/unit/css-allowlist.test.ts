@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { parsePatchSpec } from "../../runtime/patch-rules.js";
-import { serializeCss } from "../../runtime/css-typed.js";
+import { hashKey, parsePatchSpec } from "../../runtime/patch-rules.js";
+import { emitCssNumber, serializeCss } from "../../runtime/css-typed.js";
 import { CSS_ATTACKS, CSS_TYPED_ACCEPTED, colorCss } from "../fixtures/patch-spec-corpus.ts";
 
 describe("typed injectCSS", () => {
@@ -103,5 +103,37 @@ describe("typed injectCSS", () => {
         item.name,
       ).toBe(true);
     }
+  });
+
+  it("re-emits numbers without exponent and uses a 64-bit css key hash", () => {
+    expect(emitCssNumber(12)).toBe("12");
+    expect(emitCssNumber(1.25)).toBe("1.25");
+    expect(emitCssNumber(0.75)).toBe("0.75");
+    expect(emitCssNumber(Number.POSITIVE_INFINITY)).toBeNull();
+    expect(hashKey("x")).toMatch(/^[0-9a-f]{16}$/);
+    expect(hashKey("x")).not.toBe(hashKey("y"));
+  });
+
+  it("rejects matching color and background at parse time", () => {
+    expect(
+      parsePatchSpec({
+        id: "eq",
+        version: 0,
+        ops: [
+          {
+            op: "injectCSS",
+            rules: [
+              {
+                selector: { classes: ["x"] },
+                declarations: [
+                  { property: "color", value: "#fff" },
+                  { property: "background-color", value: "#fff" },
+                ],
+              },
+            ],
+          },
+        ],
+      }).ok,
+    ).toBe(false);
   });
 });

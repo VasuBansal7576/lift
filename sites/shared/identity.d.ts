@@ -22,4 +22,4 @@ export function readQueryIdentity(search: string, env?: Pick<IdentityEnv, "host"
 export function readCookieIdentity(header: string): string | null;
 export function cookieWriteValue(id: string, secure: boolean): string;
 export function resolveVisitorId(env: IdentityEnv): string;
-export function browserIdentityEnv(): IdentityEnv;
+export function browserIdentityEnv(overrides?: { allowBotOverride?: boolean }): IdentityEnv;

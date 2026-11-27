@@ -11,6 +11,7 @@
     "version": { "const": 0 },
     "ops": {
       "type": "array",
+      "maxItems": 50,
       "items": { "$ref": "#/$defs/op" }
     }
   },
@@ -22,7 +23,11 @@
       }
     },
     "mountId": { "type": "string", "pattern": "^[A-Za-z0-9_-]+$" },
-    "cssIdent": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$" },
+    "cssIdent": {
+      "type": "string",
+      "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
+      "maxLength": 64
+    },
     "cssTag": {
       "type": "string",
       "pattern": "^[a-z][a-z0-9-]*$",
@@ -41,8 +46,8 @@
     "px0to4": { "type": "string", "pattern": "^(?:[0-3](?:\\.[0-9]+)?|4(?:\\.0+)?)px$" },
     "px0to24": { "type": "string", "pattern": "^(?:[0-9]|1[0-9]|2[0-3])(?:\\.[0-9]+)?px$|^24(?:\\.0+)?px$" },
     "px0to64": { "type": "string", "pattern": "^(?:[0-9]|[1-5][0-9]|6[0-3])(?:\\.[0-9]+)?px$|^64(?:\\.0+)?px$" },
-    "px10to48": { "type": "string", "pattern": "^(?:1[0-9]|[2-3][0-9]|4[0-7])(?:\\.[0-9]+)?px$|^48(?:\\.0+)?px$" },
-    "emRemFont": { "type": "string", "pattern": "^(?:0\\.(?:75|7[5-9]\\d*|[8-9]\\d*)|[12](?:\\.[0-9]+)?|3(?:\\.0+)?)(em|rem)$" },
+    "px12to48": { "type": "string", "pattern": "^(?:1[2-9]|[2-3][0-9]|4[0-7])(?:\\.[0-9]+)?px$|^48(?:\\.0+)?px$" },
+    "remFont": { "type": "string", "pattern": "^(?:0\\.(?:75|7[5-9]\\d*|[8-9]\\d*)|[12](?:\\.[0-9]+)?|3(?:\\.0+)?)rem$" },
     "em0to02": { "type": "string", "pattern": "^(?:0(?:\\.[0-9]+)?|0\\.2(?:0+)?)em$" },
     "lineHeight": {
       "anyOf": [
@@ -56,7 +61,7 @@
         { "enum": ["400", "500", "600", "700", "800", "900", "normal", "bold"] }
       ]
     },
-    "borderStyle": { "enum": ["solid", "dashed", "dotted", "none"] },
+    "borderStyle": { "enum": ["solid", "dashed", "dotted"] },
     "cssSelector": {
       "type": "object",
       "additionalProperties": false,
@@ -126,7 +131,7 @@
           "properties": {
             "property": { "const": "font-size" },
             "value": {
-              "anyOf": [{ "$ref": "#/$defs/px10to48" }, { "$ref": "#/$defs/emRemFont" }]
+              "anyOf": [{ "$ref": "#/$defs/px12to48" }, { "$ref": "#/$defs/remFont" }]
             }
           }
         },
@@ -165,7 +170,7 @@
           "required": ["property", "value"],
           "properties": {
             "property": { "const": "text-decoration-line" },
-            "value": { "enum": ["underline", "none"] }
+            "value": { "enum": ["underline"] }
           }
         },
         {
@@ -215,6 +220,7 @@
         "declarations": {
           "type": "array",
           "minItems": 1,
+          "maxItems": 20,
           "items": { "$ref": "#/$defs/cssDeclaration" }
         }
       }
@@ -277,6 +283,7 @@
             "rules": {
               "type": "array",
               "minItems": 1,
+              "maxItems": 20,
               "items": { "$ref": "#/$defs/cssRule" }
             },
             "id": { "$ref": "#/$defs/mountId" }
@@ -356,7 +363,12 @@
           "required": ["op", "selector", "position", "html"],
           "properties": {
             "op": { "const": "insertHTML" },
-            "selector": { "$ref": "#/$defs/selector" },
+            "selector": {
+              "allOf": [
+                { "$ref": "#/$defs/selector" },
+                { "$ref": "#/$defs/forbiddenHostSelector" }
+              ]
+            },
             "position": { "enum": ["before", "after", "prepend", "append"] },
             "html": {
               "type": "string",
@@ -372,6 +384,26 @@
               }
             },
             "mountId": { "$ref": "#/$defs/mountId" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["op", "trigger", "panel"],
+          "properties": {
+            "op": { "const": "toggleDisclosure" },
+            "trigger": {
+              "allOf": [
+                { "$ref": "#/$defs/selector" },
+                { "$ref": "#/$defs/forbiddenHostSelector" }
+              ]
+            },
+            "panel": {
+              "allOf": [
+                { "$ref": "#/$defs/selector" },
+                { "$ref": "#/$defs/forbiddenHostSelector" }
+              ]
+            }
           }
         }
       ]

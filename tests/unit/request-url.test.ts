@@ -41,4 +41,29 @@ describe("serveSites GET //", () => {
     });
     expect(status).toBe(400);
   });
+
+  it("overlays allowBotOverride onto config.json from LIFT_ALLOW_BOT_OVERRIDE", async () => {
+    const previous = process.env.LIFT_ALLOW_BOT_OVERRIDE;
+    process.env.LIFT_ALLOW_BOT_OVERRIDE = "true";
+    try {
+      const body = await new Promise<string>((resolve, reject) => {
+        const req = http.request(
+          { hostname: "127.0.0.1", port, path: "/checkout/config.json", method: "GET" },
+          (res) => {
+            const chunks: Buffer[] = [];
+            res.on("data", (chunk) => chunks.push(chunk as Buffer));
+            res.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
+          },
+        );
+        req.on("error", reject);
+        req.end();
+      });
+      const parsed = JSON.parse(body) as { allowBotOverride?: boolean; allowMock?: boolean };
+      expect(parsed.allowBotOverride).toBe(true);
+      expect(parsed.allowMock).toBe(true);
+    } finally {
+      if (previous === undefined) delete process.env.LIFT_ALLOW_BOT_OVERRIDE;
+      else process.env.LIFT_ALLOW_BOT_OVERRIDE = previous;
+    }
+  });
 });

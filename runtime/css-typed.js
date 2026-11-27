@@ -13,6 +13,10 @@ export const CSS_STATES = [
   "checked",
 ];
 
+export const CSS_RULE_LIMIT = 20;
+export const CSS_DECL_LIMIT = 20;
+export const CSS_IDENT_MAX = 64;
+
 const STATE_SET = new Set(CSS_STATES);
 const FORBIDDEN_TAGS = new Set(["html", "body", "head", "svg", "script", "style"]);
 const IDENT_RE = /^[a-zA-Z_][\w-]*$/;
@@ -25,6 +29,13 @@ function isRecord(value) {
 export function cssEscapeIdent(ident) {
   if (typeof CSS !== "undefined" && typeof CSS.escape === "function") return CSS.escape(ident);
   return String(ident).replace(/[^\w-]/g, (ch) => `\\${ch.codePointAt(0).toString(16)} `);
+}
+
+export function emitCssNumber(n) {
+  if (!Number.isFinite(n)) return null;
+  const s = n.toFixed(6).replace(/\.?0+$/, "");
+  if (/[eE]/.test(s)) return null;
+  return s;
 }
 
 function parseColor(raw) {
@@ -46,13 +57,53 @@ function parseColor(raw) {
   return null;
 }
 
+export function cssColorToRgb(value) {
+  if (typeof value !== "string") return null;
+  const v = value.trim();
+  const hex = /^#([0-9a-f]{6})$/i.exec(v);
+  if (hex) {
+    const n = hex[1];
+    return [
+      Number.parseInt(n.slice(0, 2), 16),
+      Number.parseInt(n.slice(2, 4), 16),
+      Number.parseInt(n.slice(4, 6), 16),
+    ];
+  }
+  const rgb = /^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)(?:\s*,\s*([\d.]+))?\s*\)$/i.exec(v);
+  if (rgb) {
+    const alpha = rgb[4] === undefined ? 1 : Number(rgb[4]);
+    if (alpha < 0.99) return null;
+    return [Number(rgb[1]), Number(rgb[2]), Number(rgb[3])];
+  }
+  if (v === "transparent") return null;
+  return null;
+}
+
+export function relativeLuminance(r, g, b) {
+  const lin = [r, g, b].map((channel) => {
+    const c = channel / 255;
+    return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+  });
+  return 0.2126 * lin[0] + 0.7152 * lin[1] + 0.0722 * lin[2];
+}
+
+export function contrastRatio(fg, bg) {
+  const l1 = relativeLuminance(fg[0], fg[1], fg[2]);
+  const l2 = relativeLuminance(bg[0], bg[1], bg[2]);
+  const lighter = Math.max(l1, l2);
+  const darker = Math.min(l1, l2);
+  return (lighter + 0.05) / (darker + 0.05);
+}
+
 function parsePx(raw, min, max) {
   if (typeof raw !== "string") return null;
   const m = raw.trim().match(/^(\d+(?:\.\d+)?)px$/);
   if (!m) return null;
   const n = Number(m[1]);
   if (n < min || n > max) return null;
-  return `${n}px`;
+  const emitted = emitCssNumber(n);
+  if (emitted == null) return null;
+  return `${emitted}px`;
 }
 
 function parseEm(raw, min, max) {
@@ -61,7 +112,9 @@ function parseEm(raw, min, max) {
   if (!m) return null;
   const n = Number(m[1]);
   if (n < min || n > max) return null;
-  return `${n}em`;
+  const emitted = emitCssNumber(n);
+  if (emitted == null) return null;
+  return `${emitted}em`;
 }
 
 function parseRem(raw, min, max) {
@@ -70,7 +123,9 @@ function parseRem(raw, min, max) {
   if (!m) return null;
   const n = Number(m[1]);
   if (n < min || n > max) return null;
-  return `${n}rem`;
+  const emitted = emitCssNumber(n);
+  if (emitted == null) return null;
+  return `${emitted}rem`;
 }
 
 function parseKeyword(raw, allowed) {
@@ -94,19 +149,27 @@ function parseFontWeight(raw) {
 }
 
 function parseLineHeight(raw) {
-  const n = typeof raw === "number" ? raw : typeof raw === "string" && /^\d+(?:\.\d+)?$/.test(raw.trim())
-    ? Number(raw.trim())
-    : NaN;
+  const n =
+    typeof raw === "number"
+      ? raw
+      : typeof raw === "string" && /^\d+(?:\.\d+)?$/.test(raw.trim())
+        ? Number(raw.trim())
+        : NaN;
   if (!Number.isFinite(n) || n < 1 || n > 3) return null;
-  return String(n);
+  return emitCssNumber(n);
 }
 
-const BORDER_STYLES = new Set(["solid", "dashed", "dotted", "none"]);
-const DECORATION_LINES = new Set(["underline", "none"]);
+const BORDER_STYLES = new Set(["solid", "dashed", "dotted"]);
+const DECORATION_LINES = new Set(["underline"]);
 const CURSORS = new Set(["pointer", "default"]);
+
+function extraKeys(raw, allowed) {
+  return Object.keys(raw).filter((key) => !allowed.has(key));
+}
 
 function parseDeclaration(raw) {
   if (!isRecord(raw)) return null;
+  if (extraKeys(raw, new Set(["property", "value"])).length > 0) return null;
   if (typeof raw.property !== "string") return null;
   const property = raw.property;
   const value = raw.value;
@@ -132,7 +195,7 @@ function parseDeclaration(raw) {
       emitted = parsePx(value, 0, 8);
       break;
     case "font-size":
-      emitted = parsePx(value, 10, 48) || parseEm(value, 0.75, 3) || parseRem(value, 0.75, 3);
+      emitted = parsePx(value, 12, 48) || parseRem(value, 0.75, 3);
       break;
     case "font-weight":
       emitted = parseFontWeight(value);
@@ -169,10 +232,7 @@ function parseDeclaration(raw) {
 
 function parseSelector(raw) {
   if (!isRecord(raw)) return null;
-  const keys = Object.keys(raw);
-  for (const key of keys) {
-    if (key !== "tag" && key !== "classes" && key !== "id" && key !== "state") return null;
-  }
+  if (extraKeys(raw, new Set(["tag", "classes", "id", "state"])).length > 0) return null;
   const out = {};
   if (raw.tag !== undefined) {
     if (typeof raw.tag !== "string" || !TAG_RE.test(raw.tag)) return null;
@@ -182,12 +242,14 @@ function parseSelector(raw) {
   if (raw.classes !== undefined) {
     if (!Array.isArray(raw.classes) || raw.classes.length === 0) return null;
     for (const cls of raw.classes) {
-      if (typeof cls !== "string" || !IDENT_RE.test(cls)) return null;
+      if (typeof cls !== "string" || !IDENT_RE.test(cls) || cls.length > CSS_IDENT_MAX) return null;
     }
     out.classes = [...raw.classes];
   }
   if (raw.id !== undefined) {
-    if (typeof raw.id !== "string" || !IDENT_RE.test(raw.id)) return null;
+    if (typeof raw.id !== "string" || !IDENT_RE.test(raw.id) || raw.id.length > CSS_IDENT_MAX) {
+      return null;
+    }
     out.id = raw.id;
   }
   if (raw.state !== undefined) {
@@ -209,6 +271,11 @@ export function serializeSelector(selector) {
   return css;
 }
 
+export function serializeSelectorForQuery(selector) {
+  const { state: _state, ...rest } = selector;
+  return serializeSelector(rest);
+}
+
 export function serializeCss(rules) {
   return rules
     .map((rule) => {
@@ -218,16 +285,35 @@ export function serializeCss(rules) {
     .join(" ");
 }
 
+function ruleHasLowContrast(declarations) {
+  const color = declarations.find((d) => d.property === "color");
+  const bg = declarations.find((d) => d.property === "background-color");
+  if (!color || !bg) return false;
+  const fg = cssColorToRgb(color.value);
+  const back = cssColorToRgb(bg.value);
+  if (!fg || !back) return true;
+  return contrastRatio(fg, back) < 4.5;
+}
+
 export function parseCssRules(rawRules, index) {
   if (!Array.isArray(rawRules) || rawRules.length === 0) {
     return { error: `ops[${index}] rules required` };
   }
+  if (rawRules.length > CSS_RULE_LIMIT) {
+    return { error: `ops[${index}] css is not allowlisted` };
+  }
   const rules = [];
   for (const raw of rawRules) {
     if (!isRecord(raw)) return { error: `ops[${index}] css is not allowlisted` };
+    if (extraKeys(raw, new Set(["selector", "declarations"])).length > 0) {
+      return { error: `ops[${index}] css is not allowlisted` };
+    }
     const selector = parseSelector(raw.selector);
     if (!selector) return { error: `ops[${index}] css is not allowlisted` };
     if (!Array.isArray(raw.declarations) || raw.declarations.length === 0) {
+      return { error: `ops[${index}] css is not allowlisted` };
+    }
+    if (raw.declarations.length > CSS_DECL_LIMIT) {
       return { error: `ops[${index}] css is not allowlisted` };
     }
     const declarations = [];
@@ -235,6 +321,9 @@ export function parseCssRules(rawRules, index) {
       const parsed = parseDeclaration(decl);
       if (!parsed) return { error: `ops[${index}] css is not allowlisted` };
       declarations.push(parsed);
+    }
+    if (ruleHasLowContrast(declarations)) {
+      return { error: `ops[${index}] css is not allowlisted` };
     }
     rules.push({ selector, declarations });
   }

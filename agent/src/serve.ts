@@ -20,8 +20,14 @@ export interface StaticServer {
   reused: boolean;
 }
 
-function overlayAllowMock(parsed: Record<string, unknown>): string {
-  return JSON.stringify({ ...parsed, allowMock: true });
+function overlaySiteConfig(
+  parsed: Record<string, unknown>,
+  opts: { allowMock: boolean },
+): string {
+  const extra: Record<string, unknown> = {};
+  if (opts.allowMock) extra.allowMock = true;
+  if (process.env.LIFT_ALLOW_BOT_OVERRIDE === "true") extra.allowBotOverride = true;
+  return JSON.stringify({ ...parsed, ...extra });
 }
 
 function configForRelative(relative: string): Record<string, unknown> | null {
@@ -80,14 +86,14 @@ export function serveSites(
       }
       try {
         const raw = await readFile(filePath);
-        if (allowMock && relative.endsWith("config.json")) {
+        if (relative.endsWith("config.json")) {
           let parsed: Record<string, unknown> = {};
           try {
             parsed = JSON.parse(raw.toString("utf8")) as Record<string, unknown>;
           } catch {
-            parsed = configForRelative(relative) ?? {};
+            parsed = allowMock ? (configForRelative(relative) ?? {}) : parsed;
           }
-          const body = overlayAllowMock(parsed);
+          const body = overlaySiteConfig(parsed, { allowMock });
           res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
           res.end(body);
           return;
@@ -97,7 +103,7 @@ export function serveSites(
       } catch {
         if (allowMock && relative.endsWith("config.json")) {
           const parsed = configForRelative(relative) ?? {};
-          const body = overlayAllowMock(parsed);
+          const body = overlaySiteConfig(parsed, { allowMock });
           res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
           res.end(body);
           return;

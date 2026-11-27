@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  browserIdentityEnv,
   cookieWriteValue,
   IDENTITY_COOKIE,
   IDENTITY_MAX_AGE_SEC,
@@ -84,7 +85,7 @@ describe("readQueryIdentity", () => {
     ).toBeNull();
   });
 
-  it("honors a build-time allowBotOverride flag off loopback", () => {
+  it("honors allowBotOverride served from page config off loopback", () => {
     expect(
       readQueryIdentity("?lift_bot=1&lift_identity=lift-sim-run-1-0", {
         host: "user.github.io",
@@ -174,6 +175,13 @@ describe("cookie stickiness", () => {
   it("skips a poisoned cookie and uses storage instead", () => {
     const env = makeEnv({ cookie: "lift_vid=bad,comma", storage: "safe-store" });
     expect(resolveVisitorId(env)).toBe("safe-store");
+  });
+});
+
+describe("browserIdentityEnv", () => {
+  it("passes allowBotOverride from page config into the identity env", () => {
+    expect(browserIdentityEnv().allowBotOverride).toBe(false);
+    expect(browserIdentityEnv({ allowBotOverride: true }).allowBotOverride).toBe(true);
   });
 });
 

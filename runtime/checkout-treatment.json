@@ -26,6 +26,11 @@
       }
     },
     {
+      "op": "toggleDisclosure",
+      "trigger": "#shop-trigger",
+      "panel": "#shop-menu"
+    },
+    {
       "op": "setAttribute",
       "selector": "#cart-icon",
       "name": "aria-label",

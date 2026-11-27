@@ -625,5 +625,259 @@ describe("applyPatchSpec ops", () => {
     expect(document.getElementById("f")?.hasAttribute("tabindex")).toBe(false);
     expect(document.getElementById("f")?.hasAttribute("aria-label")).toBe(false);
   });
+
+  it("trims hide attributes and tokenizes role at parse time", () => {
+    document.body.innerHTML = `<span id="x">x</span>`;
+    for (const value of [" true", "true ", "TRUE"]) {
+      expect(
+        applyPatchSpec({
+          id: "pad-hidden",
+          version: 0,
+          ops: [{ op: "setAttribute", selector: "#x", name: "aria-hidden", value }],
+        }).ok,
+      ).toBe(false);
+    }
+    for (const value of ["-01", " -1", "-1x", "-0001"]) {
+      expect(
+        applyPatchSpec({
+          id: "pad-tab",
+          version: 0,
+          ops: [{ op: "setAttribute", selector: "#x", name: "tabindex", value }],
+        }).ok,
+      ).toBe(false);
+    }
+    expect(
+      applyPatchSpec({
+        id: "role-pres",
+        version: 0,
+        ops: [{ op: "setAttribute", selector: "#x", name: "role", value: "presentation foo" }],
+      }).ok,
+    ).toBe(false);
+    expect(document.getElementById("x")?.hasAttribute("aria-hidden")).toBe(false);
+    expect(document.getElementById("x")?.hasAttribute("tabindex")).toBe(false);
+    expect(document.getElementById("x")?.hasAttribute("role")).toBe(false);
+  });
+
+  it("refuses tabindex -1 on interactive hosts and aria-hidden true on them", () => {
+    document.body.innerHTML = `<button type="button" id="go">Go</button><div id="plain">x</div>`;
+    expect(
+      applyPatchSpec({
+        id: "tab-int",
+        version: 0,
+        ops: [{ op: "setAttribute", selector: "#go", name: "tabindex", value: "-1" }],
+      }).ok,
+    ).toBe(false);
+    expect(
+      applyPatchSpec({
+        id: "tab-plain",
+        version: 0,
+        ops: [{ op: "setAttribute", selector: "#plain", name: "tabindex", value: "-1" }],
+      }).ok,
+    ).toBe(true);
+    expect(document.getElementById("plain")?.getAttribute("tabindex")).toBe("-1");
+  });
+
+  it("adds class tokens instead of replacing", () => {
+    document.body.innerHTML = `<span id="x" class="keep">x</span>`;
+    expect(
+      applyPatchSpec({
+        id: "class-add",
+        version: 0,
+        ops: [{ op: "setAttribute", selector: "#x", name: "class", value: "extra" }],
+      }).ok,
+    ).toBe(true);
+    expect(document.getElementById("x")?.className.split(/\s+/).sort()).toEqual(["extra", "keep"]);
+  });
+
+  it("undoes only the class tokens it added", () => {
+    document.body.innerHTML = `<span id="x" class="keep">x</span>`;
+    const rolled = applyPatchSpec({
+      id: "class-undo",
+      version: 0,
+      ops: [
+        { op: "setAttribute", selector: "#x", name: "class", value: "extra" },
+        { op: "setText", selector: "#missing", text: "nope" },
+      ],
+    });
+    expect(rolled.ok).toBe(false);
+    expect(document.getElementById("x")?.className).toBe("keep");
+  });
+
+  it("refuses replaceTag when the host has an interactive descendant", () => {
+    document.body.innerHTML = `<div id="wrap"><a href="#x">go</a></div>`;
+    expect(
+      applyPatchSpec({
+        id: "rt-a",
+        version: 0,
+        ops: [{ op: "replaceTag", selector: "#wrap", tag: "span" }],
+      }).ok,
+    ).toBe(false);
+    document.body.innerHTML = `<div id="wrap"><span contenteditable="true">x</span></div>`;
+    expect(
+      applyPatchSpec({
+        id: "rt-ce",
+        version: 0,
+        ops: [{ op: "replaceTag", selector: "#wrap", tag: "span" }],
+      }).ok,
+    ).toBe(false);
+  });
+
+  it("resolves label for= to a text-like control and refuses submit/button", () => {
+    document.body.innerHTML = `
+      <span id="lab">L</span>
+      <input id="email" type="email">
+      <input id="go" type="submit">
+    `;
+    expect(
+      applyPatchSpec({
+        id: "for-ok",
+        version: 0,
+        ops: [{ op: "replaceTag", selector: "#lab", tag: "label", attributes: { for: "email" } }],
+      }).ok,
+    ).toBe(true);
+    document.body.innerHTML = `<span id="lab">L</span><input id="go" type="submit">`;
+    expect(
+      applyPatchSpec({
+        id: "for-submit",
+        version: 0,
+        ops: [{ op: "replaceTag", selector: "#lab", tag: "label", attributes: { for: "go" } }],
+      }).ok,
+    ).toBe(false);
+  });
+
+  it("refuses wrapLabel on a submit input", () => {
+    document.body.innerHTML = `<input id="go" type="submit">`;
+    expect(
+      applyPatchSpec({
+        id: "wrap-submit",
+        version: 0,
+        ops: [{ op: "wrapLabel", selector: "#go", text: "Go" }],
+      }).ok,
+    ).toBe(false);
+  });
+
+  it("refuses insertHTML into body/html/input at apply time", () => {
+    document.body.innerHTML = `<input id="email" type="email"><main id="main"></main>`;
+    expect(
+      applyPatchSpec({
+        id: "ins-input",
+        version: 0,
+        ops: [{ op: "insertHTML", selector: "#email", position: "after", html: "<span>x</span>" }],
+      }).ok,
+    ).toBe(false);
+    expect(
+      applyPatchSpec({
+        id: "ins-main",
+        version: 0,
+        ops: [{ op: "insertHTML", selector: "#main", position: "prepend", html: '<a href="#main">Skip</a>' }],
+      }).ok,
+    ).toBe(true);
+  });
+
+  it("undoes injectCSS when a class anchor matches body or a page container", () => {
+    document.body.className = "lift-atk";
+    document.body.innerHTML = `<p class="keep">x</p>`;
+    const before = document.body.innerHTML;
+    const result = applyPatchSpec({
+      id: "css-body",
+      version: 0,
+      ops: [
+        {
+          op: "injectCSS",
+          rules: [
+            {
+              selector: { classes: ["lift-atk"] },
+              declarations: [{ property: "color", value: "#111" }],
+            },
+          ],
+        },
+      ],
+    });
+    expect(result.ok).toBe(false);
+    expect(document.querySelector("[data-lift-css]")).toBeNull();
+    expect(document.body.innerHTML).toBe(before);
+    document.body.className = "";
+  });
+
+  it("undoes injectCSS when computed contrast falls below 4.5:1", () => {
+    document.body.innerHTML = `<p class="ghost" style="background-color:#fff">x</p>`;
+    const result = applyPatchSpec({
+      id: "css-contrast",
+      version: 0,
+      ops: [
+        {
+          op: "injectCSS",
+          rules: [
+            {
+              selector: { classes: ["ghost"] },
+              declarations: [{ property: "color", value: "#fff" }],
+            },
+          ],
+        },
+      ],
+    });
+    expect(result.ok).toBe(false);
+    expect(document.querySelector("[data-lift-css]")).toBeNull();
+  });
+
+  it("toggles a disclosure panel from the trigger and undoes", () => {
+    document.body.innerHTML = `
+      <button type="button" id="shop-trigger">Shop</button>
+      <div id="shop-menu">menu</div>
+    `;
+    const rolled = applyPatchSpec({
+      id: "disc-undo",
+      version: 0,
+      ops: [
+        { op: "toggleDisclosure", trigger: "#shop-trigger", panel: "#shop-menu" },
+        { op: "setText", selector: "#missing", text: "x" },
+      ],
+    });
+    expect(rolled.ok).toBe(false);
+    expect(document.getElementById("shop-trigger")?.getAttribute("data-lift-disclosure")).toBeNull();
+    expect(document.getElementById("shop-menu")?.classList.contains("is-open")).toBe(false);
+
+    expect(
+      applyPatchSpec({
+        id: "disc",
+        version: 0,
+        ops: [{ op: "toggleDisclosure", trigger: "#shop-trigger", panel: "#shop-menu" }],
+      }).ok,
+    ).toBe(true);
+    const trigger = document.getElementById("shop-trigger");
+    const panel = document.getElementById("shop-menu");
+    trigger?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(panel?.classList.contains("is-open")).toBe(true);
+    expect(trigger?.getAttribute("aria-expanded")).toBe("true");
+  });
+
+  it("undoes injectCSS when a rule matches more than 50 elements", () => {
+    document.body.innerHTML = Array.from({ length: 51 }, (_, i) => `<span class="many">${i}</span>`).join("");
+    const result = applyPatchSpec({
+      id: "css-many",
+      version: 0,
+      ops: [
+        {
+          op: "injectCSS",
+          rules: [
+            {
+              selector: { classes: ["many"] },
+              declarations: [{ property: "color", value: "#111" }],
+            },
+          ],
+        },
+      ],
+    });
+    expect(result.ok).toBe(false);
+    expect(document.querySelector("[data-lift-css]")).toBeNull();
+  });
+
+  it("checkout treatment opens shop via toggleDisclosure", () => {
+    document.body.innerHTML = CHECKOUT_HTML;
+    expect(applyPatchSpec(checkoutSpec()).ok).toBe(true);
+    const shop = document.getElementById("shop-trigger");
+    shop?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(document.getElementById("shop-menu")?.classList.contains("is-open")).toBe(true);
+  });
 });
 

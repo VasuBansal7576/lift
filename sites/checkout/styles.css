@@ -53,6 +53,7 @@ body {
   display: none;
 }
 .hover-nav:hover .hover-menu { display: block; }
+.hover-menu.is-open { display: block; }
 body.fix-hover .hover-menu.is-open,
 body.fix-hover .hover-nav:focus-within .hover-menu { display: block; }
 .hover-menu a { display: block; padding: 0.35rem 0.5rem; color: inherit; }

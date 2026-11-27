@@ -22,6 +22,7 @@ describe("parsePatchSpec", () => {
     expect(parsed.spec.ops.map((op) => op.op)).toEqual([
       "injectCSS",
       "replaceTag",
+      "toggleDisclosure",
       "setAttribute",
       "setText",
       "wrapLabel",
@@ -82,11 +83,12 @@ describe("parsePatchSpec", () => {
       replaceTag: { op: "replaceTag", selector: "#x", tag: "button" },
       insertHTML: {
         op: "insertHTML",
-        selector: "body",
+        selector: "main",
         position: "prepend",
         html: "<a href=\"#main\">Skip</a>",
         mountId: "skip",
       },
+      toggleDisclosure: { op: "toggleDisclosure", trigger: "#shop-trigger", panel: "#shop-menu" },
     };
     for (const op of PATCH_OPS) {
       const parsed = parsePatchSpec({ id: `op-${op}`, version: 0, ops: [samples[op]] });

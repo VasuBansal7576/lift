@@ -34,10 +34,22 @@ async function axeSummary(page: Page) {
   };
 }
 
-async function openCheckout(page: Page) {
+async function openCheckoutWithHover(page: Page) {
   await page.locator(".hover-nav").hover();
   await pause(page, 600);
   await page.locator("#checkout-link").click();
+  await page.locator("#checkout").waitFor({ state: "visible" });
+}
+
+async function openCheckoutWithKeyboard(page: Page) {
+  await page.keyboard.press("Tab");
+  await page.keyboard.press("Tab");
+  await expect(page.locator("#shop-trigger")).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(page.locator("#shop-menu")).toBeVisible();
+  await page.keyboard.press("Tab");
+  await expect(page.locator("#checkout-link")).toBeFocused();
+  await page.keyboard.press("Enter");
   await page.locator("#checkout").waitFor({ state: "visible" });
 }
 
@@ -84,7 +96,7 @@ test("01-control-barriers", async ({ page }) => {
   await page.goto("/checkout/?lift_variant=control");
   await expect(page.locator("body")).toHaveAttribute("data-variant", "control");
   await showBanner(page, "CONTROL — hover to open Shop, unlabeled icon, unlabeled fields, low contrast, div Pay");
-  await openCheckout(page);
+  await openCheckoutWithHover(page);
   const axe = await axeSummary(page);
   await showBanner(
     page,
@@ -100,7 +112,7 @@ test("01-control-barriers", async ({ page }) => {
 
 test("02-treatment-before-after", async ({ page }) => {
   await page.goto("/checkout/?lift_variant=control");
-  await openCheckout(page);
+  await openCheckoutWithHover(page);
   const beforeAxe = await axeSummary(page);
   await showBanner(
     page,
@@ -121,9 +133,10 @@ test("02-treatment-before-after", async ({ page }) => {
     page,
     `AFTER runtime.js spec — ${afterAxe.total} axe violations (was ${beforeAxe.total}); gate [${afterAxe.gate.join(", ") || "cleared"}]; ${leftoverNote}`,
   );
+  expect(beforeAxe.total, "control axe count").toBe(4);
   expect(afterAxe.gate, "treatment should clear the axe gate").toEqual([]);
   expect(afterAxe.ids, "one leftover non-gate region on the demo banner").toEqual(["region"]);
-  expect(afterAxe.total).toBeLessThan(beforeAxe.total);
+  expect(afterAxe.total, "treatment leftover axe count").toBe(1);
   await page.locator("#place-order").focus();
   await pause(page, 2000);
 });
@@ -139,11 +152,12 @@ test("03-keyboard-submit-once", async ({ page }) => {
   expect((await applyTreatment(page)).ok).toBe(true);
   await showBanner(
     page,
-    "KEYBOARD — hover Shop (page CSS owns display; injectCSS v0 cannot emit display/combinators), fill, Tab to Place order, one Enter",
+    "KEYBOARD — Tab to Shop, Enter opens menu (toggleDisclosure), Tab to Checkout, Enter, fill, Tab to Place order, one Enter. No mouse.",
   );
-  await openCheckout(page);
+  await openCheckoutWithKeyboard(page);
   await fillCheckout(page);
-  await page.locator("#terms").focus();
+  await page.keyboard.press("Tab");
+  await expect(page.locator("#terms")).toBeFocused();
   await page.keyboard.press("Space");
   await page.keyboard.press("Tab");
   await expect(page.locator("#place-order")).toBeFocused();
@@ -158,71 +172,179 @@ test("03-keyboard-submit-once", async ({ page }) => {
   await pause(page, 2000);
 });
 
-test("04-comment-smuggle", async ({ page }) => {
-  await page.goto("/checkout/?lift_variant=control");
-  await openCheckout(page);
-  const before = await page.evaluate(() => ({
-    pay: document.getElementById("place-order")?.outerHTML ?? "",
-    html: document.body.innerHTML.length,
-  }));
-  await showBanner(page, 'FAIL-OPEN — injectCSS raw text h1{color:"/*"; background-image:url(...)} is unrepresentable');
-  const result = await page.evaluate(async () => {
+async function snapshotPage(page: Page) {
+  return page.evaluate(() => {
+    const clone = document.body.cloneNode(true) as HTMLElement;
+    for (const el of clone.querySelectorAll("[data-evidence]")) el.remove();
+    return {
+      pay: document.getElementById("place-order")?.outerHTML ?? "",
+      html: clone.innerHTML,
+      opacity: getComputedStyle(document.body).opacity,
+      color: getComputedStyle(document.body).color,
+    };
+  });
+}
+
+async function applyAttack(
+  page: Page,
+  spec: unknown,
+): Promise<{ ok: boolean; error?: string }> {
+  return page.evaluate(async (input) => {
     const href = new URL("/runtime/runtime.js", location.origin).href;
     const runtime = (await import(href)) as {
       applyPatchSpec: (input: unknown) => { ok: boolean; error?: string };
     };
-    return runtime.applyPatchSpec({
-      id: "evil-comment",
-      version: 0,
-      ops: [
-        {
-          op: "injectCSS",
-          css: 'h1{color:"/*"; background-image:url(http://x/leak) /* */}',
-        },
-      ],
-    });
+    return runtime.applyPatchSpec(input);
+  }, spec);
+}
+
+test("04-typed-body-tag", async ({ page }) => {
+  await page.goto("/checkout/?lift_variant=control");
+  await openCheckoutWithHover(page);
+  const before = await snapshotPage(page);
+  await showBanner(page, "FAIL-OPEN — typed injectCSS { tag: 'body' } is unrepresentable");
+  const result = await applyAttack(page, {
+    id: "evil-body-tag",
+    version: 0,
+    ops: [
+      {
+        op: "injectCSS",
+        rules: [
+          {
+            selector: { tag: "body", classes: ["x"] },
+            declarations: [{ property: "color", value: "#111" }],
+          },
+        ],
+      },
+    ],
   });
   expect(result.ok).toBe(false);
-  const after = await page.evaluate(() => ({
-    pay: document.getElementById("place-order")?.outerHTML ?? "",
-  }));
+  const after = await snapshotPage(page);
   expect(after.pay).toBe(before.pay);
+  expect(after.html).toBe(before.html);
+  await showBanner(page, `REJECTED {tag:'body'} (${result.error ?? "not allowlisted"}) — page unchanged`);
+  await pause(page, 2000);
+});
+
+test("04-typed-opacity", async ({ page }) => {
+  await page.goto("/checkout/?lift_variant=control");
+  await openCheckoutWithHover(page);
+  const before = await snapshotPage(page);
+  await showBanner(page, "FAIL-OPEN — typed property 'opacity' is unrepresentable");
+  const result = await applyAttack(page, {
+    id: "evil-opacity",
+    version: 0,
+    ops: [
+      {
+        op: "injectCSS",
+        rules: [
+          {
+            selector: { classes: ["x"] },
+            declarations: [{ property: "opacity", value: "0" }],
+          },
+        ],
+      },
+    ],
+  });
+  expect(result.ok).toBe(false);
+  const after = await snapshotPage(page);
+  expect(after.pay).toBe(before.pay);
+  expect(after.opacity).toBe(before.opacity);
+  expect(after.html).toBe(before.html);
+  await showBanner(page, `REJECTED property:'opacity' (${result.error ?? "not allowlisted"}) — opacity ${after.opacity}`);
+  await pause(page, 2000);
+});
+
+test("04-typed-not-state", async ({ page }) => {
+  await page.goto("/checkout/?lift_variant=control");
+  await openCheckoutWithHover(page);
+  const before = await snapshotPage(page);
+  await showBanner(page, "FAIL-OPEN — typed state 'not(x)' is unrepresentable");
+  const result = await applyAttack(page, {
+    id: "evil-not",
+    version: 0,
+    ops: [
+      {
+        op: "injectCSS",
+        rules: [
+          {
+            selector: { classes: ["x"], state: "not(x)" },
+            declarations: [{ property: "color", value: "#111" }],
+          },
+        ],
+      },
+    ],
+  });
+  expect(result.ok).toBe(false);
+  const after = await snapshotPage(page);
+  expect(after.pay).toBe(before.pay);
+  expect(after.html).toBe(before.html);
+  await showBanner(page, `REJECTED state:'not(x)' (${result.error ?? "not allowlisted"}) — page unchanged`);
+  await pause(page, 2000);
+});
+
+test("04-typed-body-class-anchor", async ({ page }) => {
+  await page.goto("/checkout/?lift_variant=control");
+  await openCheckoutWithHover(page);
+  await page.evaluate(() => document.body.classList.add("lift-atk"));
+  const before = await snapshotPage(page);
+  await showBanner(page, "FAIL-OPEN — class anchor matching <body class> is undone at apply time");
+  const result = await applyAttack(page, {
+    id: "evil-body-class",
+    version: 0,
+    ops: [
+      {
+        op: "injectCSS",
+        rules: [
+          {
+            selector: { classes: ["lift-atk"] },
+            declarations: [{ property: "color", value: "#111" }],
+          },
+        ],
+      },
+    ],
+  });
+  expect(result.ok).toBe(false);
+  const after = await snapshotPage(page);
+  expect(after.pay).toBe(before.pay);
+  expect(after.color).toBe(before.color);
   await showBanner(
     page,
-    `REJECTED comment-smuggle (${result.error ?? "not allowlisted"}) — Place order markup unchanged`,
+    `REJECTED body class anchor (${result.error ?? "apply-time host backstop"}) — body color unchanged`,
   );
   await pause(page, 2000);
 });
 
-test("04-is-body-opacity", async ({ page }) => {
+test("04-typed-color-eq-background", async ({ page }) => {
   await page.goto("/checkout/?lift_variant=control");
-  await openCheckout(page);
-  const before = await page.evaluate(() => ({
-    pay: document.getElementById("place-order")?.outerHTML ?? "",
-    opacity: getComputedStyle(document.body).opacity,
-  }));
-  await showBanner(page, "FAIL-OPEN — :is(body){opacity:0} is unrepresentable (no :is, no body, no opacity)");
-  const result = await page.evaluate(async () => {
-    const href = new URL("/runtime/runtime.js", location.origin).href;
-    const runtime = (await import(href)) as {
-      applyPatchSpec: (input: unknown) => { ok: boolean; error?: string };
-    };
-    return runtime.applyPatchSpec({
-      id: "evil-is-body",
-      version: 0,
-      ops: [{ op: "injectCSS", css: ":is(body){opacity:0}" }],
-    });
+  await openCheckoutWithHover(page);
+  const before = await snapshotPage(page);
+  await showBanner(page, "FAIL-OPEN — color == background-color (#fff/#fff) is rejected");
+  const result = await applyAttack(page, {
+    id: "evil-contrast",
+    version: 0,
+    ops: [
+      {
+        op: "injectCSS",
+        rules: [
+          {
+            selector: { classes: ["x"] },
+            declarations: [
+              { property: "color", value: "#fff" },
+              { property: "background-color", value: "#fff" },
+            ],
+          },
+        ],
+      },
+    ],
   });
   expect(result.ok).toBe(false);
-  const after = await page.evaluate(() => ({
-    pay: document.getElementById("place-order")?.outerHTML ?? "",
-    opacity: getComputedStyle(document.body).opacity,
-  }));
+  const after = await snapshotPage(page);
   expect(after.pay).toBe(before.pay);
-  expect(after.opacity).toBe(before.opacity);
+  expect(after.html).toBe(before.html);
   await showBanner(
     page,
-    `REJECTED :is(body){opacity:0} (${result.error ?? "not allowlisted"}) — body opacity ${after.opacity}`,
+    `REJECTED color==background (${result.error ?? "not allowlisted"}) — page unchanged`,
   );
   await pause(page, 2000);
 });
@@ -251,5 +373,16 @@ test("05-sticky-identity", async ({ page }) => {
   expect(again.cookie).toBe(first.cookie);
   expect(again.variant).toBe(first.variant);
   await showBanner(page, `IDENTITY after reload (from page) ${again.text.replaceAll("\n", " | ")} — same document.cookie`);
+  if (flagsmithReady) {
+    await showBanner(
+      page,
+      "Variant stability is only meaningful with a live Flagsmith environment key. This run had one.",
+    );
+  } else {
+    await showBanner(
+      page,
+      "Variant stability is only meaningful with a live Flagsmith environment key. This run used the mock control fallback.",
+    );
+  }
   await pause(page, 2000);
 });

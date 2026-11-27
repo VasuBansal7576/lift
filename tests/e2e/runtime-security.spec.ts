@@ -479,8 +479,8 @@ test("Chromium computed styles of accepted typed CSS stay in bounds", async ({ p
       expect(px(report.styles.outlineOffset), report.name).toBeGreaterThanOrEqual(0);
       expect(px(report.styles.outlineOffset), report.name).toBeLessThanOrEqual(8);
     }
-    if (report.name === "font and spacing" || report.name === "font-size em") {
-      expect(px(report.styles.fontSize), report.name).toBeGreaterThanOrEqual(10);
+    if (report.name === "font and spacing" || report.name === "font-size rem") {
+      expect(px(report.styles.fontSize), report.name).toBeGreaterThanOrEqual(12);
       expect(px(report.styles.fontSize), report.name).toBeLessThanOrEqual(48 * 3);
     }
     if (report.name === "decoration target padding cursor") {

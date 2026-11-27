@@ -15,6 +15,7 @@ export const PATCH_OPS = [
   "bindEnterToClick",
   "replaceTag",
   "insertHTML",
+  "toggleDisclosure",
 ];
 export const INSERT_HTML_POSITIONS = ["before", "after", "prepend", "append"];
 export const ALLOWED_REPLACE_TAGS = ["button", "label", "span", "a", "p", "strong", "em"];
@@ -32,6 +33,8 @@ export const INSERT_TAGS = new Set([
   "small",
   "br",
 ]);
+export const PATCH_OP_LIMIT = 50;
+export const CSS_MATCH_LIMIT = 50;
 
 const ALLOWED_ATTR_NAMES = new Set([
   "class",
@@ -68,11 +71,12 @@ const DROP_INSERT_ATTR = new Set([
   "codebase",
   "id",
   "name",
+  "for",
 ]);
 
 const HTML_NS = "http://www.w3.org/1999/xhtml";
 
-const FORBIDDEN_OP_HOSTS = new Set([
+export const FORBIDDEN_OP_HOSTS = new Set([
   "html",
   "head",
   "body",
@@ -87,6 +91,8 @@ const FORBIDDEN_OP_HOSTS = new Set([
   "svg",
   "noscript",
 ]);
+
+const PAGE_CONTAINERS = new Set(["html", "head", "body", "main", "header", "footer", "nav", "aside"]);
 
 const VOID_OR_CONTROL = new Set([
   "area",
@@ -130,6 +136,51 @@ const INTERACTIVE_TAGS = new Set([
   "embed",
 ]);
 
+const INTERACTIVE_ROLES = new Set([
+  "button",
+  "link",
+  "menuitem",
+  "tab",
+  "checkbox",
+  "radio",
+  "textbox",
+  "switch",
+  "option",
+  "combobox",
+  "slider",
+  "searchbox",
+  "spinbutton",
+  "menuitemcheckbox",
+  "menuitemradio",
+  "treeitem",
+]);
+
+const HIDDEN_ROLE_TOKENS = new Set(["none", "presentation"]);
+const LABELABLE_INPUT_TYPES = new Set([
+  "text",
+  "email",
+  "tel",
+  "number",
+  "search",
+  "url",
+  "password",
+  "checkbox",
+  "radio",
+]);
+const REFUSED_INPUT_TYPES = new Set(["button", "submit", "reset", "image", "hidden"]);
+
+const OP_KEYS = {
+  setAttribute: new Set(["op", "selector", "name", "value"]),
+  setText: new Set(["op", "selector", "text"]),
+  injectCSS: new Set(["op", "rules", "id"]),
+  wrapLabel: new Set(["op", "selector", "text"]),
+  makeFocusable: new Set(["op", "selector"]),
+  bindEnterToClick: new Set(["op", "selector"]),
+  replaceTag: new Set(["op", "selector", "tag", "attributes"]),
+  insertHTML: new Set(["op", "selector", "position", "html", "mountId"]),
+  toggleDisclosure: new Set(["op", "trigger", "panel"]),
+};
+
 function isRecord(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -138,8 +189,12 @@ function isNonEmptyString(value) {
   return typeof value === "string" && value.length > 0;
 }
 
+function extraKeys(raw, allowed) {
+  return Object.keys(raw).filter((key) => !allowed.has(key));
+}
+
 export function isSafeMountId(value) {
-  return typeof value === "string" && MOUNT_ID_RE.test(value);
+  return typeof value === "string" && MOUNT_ID_RE.test(value) && value.length <= 64;
 }
 
 export function isAllowedAttributeName(name) {
@@ -165,14 +220,33 @@ export function isSafeHref(value) {
   return false;
 }
 
+function roleTokens(value) {
+  return String(value)
+    .trim()
+    .toLowerCase()
+    .split(/\s+/)
+    .filter(Boolean);
+}
+
 export function isSafeAttributeValue(name, value) {
   if (typeof value !== "string") return false;
   if (/[\u0000-\u001F\u007F]/.test(value)) return false;
   if (/^\s*javascript:/i.test(value)) return false;
-  if (name.toLowerCase() === "href") return isSafeHref(value);
+  const attr = name.toLowerCase();
+  if (attr === "href") return isSafeHref(value);
+  if (attr === "tabindex") {
+    return value === "0" || value === "-1";
+  }
+  if (attr === "aria-hidden") {
+    return value === "true" || value === "false";
+  }
+  if (attr === "role") {
+    const tokens = roleTokens(value);
+    if (tokens.length === 0) return false;
+    return tokens.every((token) => !HIDDEN_ROLE_TOKENS.has(token));
+  }
   return true;
 }
-
 
 function selectorTypeIsForbiddenHost(selector) {
   for (const raw of selector.split(",")) {
@@ -209,6 +283,11 @@ export function elementForbiddenAsTextOrTagHost(el) {
   return FORBIDDEN_OP_HOSTS.has(localTagName(el));
 }
 
+export function elementIsPageContainer(el) {
+  if (!el || el.nodeType !== 1) return true;
+  return PAGE_CONTAINERS.has(localTagName(el));
+}
+
 export function elementHasVoidOrControlDescendant(el) {
   if (!el || typeof el.querySelectorAll !== "function") return true;
   for (const child of el.querySelectorAll("*")) {
@@ -226,14 +305,19 @@ export function elementHasElementChildren(el) {
   return false;
 }
 
-const INTERACTIVE_ROLES = new Set(["button", "link", "menuitem", "tab", "checkbox", "radio", "textbox"]);
+function isContentEditable(el) {
+  if (!el || typeof el.getAttribute !== "function") return true;
+  if (el.isContentEditable === true) return true;
+  const raw = (el.getAttribute("contenteditable") || "").trim().toLowerCase();
+  return raw === "" && el.hasAttribute("contenteditable") ? true : raw === "true" || raw === "plaintext-only";
+}
 
 export function isInteractiveElement(el) {
   if (!el || el.nodeType !== 1) return true;
   if (INTERACTIVE_TAGS.has(localTagName(el))) return true;
   if (el.hasAttribute("tabindex")) return true;
-  const role = (el.getAttribute("role") || "").toLowerCase();
-  return INTERACTIVE_ROLES.has(role);
+  if (isContentEditable(el)) return true;
+  return roleTokens(el.getAttribute("role") || "").some((token) => INTERACTIVE_ROLES.has(token));
 }
 
 export function elementHasInteractiveDescendant(el) {
@@ -246,19 +330,46 @@ export function elementHasInteractiveDescendant(el) {
 
 export function attributeWouldHideInteractive(name, value, el) {
   const n = String(name).toLowerCase();
-  const v = String(value).toLowerCase();
-  const hides =
-    (n === "aria-hidden" && v === "true") ||
-    (n === "role" && (v === "presentation" || v === "none")) ||
-    (n === "tabindex" && v === "-1");
-  if (!hides) return false;
-  return isInteractiveElement(el) || elementHasInteractiveDescendant(el);
+  const v = String(value).trim().toLowerCase();
+  const interactive = isInteractiveElement(el) || elementHasInteractiveDescendant(el);
+  if (n === "aria-hidden") {
+    if (v !== "true" && v !== "false") return true;
+    if (interactive && v !== "false") return true;
+    return false;
+  }
+  if (n === "role") {
+    if (roleTokens(value).some((token) => HIDDEN_ROLE_TOKENS.has(token))) return true;
+    return false;
+  }
+  if (n === "tabindex") {
+    if (v !== "0" && v !== "-1") return true;
+    if (v === "-1" && interactive) return true;
+    return false;
+  }
+  return false;
+}
+
+export function isLabelableTextControl(el) {
+  if (!el || el.nodeType !== 1) return false;
+  const tag = localTagName(el);
+  if (tag === "textarea" || tag === "select") return true;
+  if (tag !== "input") return false;
+  const type = (el.getAttribute("type") || "text").trim().toLowerCase();
+  if (REFUSED_INPUT_TYPES.has(type)) return false;
+  return LABELABLE_INPUT_TYPES.has(type);
 }
 
 export function hashKey(value) {
-  let hash = 0;
-  for (let i = 0; i < value.length; i++) hash = (Math.imul(31, hash) + value.charCodeAt(i)) | 0;
-  return String(hash >>> 0);
+  let h1 = 2166136261;
+  let h2 = 16777619;
+  for (let i = 0; i < value.length; i++) {
+    const c = value.charCodeAt(i);
+    h1 ^= c;
+    h1 = Math.imul(h1, 16777619) >>> 0;
+    h2 ^= c + i + 1;
+    h2 = Math.imul(h2, 2166136261) >>> 0;
+  }
+  return h1.toString(16).padStart(8, "0") + h2.toString(16).padStart(8, "0");
 }
 
 export function cssKey(op) {
@@ -356,11 +467,20 @@ function parseAttributes(raw, index) {
   return out;
 }
 
+function rejectUnknownKeys(raw, index, allowed) {
+  if (extraKeys(raw, allowed).length > 0) {
+    return { error: `ops[${index}] unknown key` };
+  }
+  return null;
+}
+
 function parseOp(raw, index, doc) {
   if (!isRecord(raw)) return { error: `ops[${index}] must be an object` };
   const op = raw.op;
   if (typeof op !== "string") return { error: `ops[${index}] missing op` };
   if (!PATCH_OP_SET.has(op)) return { error: `ops[${index}] unknown op: ${op}` };
+  const unknown = rejectUnknownKeys(raw, index, OP_KEYS[op]);
+  if (unknown) return unknown;
   switch (op) {
     case "setAttribute": {
       if (!isNonEmptyString(raw.selector)) return { error: `ops[${index}] selector required` };
@@ -397,6 +517,18 @@ function parseOp(raw, index, doc) {
     case "wrapLabel": {
       if (!isNonEmptyString(raw.selector)) return { error: `ops[${index}] selector required` };
       if (!isNonEmptyString(raw.text)) return { error: `ops[${index}] text required` };
+      for (const rawSel of raw.selector.split(",")) {
+        const type = rawSel.trim().match(/^[a-zA-Z_][\w-]*/);
+        if (
+          type &&
+          FORBIDDEN_OP_HOSTS.has(type[0].toLowerCase()) &&
+          type[0].toLowerCase() !== "input" &&
+          type[0].toLowerCase() !== "select" &&
+          type[0].toLowerCase() !== "textarea"
+        ) {
+          return { error: `ops[${index}] target is not allowlisted` };
+        }
+      }
       return { op, selector: raw.selector, text: raw.text };
     }
     case "makeFocusable":
@@ -438,9 +570,20 @@ function parseOp(raw, index, doc) {
       if (raw.mountId !== undefined && !isSafeMountId(raw.mountId)) {
         return { error: `ops[${index}] mountId is invalid` };
       }
+      if (selectorTargetsForbiddenHost(raw.selector)) {
+        return { error: `ops[${index}] target is not allowlisted` };
+      }
       return raw.mountId === undefined
         ? { op, selector: raw.selector, position: raw.position, html: raw.html }
         : { op, selector: raw.selector, position: raw.position, html: raw.html, mountId: raw.mountId };
+    }
+    case "toggleDisclosure": {
+      if (!isNonEmptyString(raw.trigger)) return { error: `ops[${index}] trigger required` };
+      if (!isNonEmptyString(raw.panel)) return { error: `ops[${index}] panel required` };
+      if (selectorTargetsForbiddenHost(raw.trigger) || selectorTargetsForbiddenHost(raw.panel)) {
+        return { error: `ops[${index}] target is not allowlisted` };
+      }
+      return { op, trigger: raw.trigger, panel: raw.panel };
     }
     default:
       return { error: `ops[${index}] unknown op: ${op}` };
@@ -450,11 +593,15 @@ function parseOp(raw, index, doc) {
 export function parsePatchSpec(input, doc) {
   try {
     if (!isRecord(input)) return { ok: false, error: "spec must be an object" };
+    if (extraKeys(input, new Set(["id", "version", "ops"])).length > 0) {
+      return { ok: false, error: "unknown key" };
+    }
     if (!isNonEmptyString(input.id)) return { ok: false, error: "id required" };
     if (input.version !== PATCH_SPEC_VERSION) {
       return { ok: false, error: `unsupported version: ${String(input.version)}` };
     }
     if (!Array.isArray(input.ops)) return { ok: false, error: "ops must be an array" };
+    if (input.ops.length > PATCH_OP_LIMIT) return { ok: false, error: "too many ops" };
     const ops = [];
     for (let i = 0; i < input.ops.length; i++) {
       const parsed = parseOp(input.ops[i], i, doc);

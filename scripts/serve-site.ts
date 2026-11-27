@@ -2,6 +2,7 @@ import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { extname, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { gzipSync } from "node:zlib";
 import { getSite, placeholderSiteConfig } from "../shared/catalog.ts";
 import { parseIncomingUrl } from "../shared/request-url.ts";
 import { resolveRuntimePath } from "../shared/runtime-static.ts";
@@ -74,6 +75,35 @@ const server = createServer(async (req, res) => {
     if (!dashboard && url.pathname === "/") {
       res.writeHead(302, { Location: `/checkout/${url.search}` });
       res.end();
+      return;
+    }
+    if (!dashboard && url.pathname.startsWith("/e2e/gzip-")) {
+      const small = `<!doctype html><html><head><title>Northline gzip</title></head><body><p id="gzip-mark">small</p></body></html>`;
+      let raw: Buffer;
+      if (url.pathname === "/e2e/gzip-large") {
+        raw = Buffer.from(
+          `<!doctype html><html><head><title>large</title></head><body>${"x".repeat(1_048_576 + 64)}</body></html>`,
+        );
+      } else {
+        raw = Buffer.from(small);
+      }
+      const gz = gzipSync(raw);
+      const headers: Record<string, string> = {
+        "Content-Type": "text/html; charset=utf-8",
+        "Content-Encoding": "gzip",
+      };
+      if (url.pathname === "/e2e/gzip-chunked") {
+        res.writeHead(200, headers);
+        const size = 24;
+        for (let i = 0; i < gz.length; i += size) {
+          res.write(gz.subarray(i, i + size));
+        }
+        res.end();
+        return;
+      }
+      headers["Content-Length"] = String(gz.length);
+      res.writeHead(200, headers);
+      res.end(gz);
       return;
     }
     let relative = url.pathname === "/" ? "index.html" : url.pathname.slice(1);

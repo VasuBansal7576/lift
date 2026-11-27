@@ -24,6 +24,9 @@ describe("HEAD and non-GET skip eval, injection, and the cookie", () => {
       expect(res.headers.get("set-cookie")).toBeNull();
       expect(flagsmithHits).toBe(0);
       expect(res.headers.get("server-timing") || "").toMatch(/head/);
+      const vary = res.headers.get("vary") || "";
+      expect(vary).toMatch(/Sec-Fetch-Dest/i);
+      expect(vary).toMatch(/\bAccept\b/i);
     } finally {
       restore();
     }
@@ -223,6 +226,9 @@ describe("null-body HTML statuses", () => {
       expect(res.status).toBe(304);
       expect(res.headers.get("etag")).toBe('"v1"');
       expect(await res.text()).toBe("");
+      const vary = res.headers.get("vary") || "";
+      expect(vary).toMatch(/Sec-Fetch-Dest/i);
+      expect(vary).toMatch(/\bAccept\b/i);
     } finally {
       restore();
     }
@@ -315,12 +321,12 @@ describe("document-only eval", () => {
 });
 
 describe("gzip origin replay", () => {
-  it("strips Content-Encoding and Content-Length after decoding gzip HTML", async () => {
+  it("treats a decoded body with Content-Encoding: gzip as already decoded (workerd)", async () => {
     const html = originHtml();
     const gz = gzipSync(html);
     const env = mockEnv();
     const restore = installEdgeFetch({
-      originBody: gz,
+      originBody: html,
       flagsmith: flagsPayload(null),
       originHeaders: {
         "Content-Encoding": "gzip",
@@ -333,6 +339,7 @@ describe("gzip origin replay", () => {
       const body = await res.text();
       expect(body).toContain(CONFIG_SCRIPT_ID);
       expect(body).toContain("Northline");
+      expect(res.status).toBe(200);
       expect(res.headers.get("content-encoding")).toBeNull();
       const cl = res.headers.get("content-length");
       if (cl) expect(Number(cl)).not.toBe(gz.length);
@@ -400,6 +407,41 @@ describe("Vary on GET HTML", () => {
       expect(vary).toMatch(/\bAccept\b/i);
     } finally {
       passRestore();
+    }
+  });
+
+  it("leaves Vary: * alone", async () => {
+    const env = mockEnv();
+    const restore = installEdgeFetch({
+      originBody: originHtml(),
+      flagsmith: flagsPayload(null),
+      originHeaders: { Vary: "*" },
+    });
+    try {
+      const res = await handleRequest(documentRequest("http://edge.test/checkout/"), env);
+      expect(res.headers.get("vary")).toBe("*");
+    } finally {
+      restore();
+    }
+  });
+
+  it("applies Vary on HEAD document responses", async () => {
+    const env = mockEnv();
+    const restore = installEdgeFetch({ originBody: originHtml(), flagsmith: flagsPayload(null) });
+    try {
+      const res = await handleRequest(
+        new Request("http://edge.test/checkout/", {
+          method: "HEAD",
+          headers: { "Sec-Fetch-Dest": "document", Accept: "text/html" },
+        }),
+        env,
+      );
+      const vary = res.headers.get("vary") || "";
+      expect(vary).toMatch(/Sec-Fetch-Dest/i);
+      expect(vary).toMatch(/\bAccept\b/i);
+      expect(res.headers.get("set-cookie")).toBeNull();
+    } finally {
+      restore();
     }
   });
 });

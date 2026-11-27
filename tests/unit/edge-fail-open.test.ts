@@ -14,6 +14,7 @@ describe("fail-open", () => {
     expect(src).not.toMatch(/\.clone\s*\(/);
     expect(src).toContain("MAX_HTML_BYTES");
     expect(src).not.toMatch(/if \(buffered\.bytes\)/);
+    expect(src).not.toMatch(/new DecompressionStream/);
   });
 
   it("passes non-HTML through unmodified", async () => {
@@ -141,6 +142,8 @@ describe("fail-open", () => {
       originHeaders: {
         "Cache-Control": "public, max-age=60",
         "Content-Security-Policy": "script-src 'self'",
+        ETag: '"keep-me-not"',
+        "Last-Modified": "Wed, 21 Oct 2015 07:28:00 GMT",
       },
     });
     try {
@@ -154,6 +157,8 @@ describe("fail-open", () => {
       expect(res.headers.get("set-cookie")).toBeNull();
       expect(res.headers.get("cache-control")).toBe("public, max-age=60");
       expect(res.headers.get("content-security-policy")).toBe("script-src 'self'");
+      expect(res.headers.get("etag")).toBeNull();
+      expect(res.headers.get("last-modified")).toBeNull();
     } finally {
       restore();
     }

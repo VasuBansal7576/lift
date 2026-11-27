@@ -3,6 +3,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { ROOT } from "../../agent/src/config.ts";
+import { MAX_HTML_BYTES } from "../../edge/lib/constants.js";
 import { AXE_GATE_RULES } from "../../shared/patch-spec.ts";
 import {
   CONTROL_ID,
@@ -198,6 +199,42 @@ test("HEAD does not set lift_vid or inject Lift", async () => {
   });
   const body = await get.text();
   expect(body).toContain("lift-edge-config");
+});
+
+async function wranglerDocument(path: string) {
+  return fetch(`${EDGE_ORIGIN}${path}`, {
+    method: "GET",
+    headers: {
+      cookie: `lift_vid=${CONTROL_ID}`,
+      Accept: "text/html",
+      "Sec-Fetch-Dest": "document",
+    },
+  });
+}
+
+test("wrangler gzip origin: small HTML injects instead of 404", async () => {
+  const res = await wranglerDocument("/e2e/gzip-small");
+  expect(res.status).toBe(200);
+  const body = await res.text();
+  expect(body).toContain("lift-edge-config");
+  expect(body).toContain("gzip-mark");
+});
+
+test("wrangler gzip origin: chunked HTML injects instead of 404", async () => {
+  const res = await wranglerDocument("/e2e/gzip-chunked");
+  expect(res.status).toBe(200);
+  const body = await res.text();
+  expect(body).toContain("lift-edge-config");
+  expect(body).toContain("gzip-mark");
+});
+
+test("wrangler gzip origin: over 1 MiB fail-opens without 404", async () => {
+  const res = await wranglerDocument("/e2e/gzip-large");
+  expect(res.status).toBe(200);
+  const body = await res.text();
+  expect(body.length).toBeGreaterThan(MAX_HTML_BYTES);
+  expect(body).not.toContain("lift-edge-config");
+  expect(res.headers.get("server-timing") || "").toMatch(/html-too-large/);
 });
 
 test("Flagsmith down serves the origin page intact", async ({ page }) => {

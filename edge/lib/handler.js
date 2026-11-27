@@ -66,14 +66,18 @@ export function isHtmlResponse(response) {
   return /text\/html/i.test(type);
 }
 
-/** Document navigations only. CSS/JS/image/empty fetches skip eval and identity. */
-export function isDocumentRequest(request) {
-  if (request.method !== "GET") return false;
+function isDocumentLike(request) {
   const dest = (request.headers.get("Sec-Fetch-Dest") || "").toLowerCase();
   if (dest === "document" || dest === "iframe" || dest === "frame") return true;
   if (dest) return false;
   const accept = request.headers.get("Accept") || "";
   return /text\/html/i.test(accept);
+}
+
+/** Document navigations only. CSS/JS/image/empty fetches skip eval and identity. */
+export function isDocumentRequest(request) {
+  if (request.method !== "GET") return false;
+  return isDocumentLike(request);
 }
 
 export function rewriteLocation(headers, originBase, workerOrigin) {
@@ -102,6 +106,7 @@ function withServerTiming(headers, wallMs, failOpen) {
 function appendVary(headers, tokens) {
   const current = headers.get("Vary") || "";
   const parts = current.split(",").map((s) => s.trim()).filter(Boolean);
+  if (parts.some((p) => p === "*")) return;
   const seen = new Set(parts.map((p) => p.toLowerCase()));
   for (const token of tokens) {
     if (!seen.has(token.toLowerCase())) {
@@ -146,6 +151,9 @@ function finalizePassthrough(response, opts) {
   if (opts.injected) {
     applyInjectedHtmlHeaders(headers, opts);
   } else {
+    if (opts.failOpen && opts.personalize && !isNullBodyStatus(response.status)) {
+      stripValidators(headers);
+    }
     if (opts.setCookie) {
       headers.append("Set-Cookie", opts.setCookie);
       headers.set("Cache-Control", COOKIE_CACHE_CONTROL);
@@ -301,24 +309,15 @@ function remainderStream(prefix, overflow, reader) {
   });
 }
 
-function decodedReadable(originRes) {
-  const body = originRes.body;
-  if (!body) return null;
-  const enc = (originRes.headers.get("content-encoding") || "").toLowerCase().split(",")[0].trim();
-  if (enc !== "gzip" && enc !== "deflate" && enc !== "br") return body;
-  try {
-    return body.pipeThrough(new DecompressionStream(enc));
-  } catch {
-    return body;
-  }
-}
-
 async function bufferHtml(originRes) {
   const declared = declaredContentLength(originRes);
   if (declared != null && declared > MAX_HTML_BYTES) {
     return { tooLarge: true, unbuffered: true };
   }
-  const stream = decodedReadable(originRes);
+  // workerd fetch() already decodes gzip/br while leaving Content-Encoding set.
+  // A second decode of that body 404s. Node unit tests mock decoded bytes plus
+  // the leftover Content-Encoding header. Real gzip is covered in wrangler e2e.
+  const stream = originRes.body;
   if (!stream) return { bytes: new Uint8Array(0), html: "" };
   const reader = stream.getReader();
   const chunks = [];
@@ -429,7 +428,9 @@ export async function handleRequest(request, env) {
     setCookie: personalize ? visitor.setCookie : null,
     cpuMs: wall.ms(),
     html,
-    varyHtml: request.method === "GET" && html,
+    personalize,
+    varyHtml:
+      (request.method === "GET" || request.method === "HEAD") && (html || isDocumentLike(request)),
   };
 
   if (!html || !personalize) {

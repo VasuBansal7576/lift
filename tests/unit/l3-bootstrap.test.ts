@@ -260,9 +260,17 @@ describe("L3 recorder never stops shared Flagsmith", () => {
     expect(src).not.toMatch(/page\.evaluate\([\s\S]*?127\.0\.0\.1:8000[\s\S]*?api\/v1\/flags/);
     expect(src).toContain("waitForURL(/\\/identities/");
     expect(src).toContain("inBandMs < 12_000");
+    expect(src).toContain("max - min < 0.08");
+    expect(src).toContain("min > 0.47");
+    expect(src).toContain("max < 0.53");
+    expect(src).not.toContain("unfocusUrlBar(admin, 520, 520)");
+    expect(src).toContain("unfocusAdminPage");
+    expect(src).toContain("clickLocatorVisible");
+    expect(src).toContain('getByRole("heading")');
     const wiggle = src.match(/async function bandPointerWiggle[\s\S]*?\nasync function /)?.[0];
     expect(wiggle).toBeTruthy();
     expect(wiggle).not.toContain('["click", "5"]');
+    expect(wiggle).toContain("#lift-biometric");
   });
 });
 

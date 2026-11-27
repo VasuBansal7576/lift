@@ -623,6 +623,14 @@ describe("L3 init generation ignores stale Flagsmith init", () => {
     windowObj.clearTimeout(afterFail.reconnectTimer);
     afterFail.reconnectTimer = 0;
 
+    let sdkLoads = 0;
+    const importSdk = afterFail.importSdk;
+    afterFail.importSdk = async () => {
+      sdkLoads += 1;
+      if (!importSdk) throw new Error("importSdk missing");
+      return importSdk();
+    };
+
     let release = () => {};
     const gate = new Promise<void>((resolve) => {
       release = resolve;
@@ -662,6 +670,7 @@ describe("L3 init generation ignores stale Flagsmith init", () => {
     const runtime = getRuntime() as TestRuntime;
     expect(runtime.started).toBe(true);
     expect(runtime.timer).not.toBe(0);
+    expect(sdkLoads).toBe(1);
     runtime.biometric = 90;
     await new Promise((r) => setTimeout(r, 400));
     expect(runtime.lastScore).toBeGreaterThan(0.1);

@@ -287,6 +287,24 @@ async function unfocusUrlBar(win: HeadedWindow, dx = 400, dy = 620): Promise<voi
   await sleep(200);
 }
 
+/** Blur the admin URL bar by clicking a visible non-interactive heading — never a fixed pixel. */
+async function unfocusAdminPage(win: HeadedWindow): Promise<void> {
+  xdo(["windowactivate", "--sync", win.winId]);
+  xdo(["key", "--window", win.winId, "Escape"]);
+  await sleep(120);
+  xdo(["key", "--window", win.winId, "Escape"]);
+  await sleep(80);
+  const heading = win.page.getByRole("heading").first();
+  const identifier = win.page.getByText(/^Identifier:/).first();
+  const viewManage = win.page
+    .getByText("View and manage feature states and traits for this identity.")
+    .first();
+  const includeUsers = win.page
+    .getByText("Include users when all of the following rules apply")
+    .first();
+  await clickLocatorVisible(win, heading.or(identifier).or(viewManage).or(includeUsers));
+}
+
 async function clickLocatorVisible(win: HeadedWindow, locator: Locator): Promise<void> {
   await locator.waitFor({ state: "visible", timeout: 15_000 });
   const pt = await locator.evaluate((el) => {
@@ -542,18 +560,36 @@ async function hudScore(page: Page): Promise<{
 
 async function bandPointerWiggle(win: HeadedWindow, ms: number, energetic: boolean): Promise<void> {
   xdo(["windowactivate", "--sync", win.winId]);
-  const originX = win.x + 300;
-  const originY = win.y + 560;
-  const spanX = energetic ? 90 : 22;
-  const spanY = energetic ? 36 : 14;
+  await win.page.locator("#lift-biometric").waitFor({ state: "visible" });
+  const layout = await sliderLayout(win.page);
+  if (layout.y < 240 || layout.y > 520) {
+    throw new Error(`slider left the frame (top=${layout.y})`);
+  }
+  const y0 = Math.round(layout.screenY + layout.topChrome + layout.y + layout.h / 2);
+  const lo = energetic ? 0.18 : 0.38;
+  const hi = energetic ? 0.98 : 0.82;
+  const xLo = Math.round(layout.screenX + layout.x + layout.w * lo);
+  const xHi = Math.round(layout.screenX + layout.x + layout.w * hi);
+  xdo(["mousemove", "--sync", String(xHi), String(y0)]);
+  await sleep(80);
+  xdo(["mousedown", "1"]);
   const t0 = Date.now();
   let n = 0;
-  while (Date.now() - t0 < ms) {
-    const x = originX + ((n % 4 < 2 ? 1 : -1) * spanX) + (n % 3) * 10;
-    const y = originY + ((n % 6 < 3 ? 1 : -1) * spanY) + (n % 5) * 6;
-    xdo(["mousemove", "--sync", String(x), String(y)]);
-    await sleep(energetic ? 12 : 30);
-    n += 1;
+  try {
+    while (Date.now() - t0 < ms) {
+      const sweep = (n % 36) / 35;
+      const goingRight = Math.floor(n / 36) % 2 === 0;
+      const frac = goingRight ? sweep : 1 - sweep;
+      const x = Math.round(xLo + (xHi - xLo) * frac);
+      const spanY = energetic ? 22 : 8;
+      const y = y0 + (n % 6 < 3 ? spanY : -spanY);
+      xdo(["mousemove", "--sync", String(x), String(y)]);
+      await sleep(energetic ? 16 : 28);
+      n += 1;
+    }
+  } finally {
+    xdo(["mousemove", "--sync", String(xHi), String(y0)]);
+    xdo(["mouseup", "1"]);
   }
 }
 
@@ -578,6 +614,7 @@ async function holdScoreInBand(win: HeadedWindow, page: Page, holdMs = 15_000): 
   }
   const y0 = Math.round(layout.screenY + layout.topChrome + layout.y + layout.h / 2);
   const xHi = Math.round(layout.screenX + layout.x + layout.w * 0.97);
+  const xLoWide = Math.round(layout.screenX + layout.x + layout.w * 0.18);
   xdo(["mousemove", "--sync", String(xHi), String(y0)]);
   await sleep(80);
   xdo(["mousedown", "1"]);
@@ -592,9 +629,13 @@ async function holdScoreInBand(win: HeadedWindow, page: Page, holdMs = 15_000): 
   try {
     while (Date.now() - t0 < holdMs) {
       const high = Math.floor((Date.now() - t0) / 3_000) % 2 === 0;
-      const spanX = high ? 42 : 16;
+      const xLo = high ? Math.round(layout.screenX + layout.x + layout.w * 0.52) : xLoWide;
+      const xHiNow = high ? xHi : Math.round(layout.screenX + layout.x + layout.w * 0.82);
+      const sweep = (n % 36) / 35;
+      const goingRight = Math.floor(n / 36) % 2 === 0;
+      const frac = goingRight ? sweep : 1 - sweep;
       const spanY = high ? 22 : 8;
-      const x = xHi + (n % 4 < 2 ? -spanX : Math.round(spanX * 0.2)) + (n % 3) * 3;
+      const x = Math.round(xLo + (xHiNow - xLo) * frac);
       const y = y0 + (n % 6 < 3 ? spanY : -spanY);
       xdo(["mousemove", "--sync", String(x), String(y)]);
       const now = Date.now();
@@ -628,6 +669,11 @@ async function holdScoreInBand(win: HeadedWindow, page: Page, holdMs = 15_000): 
   if (!entered || inBandMs < 12_000) {
     throw new Error(
       `no-flap spent ${inBandMs}ms in 0.40-0.60 (need ≥12000, min=${min}, max=${max}, last=${last.score})`,
+    );
+  }
+  if (max - min < 0.08 || min > 0.47 || max < 0.53) {
+    throw new Error(
+      `no-flap band was too flat (min=${min}, max=${max}; need max-min>=0.08, min<=0.47, max>=0.53)`,
     );
   }
 }
@@ -984,7 +1030,7 @@ async function noFlap(): Promise<void> {
     retile(demo);
     await openIdentity(admin.page, state, NOFLAP_IDENTITY);
     await unfocusUrlBar(demo, 400, 620);
-    await unfocusUrlBar(admin, 520, 520);
+    await unfocusAdminPage(admin);
     retile(admin);
     retile(demo);
     grab = startGrab(tmp);
@@ -1027,7 +1073,7 @@ async function segment(): Promise<void> {
     await hideFlagsmithSnippets(admin.page);
     await admin.page.waitForSelector("text=overstimulated", { timeout: 15_000 });
     await waitForIdentityId(SEGMENT_IDENTITY);
-    await unfocusUrlBar(admin, 520, 520);
+    await unfocusAdminPage(admin);
     await unfocusUrlBar(demo, 400, 620);
     retile(admin);
     retile(demo);
@@ -1070,6 +1116,7 @@ async function failOpenClip(): Promise<void> {
   const admin = await launchWindow(960, 0, TILE.w, TILE.h);
   const tmp = resolve(ROOT, "test-results/l3-recordings", "l3-fail-open-grab.mp4");
   let grab: ChildProcess | null = null;
+  let clipErr: unknown;
   try {
     await loginFlagsmith(admin.page, state);
     retile(admin);
@@ -1082,7 +1129,7 @@ async function failOpenClip(): Promise<void> {
     retile(demo);
     await openIdentity(admin.page, state, FAILOPEN_IDENTITY);
     await unfocusUrlBar(demo, 400, 620);
-    await unfocusUrlBar(admin, 520, 520);
+    await unfocusAdminPage(admin);
     retile(admin);
     retile(demo);
     grab = startGrab(tmp);
@@ -1121,14 +1168,27 @@ async function failOpenClip(): Promise<void> {
     await demo.page.waitForSelector("[data-lift-promo]", { state: "visible" });
     await demo.page.waitForSelector("[data-lift-cookie]", { state: "visible" });
     await sleep(2_200);
+  } catch (err) {
+    clipErr = err;
   } finally {
     if (grab) await stopGrab(grab);
+    let reachErr: unknown;
     try {
       await assertFlagsmithReachableFromPage(admin.page);
-    } finally {
-      await demo.browser.close().catch(() => {});
-      await admin.browser.close().catch(() => {});
+    } catch (err) {
+      const text = err instanceof Error ? (err.stack ?? err.message) : String(err);
+      process.stderr.write(`post-stopGrab Flagsmith reachability check failed: ${text}\n`);
+      reachErr = err;
     }
+    await demo.browser.close().catch(() => {});
+    await admin.browser.close().catch(() => {});
+    if (clipErr && reachErr) {
+      const clipMsg = clipErr instanceof Error ? clipErr.message : String(clipErr);
+      const reachMsg = reachErr instanceof Error ? reachErr.message : String(reachErr);
+      throw new Error(`${clipMsg}; also reachability: ${reachMsg}`);
+    }
+    if (clipErr) throw clipErr;
+    if (reachErr) throw reachErr;
   }
   publishMp4(tmp, "l3-fail-open.mp4");
 }

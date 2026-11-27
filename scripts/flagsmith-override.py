@@ -1,18 +1,20 @@
 #!/usr/bin/env python3
 """Set or clear a Flagsmith Edge identity override for checkout_a11y.
 
-Reads FLAGSMITH_ADMIN_API_TOKEN from the environment. Used by
+Reads FLAGSMITH_ADMIN_API_TOKEN, FLAGSMITH_ENVIRONMENT_KEY, and
+FLAGSMITH_FEATURE_ID from the environment. Used by
 scripts/record-phase-a.mjs so clip 01 can start on the control arm.
 """
 import json
 import os
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 
 TOKEN = os.environ.get("FLAGSMITH_ADMIN_API_TOKEN", "")
-ENV = os.environ.get("FLAGSMITH_ENVIRONMENT_KEY", "LA6mpev9Bggh3nyPCZVsUg")
-FEATURE = int(os.environ.get("FLAGSMITH_FEATURE_ID", "305189"))
+ENV = os.environ.get("FLAGSMITH_ENVIRONMENT_KEY", "")
+FEATURE_RAW = os.environ.get("FLAGSMITH_FEATURE_ID", "")
 ADMIN = {
     "Authorization": f"Api-Key {TOKEN}",
     "Accept": "application/json",
@@ -35,8 +37,9 @@ def req(url, method="GET", body=None, headers=None):
 
 
 def edge_uuid(identifier):
+    q = urllib.parse.quote(identifier)
     status, data = req(
-        f"https://api.flagsmith.com/api/v1/environments/{ENV}/edge-identities/?q={identifier}"
+        f"https://api.flagsmith.com/api/v1/environments/{ENV}/edge-identities/?q={q}"
     )
     if status != 200:
         raise SystemExit(f"edge-identities {status} {data}")
@@ -44,13 +47,13 @@ def edge_uuid(identifier):
     if not rows:
         urllib.request.urlopen(
             urllib.request.Request(
-                f"https://edge.api.flagsmith.com/api/v1/identities/?identifier={identifier}",
+                f"https://edge.api.flagsmith.com/api/v1/identities/?identifier={q}",
                 headers={"X-Environment-Key": ENV},
             ),
             timeout=15,
         ).read()
         status, data = req(
-            f"https://api.flagsmith.com/api/v1/environments/{ENV}/edge-identities/?q={identifier}"
+            f"https://api.flagsmith.com/api/v1/environments/{ENV}/edge-identities/?q={q}"
         )
         rows = (data or {}).get("results") or []
     if not rows:
@@ -96,6 +99,11 @@ def clear(identifier):
 if __name__ == "__main__":
     if not TOKEN:
         raise SystemExit("FLAGSMITH_ADMIN_API_TOKEN is required")
+    if not ENV:
+        raise SystemExit("FLAGSMITH_ENVIRONMENT_KEY is required")
+    if not FEATURE_RAW:
+        raise SystemExit("FLAGSMITH_FEATURE_ID is required")
+    FEATURE = int(FEATURE_RAW)
     if len(sys.argv) < 3:
         raise SystemExit("usage: flagsmith-override.py set-control|clear IDENTIFIER")
     cmd, ident = sys.argv[1], sys.argv[2]

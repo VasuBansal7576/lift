@@ -257,8 +257,6 @@ async function paintContrastReadout(
       const el = document.querySelector(sel);
       if (!(el instanceof HTMLElement)) return;
       if (!restored) {
-        el.style.outline = "3px dashed #f00";
-        el.style.outlineOffset = "2px";
         const range = document.createRange();
         range.selectNodeContents(el);
         const selection = window.getSelection();
@@ -266,8 +264,6 @@ async function paintContrastReadout(
         selection?.addRange(range);
       } else {
         window.getSelection()?.removeAllRanges();
-        el.style.outline = "";
-        el.style.outlineOffset = "";
       }
       const color = getComputedStyle(el).color;
       const fg = parseCssColor(color) || parseRgb(color) || [255, 255, 255];
@@ -290,17 +286,9 @@ async function showRestoredReadout(page: Page, selector: string, caption: string
 }
 
 async function markBadState(page: Page, selector: string, caption: string) {
-  await page.evaluate(
-    ({ sel, cap }) => {
-      const el = document.querySelector(sel);
-      if (el instanceof HTMLElement) {
-        el.style.outline = "6px dashed #f00";
-        el.style.outlineOffset = "6px";
-      }
-      console.log(cap);
-    },
-    { sel: selector, cap: caption },
-  );
+  await page.evaluate((cap) => {
+    console.log(cap);
+  }, caption);
   await pause(page, 1500);
 }
 
@@ -1385,7 +1373,7 @@ test("04-overflow-matches-contrast", async ({ page }) => {
     for (let i = 0; i < 60; i += 1) {
       const item = document.createElement("span");
       item.className = "item";
-      item.textContent = "WHITE ON BLACK FAIL";
+      item.textContent = "Item";
       item.style.cssText = "display:block;font:14px/1.4 system-ui";
       dark.append(item);
     }
@@ -1595,7 +1583,7 @@ test("04-per-node-attribution", async ({ page }) => {
     document.head.append(pageStyle);
     const a = document.createElement("div");
     a.id = "node-a";
-    a.className = "probe";
+    a.className = "demo-target";
     a.textContent = "A";
     a.style.cssText = "padding:10px;background:#fff;color:#111;font:700 18px/1.3 system-ui";
     const dark = document.createElement("div");
@@ -1603,7 +1591,7 @@ test("04-per-node-attribution", async ({ page }) => {
     dark.style.cssText = "padding:10px;margin-top:12px";
     const b = document.createElement("div");
     b.id = "node-b";
-    b.className = "probe";
+    b.className = "demo-target";
     b.textContent = "B";
     b.style.cssText = "background:#fff;color:#111;font:700 18px/1.3 system-ui";
     checkout.append(a, dark, b);
@@ -1615,7 +1603,7 @@ test("04-per-node-attribution", async ({ page }) => {
           op: "injectCSS",
           rules: [
             {
-              selector: { classes: ["probe"] },
+              selector: { classes: ["demo-target"] },
               declarations: [{ property: "color", value: "#111" }],
             },
           ],
@@ -1655,8 +1643,8 @@ test("04-cssom-edit-detected", async ({ page }) => {
     };
     const checkout = document.getElementById("checkout") || document.body;
     const probe = document.createElement("div");
-    probe.className = "probe";
-    probe.textContent = "Watch this text";
+    probe.className = "demo-target";
+    probe.textContent = "Sample";
     probe.style.cssText = "padding:12px;background:#fff;font:700 20px/1.3 system-ui";
     checkout.append(probe);
     const applied = runtime.applyPatchSpec({
@@ -1667,7 +1655,7 @@ test("04-cssom-edit-detected", async ({ page }) => {
           op: "injectCSS",
           rules: [
             {
-              selector: { classes: ["probe"] },
+              selector: { classes: ["demo-target"] },
               declarations: [{ property: "color", value: "#111" }],
             },
           ],

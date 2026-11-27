@@ -2431,20 +2431,23 @@ test("R13 smooth scrollTo is not snapped back by attribution", async ({ page }) 
   expect(y).toBeGreaterThan(1500);
 });
 
-test("R17 off-viewport lost-hit-target recheck undoes instead of treating unknown as persist", async ({
-  page,
-}) => {
+test("R18 off-viewport lost-hit-target recheck attributes spec", async ({ page }) => {
   await page.goto("/checkout/?lift_variant=control&lift_bot=1");
   const result = await page.evaluate(async () => {
     const href = new URL("/runtime/runtime.js", location.origin).href;
     const runtime = (await import(href)) as {
       applyPatchSpec: (input: unknown) => { ok: boolean; error?: string };
       setTestBackstopsPaused: (paused: boolean) => boolean;
-      getRuntimeStats: () => { undos: number };
+      getRuntimeStats: () => {
+        undos: number;
+        lastAttributions: { id: string; predicate: string; verdict: string }[];
+      };
     };
     document.querySelector(".sim-banner")?.remove();
     document.querySelector("header")?.remove();
     document.querySelector(".product")?.remove();
+    document.querySelector("footer")?.remove();
+    document.querySelector("#checkout")?.remove();
     const wrap = document.createElement("div");
     wrap.id = "off-hit-wrap";
     for (let i = 0; i < 8; i += 1) {
@@ -2475,33 +2478,40 @@ test("R17 off-viewport lost-hit-target recheck undoes instead of treating unknow
         },
       ],
     });
-    const target = document.getElementById("off-hit-5");
-    if (target) {
-      const y = target.getBoundingClientRect().top + window.scrollY;
-      window.scrollTo(0, Math.max(0, y - 8));
-    }
-    const grown = target?.getBoundingClientRect();
+    const target = document.getElementById("off-hit-4");
+    if (!target) return { ok: applied.ok, error: "missing off-hit-4" };
+    const y = target.getBoundingClientRect().top + window.scrollY;
+    window.scrollTo(0, Math.max(0, y));
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    const grown = target.getBoundingClientRect();
     const overlay = document.createElement("div");
     overlay.id = "off-hit-cover";
-    overlay.style.cssText = grown
-      ? `position:fixed;left:${grown.left}px;top:${grown.top}px;width:${grown.width}px;height:${grown.height}px;z-index:9;background:rgba(0,0,0,.35)`
-      : "position:fixed;left:0;top:0;width:40px;height:40px;z-index:9";
-    document.body.append(overlay);
+    overlay.style.cssText = `position:fixed;left:${grown.left}px;top:${grown.top}px;width:${Math.max(grown.width, 8)}px;height:${Math.max(grown.height, 8)}px;z-index:2147483647;pointer-events:auto;background:rgba(0,0,0,.35)`;
     const before = runtime.getRuntimeStats().undos;
-    await new Promise((resolve) => setTimeout(resolve, 200));
+    document.body.append(overlay);
+    await new Promise((resolve) => setTimeout(resolve, 40));
     runtime.setTestBackstopsPaused(true);
     runtime.setTestBackstopsPaused(false);
-    await new Promise((resolve) => setTimeout(resolve, 200));
+    await new Promise((resolve) => setTimeout(resolve, 250));
     const sheet = document.querySelector("[data-lift-css]") as HTMLStyleElement | null;
+    const stats = runtime.getRuntimeStats();
     return {
       ok: applied.ok,
       error: applied.error ?? "",
       disabled: Boolean(sheet?.disabled),
-      undos: runtime.getRuntimeStats().undos - before,
+      undos: stats.undos - before,
+      last: stats.lastAttributions,
     };
   });
   expect(result, JSON.stringify(result)).toMatchObject({ ok: true, disabled: true });
   expect(result.undos).toBeGreaterThanOrEqual(1);
+  const last = result.last ?? [];
+  expect(
+    last.some(
+      (row) => row.id === "off-hit-4" && row.predicate === "lost hit target" && row.verdict === "spec",
+    ),
+    JSON.stringify(last),
+  ).toBe(true);
 });
 
 test("R13 mouse wheel is not snapped back by attribution", async ({ page }) => {

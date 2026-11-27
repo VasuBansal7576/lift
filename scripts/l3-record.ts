@@ -327,6 +327,7 @@ async function visibleOpenIdentity(
   await sleep(100);
   await xType(identitiesUrl(state), 22);
   xdo(["key", "--window", win.winId, "Return"]);
+  await win.page.waitForURL(/\/identities/, { timeout: 15_000 });
   const search = win.page.getByPlaceholder(/search/i).locator("visible=true").first();
   const t0 = Date.now();
   while (Date.now() - t0 < 15_000) {
@@ -451,10 +452,11 @@ async function visibleDragSlider(
   page: Page,
   from01: number,
   to01: number,
+  opts?: { reveal?: boolean },
 ): Promise<void> {
   xdo(["windowactivate", "--sync", win.winId]);
   await page.locator("#lift-biometric").waitFor({ state: "visible" });
-  await revealSlider(win, page);
+  if (opts?.reveal !== false) await revealSlider(win, page);
   const dragOnce = async (yAdjust: number): Promise<number> => {
     const layout = await sliderLayout(page);
     if (layout.y > 560) {
@@ -523,11 +525,18 @@ async function visiblePointerStress(win: HeadedWindow, page: Page, ms = 4_200): 
   await visiblePointerJitter(win, ms);
 }
 
-async function hudScore(page: Page): Promise<{ score: number; trait: string }> {
+async function hudScore(page: Page): Promise<{
+  score: number;
+  trait: string;
+  flag: string;
+  segment: string;
+}> {
   const hud = page.locator("#lift-l3-hud");
   return {
     score: Number(await hud.getAttribute("data-score")),
     trait: (await hud.getAttribute("data-trait")) ?? "",
+    flag: (await hud.getAttribute("data-flag")) ?? "",
+    segment: (await hud.getAttribute("data-segment")) ?? "",
   };
 }
 
@@ -543,47 +552,82 @@ async function bandPointerWiggle(win: HeadedWindow, ms: number, energetic: boole
     const x = originX + ((n % 4 < 2 ? 1 : -1) * spanX) + (n % 3) * 10;
     const y = originY + ((n % 6 < 3 ? 1 : -1) * spanY) + (n % 5) * 6;
     xdo(["mousemove", "--sync", String(x), String(y)]);
-    if (energetic && n % 7 === 0) xdo(["click", "5"]);
     await sleep(energetic ? 12 : 30);
     n += 1;
   }
 }
 
+function assertNoFlapCalm(
+  snap: { score: number; trait: string; flag: string; segment: string },
+  where: string,
+): void {
+  if (snap.trait === "true") throw new Error(`no-flap trait flipped true ${where} score=${snap.score}`);
+  if (snap.flag === "true") throw new Error(`no-flap flag flipped true ${where} score=${snap.score}`);
+  if (snap.segment === "true") {
+    throw new Error(`no-flap segment membership flipped ${where} score=${snap.score}`);
+  }
+}
+
 async function holdScoreInBand(win: HeadedWindow, page: Page, holdMs = 15_000): Promise<void> {
-  await visibleDragSlider(win, page, 0.55, 1);
+  await visibleDragSlider(win, page, 0.55, 1, { reveal: false });
   pin(win);
+  xdo(["windowactivate", "--sync", win.winId]);
+  const layout = await sliderLayout(page);
+  if (layout.y < 240 || layout.y > 520) {
+    throw new Error(`slider left the frame (top=${layout.y})`);
+  }
+  const y0 = Math.round(layout.screenY + layout.topChrome + layout.y + layout.h / 2);
+  const xHi = Math.round(layout.screenX + layout.x + layout.w * 0.97);
+  xdo(["mousemove", "--sync", String(xHi), String(y0)]);
+  await sleep(80);
+  xdo(["mousedown", "1"]);
+  let entered = false;
+  let inBandMs = 0;
+  let lastInBandAt = 0;
+  let lastSampleAt = 0;
+  let min = Number.POSITIVE_INFINITY;
+  let max = Number.NEGATIVE_INFINITY;
   const t0 = Date.now();
-  let enteredBand = false;
-  let sawLow = false;
-  let sawHigh = false;
-  while (Date.now() - t0 < holdMs) {
-    const { score, trait } = await hudScore(page);
-    if (trait === "true") {
-      throw new Error(`no-flap flipped trait to true at score=${score}`);
+  let n = 0;
+  try {
+    while (Date.now() - t0 < holdMs) {
+      const high = Math.floor((Date.now() - t0) / 3_000) % 2 === 0;
+      const spanX = high ? 42 : 16;
+      const spanY = high ? 22 : 8;
+      const x = xHi + (n % 4 < 2 ? -spanX : Math.round(spanX * 0.2)) + (n % 3) * 3;
+      const y = y0 + (n % 6 < 3 ? spanY : -spanY);
+      xdo(["mousemove", "--sync", String(x), String(y)]);
+      const now = Date.now();
+      if (now - lastSampleAt >= 100) {
+        const snap = await hudScore(page);
+        assertNoFlapCalm(snap, "");
+        lastSampleAt = Date.now();
+        if (snap.score >= 0.4 && snap.score <= 0.6) {
+          entered = true;
+          min = Math.min(min, snap.score);
+          max = Math.max(max, snap.score);
+          if (lastInBandAt) inBandMs += lastSampleAt - lastInBandAt;
+          lastInBandAt = lastSampleAt;
+        } else {
+          lastInBandAt = 0;
+          if (entered && (snap.score < 0.38 || snap.score >= 0.62)) {
+            throw new Error(`no-flap left the 0.38-0.62 band (score=${snap.score})`);
+          }
+        }
+      } else {
+        await sleep(high ? 16 : 28);
+      }
+      n += 1;
     }
-    if (score >= 0.4 && score <= 0.6) enteredBand = true;
-    if (score <= 0.46) sawLow = true;
-    if (score >= 0.54) sawHigh = true;
-    const inCycle = (Date.now() - t0) % 5_500;
-    const wantHigh = inCycle < 2_600;
-    if (score > 0.58) {
-      await sleep(500);
-    } else if (wantHigh || score < 0.42) {
-      await bandPointerWiggle(win, 420, true);
-    } else {
-      await bandPointerWiggle(win, 480, false);
-    }
+  } finally {
+    xdo(["mousemove", "--sync", String(xHi), String(y0)]);
+    xdo(["mouseup", "1"]);
   }
   const last = await hudScore(page);
-  if (last.trait === "true") {
-    throw new Error("no-flap flipped trait to true");
-  }
-  if (!enteredBand) {
-    throw new Error(`no-flap never entered 0.40-0.60 (last score=${last.score})`);
-  }
-  if (!sawLow || !sawHigh) {
+  assertNoFlapCalm(last, "end");
+  if (!entered || inBandMs < 12_000) {
     throw new Error(
-      `no-flap did not visibly cross the band (last=${last.score}, low=${sawLow}, high=${sawHigh})`,
+      `no-flap spent ${inBandMs}ms in 0.40-0.60 (need ≥12000, min=${min}, max=${max}, last=${last.score})`,
     );
   }
 }
@@ -653,15 +697,27 @@ async function blockFlagsmithInDevTools(
 
 async function reloadAppWithBlockedFlagsmith(demo: HeadedWindow): Promise<void> {
   const failed: string[] = [];
-  const succeeded: string[] = [];
-  const onFail = (req: { url: () => string }) => {
-    if (req.url().includes("127.0.0.1:8000")) failed.push(req.url());
+  const responses: string[] = [];
+  let armed = false;
+  const onFail = (req: {
+    url: () => string;
+    failure: () => { errorText: string } | null;
+  }) => {
+    if (!armed) return;
+    if (!req.url().includes("127.0.0.1:8000")) return;
+    const text = req.failure()?.errorText ?? "";
+    if (/BLOCKED_BY_(CLIENT|DEVTOOLS)/i.test(text)) failed.push(req.url());
   };
-  const onRes = (res: { url: () => string; ok: () => boolean }) => {
-    if (res.url().includes("127.0.0.1:8000") && res.ok()) succeeded.push(res.url());
+  const onRes = (res: { url: () => string }) => {
+    if (!armed) return;
+    if (res.url().includes("127.0.0.1:8000")) responses.push(res.url());
+  };
+  const onFrame = (frame: { parentFrame: () => unknown }) => {
+    if (!frame.parentFrame()) armed = true;
   };
   demo.page.on("requestfailed", onFail);
   demo.page.on("response", onRes);
+  demo.page.on("framenavigated", onFrame);
   try {
     const reloaded = demo.page.waitForNavigation({
       waitUntil: "domcontentloaded",
@@ -670,17 +726,20 @@ async function reloadAppWithBlockedFlagsmith(demo: HeadedWindow): Promise<void> 
     await visibleFocusReload(demo, "f5");
     await reloaded;
     await sleep(900);
-    if (succeeded.length > 0) {
+    if (responses.length > 0) {
       throw new Error(
-        `reload reached Flagsmith (${succeeded.length} ok responses); visible request blocking did not persist`,
+        `reload reached Flagsmith (${responses.length} responses); visible request blocking did not persist`,
       );
     }
     if (failed.length === 0) {
-      throw new Error("reload did not fail a Flagsmith fetch; visible request blocking did not persist");
+      throw new Error(
+        "reload did not fail a Flagsmith fetch with BLOCKED_BY_CLIENT/DEVTOOLS after the visible reload",
+      );
     }
   } finally {
     demo.page.off("requestfailed", onFail);
     demo.page.off("response", onRes);
+    demo.page.off("framenavigated", onFrame);
   }
 }
 
@@ -925,7 +984,7 @@ async function noFlap(): Promise<void> {
     retile(demo);
     await openIdentity(admin.page, state, NOFLAP_IDENTITY);
     await unfocusUrlBar(demo, 400, 620);
-    await unfocusUrlBar(admin, 520, 420);
+    await unfocusUrlBar(admin, 520, 520);
     retile(admin);
     retile(demo);
     grab = startGrab(tmp);
@@ -968,13 +1027,7 @@ async function segment(): Promise<void> {
     await hideFlagsmithSnippets(admin.page);
     await admin.page.waitForSelector("text=overstimulated", { timeout: 15_000 });
     await waitForIdentityId(SEGMENT_IDENTITY);
-    xdo(["windowactivate", "--sync", admin.winId]);
-    xdo(["key", "--window", admin.winId, "Escape"]);
-    await sleep(120);
-    const descLabel = admin.page.getByText("Description", { exact: true }).first();
-    if (await descLabel.isVisible().catch(() => false)) {
-      await clickLocatorVisible(admin, descLabel);
-    }
+    await unfocusUrlBar(admin, 520, 520);
     await unfocusUrlBar(demo, 400, 620);
     retile(admin);
     retile(demo);
@@ -1029,7 +1082,7 @@ async function failOpenClip(): Promise<void> {
     retile(demo);
     await openIdentity(admin.page, state, FAILOPEN_IDENTITY);
     await unfocusUrlBar(demo, 400, 620);
-    await unfocusUrlBar(admin, 80, 160);
+    await unfocusUrlBar(admin, 520, 520);
     retile(admin);
     retile(demo);
     grab = startGrab(tmp);
@@ -1040,7 +1093,6 @@ async function failOpenClip(): Promise<void> {
     pin(demo);
     pin(admin);
     await sleep(800);
-    await assertFlagsmithReachableFromPage(admin.page);
     await hideFlagsmithSnippets(admin.page);
     pin(demo);
     pin(admin);
@@ -1071,8 +1123,12 @@ async function failOpenClip(): Promise<void> {
     await sleep(2_200);
   } finally {
     if (grab) await stopGrab(grab);
-    await demo.browser.close().catch(() => {});
-    await admin.browser.close().catch(() => {});
+    try {
+      await assertFlagsmithReachableFromPage(admin.page);
+    } finally {
+      await demo.browser.close().catch(() => {});
+      await admin.browser.close().catch(() => {});
+    }
   }
   publishMp4(tmp, "l3-fail-open.mp4");
 }

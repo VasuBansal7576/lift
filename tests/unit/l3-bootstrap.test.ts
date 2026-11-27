@@ -184,8 +184,14 @@ describe("L3 runtime stays aligned with shared constants", () => {
     expect(src).toContain("(default, Flagsmith unreachable)");
     expect(src).toContain("scheduleFlagsmithReconnect");
     expect(src).toMatch(
-      /const abandoned = await initFlagsmith\(config\);\s*if \(abandoned \|\| !runtime\.started\) return/,
+      /const abandoned = await initFlagsmith\(config\);\s*if \(abandoned \|\| !runtime\.started/,
     );
+    expect(src).toMatch(/await initFlagsmith\(config\);\s*if \(!runtime\.started\) return runtime;/);
+    expect(src).toMatch(
+      /window\.clearInterval\(runtime\.timer\);\s*runtime\.timer = window\.setInterval\(tick, 120\)/,
+    );
+    expect(src).toMatch(/runtime\.startGen \+= 1/);
+    expect(src).toMatch(/if \(!runtime\.started \|\| startGen !== runtime\.startGen\) return/);
     expect(src).toMatch(/const gen = \+\+runtime\.initGen/);
     expect(src).toMatch(/runtime\.initGen \+= 1/);
     expect(src).toMatch(/gen !== runtime\.initGen \|\| !runtime\.started/);
@@ -246,10 +252,17 @@ describe("L3 recorder never stops shared Flagsmith", () => {
     )?.[0];
     expect(blockCheck).toBeTruthy();
     expect(blockCheck).not.toContain("!res.ok");
-    expect(blockCheck).toContain("res.ok()");
+    expect(blockCheck).not.toContain("res.ok()");
+    expect(blockCheck).toMatch(/BLOCKED_BY_\(CLIENT\|DEVTOOLS\)/);
+    expect(blockCheck).toContain("framenavigated");
     expect(src).not.toContain("assertFlagsmithBlockedFromPage");
     expect(src).not.toContain("/api/v1/flags/");
     expect(src).not.toMatch(/page\.evaluate\([\s\S]*?127\.0\.0\.1:8000[\s\S]*?api\/v1\/flags/);
+    expect(src).toContain("waitForURL(/\\/identities/");
+    expect(src).toContain("inBandMs < 12_000");
+    const wiggle = src.match(/async function bandPointerWiggle[\s\S]*?\nasync function /)?.[0];
+    expect(wiggle).toBeTruthy();
+    expect(wiggle).not.toContain('["click", "5"]');
   });
 });
 

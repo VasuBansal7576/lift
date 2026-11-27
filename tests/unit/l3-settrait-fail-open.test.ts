@@ -350,11 +350,15 @@ describe("L3 setTrait reject fail-open", () => {
 type TestRuntime = {
   started: boolean;
   initGen: number;
+  startGen: number;
   flagsmith: unknown;
   offline: boolean;
   hysteresis: { overstimulated: boolean };
   reconnectTimer: number;
   reconnectRetries: number;
+  timer: number;
+  lastScore: number;
+  biometric: number;
   importSdk?: (() => Promise<{ default: unknown }>) | null;
 };
 
@@ -406,11 +410,13 @@ function resetRuntime(
   runtime.flagsmith = null;
   runtime.offline = false;
   runtime.initGen = 0;
+  runtime.startGen = 0;
   runtime.importSdk = null;
   runtime.hysteresis = initialHysteresis();
   runtime.started = false;
   runtime.reconnectTimer = 0;
   runtime.reconnectRetries = 0;
+  runtime.timer = 0;
 }
 
 describe("L3 init generation ignores stale Flagsmith init", () => {
@@ -586,5 +592,78 @@ describe("L3 init generation ignores stale Flagsmith init", () => {
     expect(runtime.reconnectRetries).toBe(retries);
     expect(html.classList.contains("lift-sensory-safe")).toBe(false);
     expect(runtime.hysteresis.overstimulated).toBe(false);
+  });
+
+  it("start() keeps a tick timer when recoverFlagsmith's config fetch is abandoned", async () => {
+    const { start, stop, recoverFlagsmith, getRuntime, initialHysteresis, windowObj } =
+      await loadRuntime();
+    resetRuntime(getRuntime as () => TestRuntime, initialHysteresis);
+    (getRuntime() as TestRuntime).importSdk = async () => ({
+      default: {
+        async init() {
+          throw new Error("Flagsmith down");
+        },
+        getTrait() {
+          return false;
+        },
+        hasFeature() {
+          return false;
+        },
+        getValue() {
+          return "{}";
+        },
+        async setTrait() {},
+        async getFlags() {},
+      },
+    });
+    await start();
+    const afterFail = getRuntime() as TestRuntime;
+    expect(afterFail.started).toBe(true);
+    expect(afterFail.offline).toBe(true);
+    windowObj.clearTimeout(afterFail.reconnectTimer);
+    afterFail.reconnectTimer = 0;
+
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let configEntered = false;
+    const gatedFetch = async (input: unknown) => {
+      if (String(input).includes("config.json")) {
+        configEntered = true;
+        await gate;
+        return {
+          ok: true,
+          async json() {
+            return {
+              flagsmithEnvironmentKey: "test-env-key",
+              flagsmithApiUrl: "http://127.0.0.1:8000/api/v1/",
+            };
+          },
+        };
+      }
+      return { ok: false, async json() { return {}; } };
+    };
+    (globalThis as { fetch: typeof gatedFetch }).fetch = gatedFetch;
+    (windowObj as unknown as { fetch: typeof gatedFetch }).fetch = gatedFetch;
+
+    const recovering = recoverFlagsmith();
+    const waitEnter = Date.now();
+    while (!configEntered && Date.now() - waitEnter < 2_000) {
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    if (!configEntered) throw new Error("recoverFlagsmith did not fetch config.json");
+
+    stop();
+    const starting = start();
+    release();
+    await Promise.all([recovering, starting]);
+
+    const runtime = getRuntime() as TestRuntime;
+    expect(runtime.started).toBe(true);
+    expect(runtime.timer).not.toBe(0);
+    runtime.biometric = 90;
+    await new Promise((r) => setTimeout(r, 400));
+    expect(runtime.lastScore).toBeGreaterThan(0.1);
   });
 });

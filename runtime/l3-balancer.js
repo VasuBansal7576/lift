@@ -536,6 +536,7 @@ const runtime = {
   cursorEl: null,
   started: false,
   initGen: 0,
+  startGen: 0,
   importSdk: null,
   unsubscribers: [],
   lastAnnounced: "",
@@ -884,11 +885,12 @@ function scheduleFlagsmithReconnect() {
 
 export async function recoverFlagsmith() {
   if (!runtime.started || isOfflineFallback() || !runtime.offline) return;
+  const startGen = runtime.startGen;
   try {
     const config = await loadConfig();
-    if (!runtime.started) return;
+    if (!runtime.started || startGen !== runtime.startGen) return;
     const abandoned = await initFlagsmith(config);
-    if (abandoned || !runtime.started) return;
+    if (abandoned || !runtime.started || startGen !== runtime.startGen) return;
     if (runtime.offline || !runtime.flagsmith) {
       scheduleFlagsmithReconnect();
       return;
@@ -897,7 +899,7 @@ export async function recoverFlagsmith() {
     void pushTrait(latestDesiredTrait());
     renderHud();
   } catch {
-    if (!runtime.started) return;
+    if (!runtime.started || startGen !== runtime.startGen) return;
     scheduleFlagsmithReconnect();
   }
 }
@@ -1265,6 +1267,7 @@ function bindAll() {
 export async function start() {
   if (runtime.started) return runtime;
   runtime.started = true;
+  runtime.startGen += 1;
   runtime.optedOut = readOptOut();
   if (!runtime.identity) runtime.identity = stickyIdentity();
   if (!runtime.unsubscribers.length) bindAll();
@@ -1275,8 +1278,8 @@ export async function start() {
     } else if (!isOfflineFallback()) {
       const config = await loadConfig();
       if (!runtime.started) return runtime;
-      const abandoned = await initFlagsmith(config);
-      if (abandoned || !runtime.started) return runtime;
+      await initFlagsmith(config);
+      if (!runtime.started) return runtime;
     } else {
       failOpen("l3_offline");
     }
@@ -1285,6 +1288,7 @@ export async function start() {
     failOpen(err instanceof Error ? err.message : String(err));
   }
   if (!runtime.started) return runtime;
+  window.clearInterval(runtime.timer);
   runtime.timer = window.setInterval(tick, 120);
   tick();
   return runtime;
@@ -1292,6 +1296,7 @@ export async function start() {
 
 export function stop() {
   runtime.initGen += 1;
+  runtime.startGen += 1;
   runtime.started = false;
   window.clearInterval(runtime.timer);
   window.clearTimeout(runtime.traitRetryTimer);

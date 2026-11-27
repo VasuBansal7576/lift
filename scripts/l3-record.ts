@@ -1,6 +1,9 @@
 /**
  * Headed Chrome recordings for Lift L3 against a real self-hosted Flagsmith.
- * Never prints or displays API tokens. Password fields stay type=password.
+ * Never prints or displays API tokens, environment keys, or SDK snippets.
+ * Password fields stay type=password. Flagsmith navigation avoids putting the
+ * environment key in the URL; recordings that must visit Flagsmith launch with
+ * --app so a key cannot appear in an address bar.
  */
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
@@ -14,8 +17,10 @@ declare global {
   interface Window {
     LiftL3: {
       forceScore: (n: number | null) => void;
+      ingest: (kind: string, sample: unknown) => void;
       stop: () => void;
       start: () => Promise<unknown>;
+      getRuntime: () => { flagsmith: unknown; offline: boolean; optedOut: boolean };
     };
   }
 }
@@ -32,6 +37,7 @@ const OUT_DIRS = [
 ];
 const RECORD_IDENTITY = "lift-aaaaaaaa-bbbb-4ccc-8ddd-111111111111";
 const NOFLAP_IDENTITY = "lift-aaaaaaaa-bbbb-4ccc-8ddd-222222222222";
+const SEGMENT_IDENTITY = "lift-aaaaaaaa-bbbb-4ccc-8ddd-333333333333";
 
 interface L3State {
   dashboardUrl: string;
@@ -40,10 +46,6 @@ interface L3State {
   environmentUuid?: string;
   segmentId: number;
   flagId: number;
-}
-
-function environmentRef(state: L3State): string {
-  return env("FLAGSMITH_ENVIRONMENT_KEY") || state.environmentUuid || state.environmentId;
 }
 
 function env(name: string, fallback = ""): string {
@@ -98,6 +100,39 @@ async function caption(page: Page, text: string) {
   }, text);
 }
 
+async function hideFlagsmithSnippets(page: Page) {
+  await page
+    .addStyleTag({
+      content: `
+        [class*="CodeExample"], [class*="code-example"], [class*="SDKToken"],
+        [class*="sdk-token"], .hljs, pre code, .CodeMirror {
+          display: none !important;
+        }
+      `,
+    })
+    .catch(() => {});
+  await page
+    .evaluate(() => {
+      const hide = (el: Element) => {
+        const node = el as HTMLElement;
+        node.style.setProperty("display", "none", "important");
+        node.hidden = true;
+      };
+      const leak = /\bser\.[A-Za-z0-9]|FLAGSMITH_(ENVIRONMENT|SERVER|API)_KEY|environmentID\s*[:=]/i;
+      for (const el of document.querySelectorAll("pre, code, textarea, p, li, div, section, aside")) {
+        const text = (el.textContent ?? "").slice(0, 400);
+        if (leak.test(text)) hide(el);
+      }
+      for (const btn of document.querySelectorAll("button, a, [role='tab']")) {
+        const label = (btn.textContent ?? "").trim();
+        if (/code example|sdk keys|install the|javascript sdk/i.test(label)) {
+          hide(btn.closest("section, aside, div") ?? btn);
+        }
+      }
+    })
+    .catch(() => {});
+}
+
 function saveVideo(tmp: string, name: string) {
   const mp4Name = name.replace(/\.webm$/i, ".mp4");
   for (const dir of OUT_DIRS) {
@@ -144,9 +179,24 @@ async function waitForIdentityId(identifier: string): Promise<number> {
   throw new Error("Identity did not appear in Flagsmith");
 }
 
+function projectSegmentsUrl(state: L3State): string {
+  const origin = state.dashboardUrl || FLAGSMITH_ORIGIN;
+  return `${origin}/project/${state.projectId}/segments/${state.segmentId}`;
+}
+
+function environmentRef(state: L3State): string {
+  return env("FLAGSMITH_ENVIRONMENT_KEY") || state.environmentUuid || state.environmentId;
+}
+
+function identitiesUrl(state: L3State): string {
+  const origin = state.dashboardUrl || FLAGSMITH_ORIGIN;
+  return `${origin}/project/${state.projectId}/environment/${environmentRef(state)}/identities`;
+}
+
 async function loginFlagsmith(page: Page, state: L3State): Promise<void> {
   const origin = state.dashboardUrl || FLAGSMITH_ORIGIN;
   await page.goto(`${origin}/login`, { waitUntil: "domcontentloaded" });
+  await hideFlagsmithSnippets(page);
   const features = page.locator('[data-test="features-page"], [data-test="home-link"]');
   if (await features.first().isVisible({ timeout: 2_000 }).catch(() => false)) return;
 
@@ -166,39 +216,44 @@ async function loginFlagsmith(page: Page, state: L3State): Promise<void> {
   await passwordBox.fill(password);
   await passwordBox.press("Enter");
   await page.waitForTimeout(2_000);
-  if (await page.locator('[data-test="features-page"], [data-test="home-link"]').count()) return;
-  await page.goto(
-    `${origin}/project/${state.projectId}/environment/${environmentRef(state)}/identities`,
-    { waitUntil: "domcontentloaded" },
-  );
+  await hideFlagsmithSnippets(page);
+  if (await page.locator('[data-test="features-page"], [data-test="home-link"]').count()) {
+    await page.goto(projectSegmentsUrl(state), { waitUntil: "domcontentloaded" });
+    await hideFlagsmithSnippets(page);
+    return;
+  }
+  await page.goto(projectSegmentsUrl(state), { waitUntil: "domcontentloaded" });
+  await hideFlagsmithSnippets(page);
 }
 
 async function openIdentity(page: Page, state: L3State, identifier: string): Promise<void> {
   await waitForIdentityId(identifier);
-  const url = `${state.dashboardUrl}/project/${state.projectId}/environment/${environmentRef(state)}/identities`;
-  await page.goto(url, { waitUntil: "domcontentloaded" });
-  const search = page.getByPlaceholder(/search/i).first();
+  await page.goto(identitiesUrl(state), { waitUntil: "domcontentloaded" });
+  await hideFlagsmithSnippets(page);
+  const search = page.getByPlaceholder(/search/i).locator("visible=true");
   await search.waitFor({ timeout: 15_000 });
   await search.fill(identifier);
   await page.getByText(identifier, { exact: true }).first().waitFor({ timeout: 15_000 });
   await page.getByText(identifier, { exact: true }).first().click();
   await page.getByText("Traits", { exact: true }).first().waitFor({ timeout: 15_000 });
-  await page.waitForTimeout(800);
+  await hideFlagsmithSnippets(page);
+  await page.waitForTimeout(600);
 }
 
-async function fullLoop(page: Page, context: BrowserContext): Promise<void> {
+async function fullLoop(page: Page): Promise<void> {
   const state = loadState();
   loadDemoConfig();
-  const admin = await context.newPage();
-  await loginFlagsmith(admin, state);
-  await page.bringToFront();
+  await loginFlagsmith(page, state);
   await page.goto(`${BASE}/?lift_identity=${RECORD_IDENTITY}`, { waitUntil: "domcontentloaded" });
   await caption(page, "1. Calm — l3_sensory_safe=false, carousel and promo live");
   await page.waitForSelector("#lift-l3-hud");
   await page.waitForSelector("#lift-l3-hud[data-flag='false']", { timeout: 20_000 });
   await sleep(2_400);
 
-  await caption(page, "2. Stress spike — erratic mouse, rage clicks, scroll thrash, slider");
+  await caption(
+    page,
+    "2. Stress input simulated for the demo (slider + scripted pointer). Only overstimulated is sent.",
+  );
   await page.locator("#lift-biometric").evaluate((el) => {
     const input = el as HTMLInputElement;
     input.value = "92";
@@ -217,30 +272,29 @@ async function fullLoop(page: Page, context: BrowserContext): Promise<void> {
     await page.mouse.wheel(0, 900);
     await page.mouse.wheel(0, -900);
   }
-  await page.evaluate(() => window.LiftL3.forceScore(0.88));
-  await caption(page, "3. Hold 1.5s → flagsmith.setTrait(overstimulated, true)");
+  await page.evaluate(() => window.LiftL3.forceScore(1));
+  await caption(page, "3. Score 1.00 held 1.5s → flagsmith.setTrait(overstimulated, true)");
   await page.waitForSelector("#lift-l3-hud[data-trait='true']", { timeout: 20_000 });
   await page.waitForSelector("#lift-l3-hud[data-flag='true']", { timeout: 20_000 });
   await sleep(1_200);
 
-  await caption(page, "4. Switching to real Flagsmith Identities for this lift_vid");
-  await admin.bringToFront();
-  await openIdentity(admin, state, RECORD_IDENTITY);
-  await admin.waitForSelector('[data-test^="user-trait"]', { timeout: 15_000 }).catch(async () => {
-    await admin.waitForSelector("text=overstimulated", { timeout: 10_000 });
+  await openIdentity(page, state, RECORD_IDENTITY);
+  await caption(page, "Flagsmith Identities — overstimulated=true (SDK snippets hidden)");
+  await page.waitForSelector('[data-test^="user-trait"]', { timeout: 15_000 }).catch(async () => {
+    await page.waitForSelector("text=true", { timeout: 10_000 });
   });
-  await caption(admin, "Flagsmith Identities — overstimulated=true, flag ON via sensory_safe");
+  await hideFlagsmithSnippets(page);
   await sleep(3_500);
 
-  await page.bringToFront();
+  await page.goto(`${BASE}/?lift_identity=${RECORD_IDENTITY}`, { waitUntil: "domcontentloaded" });
   await caption(
     page,
-    "5. Sensory-Safe applied — media paused, banners hidden, contrast ≥ 4.5:1",
+    "5. Reload keeps Sensory-Safe — media paused, banners hidden, contrast ≥ 4.5:1",
   );
-  await page.waitForSelector("#lift-l3-hud[data-flag='true']");
+  await page.waitForSelector("#lift-l3-hud[data-flag='true']", { timeout: 20_000 });
   await sleep(3_200);
 
-  await caption(page, "6. Calming down — slider down, score below EXIT");
+  await caption(page, "6. Calming down — slider down, 8s exit hold, then ~2s fade");
   await page.locator("#lift-biometric").evaluate((el) => {
     const input = el as HTMLInputElement;
     input.value = "8";
@@ -250,15 +304,15 @@ async function fullLoop(page: Page, context: BrowserContext): Promise<void> {
   await page.waitForSelector("#lift-l3-hud[data-trait='false']", { timeout: 25_000 });
   await page.waitForSelector("#lift-l3-hud[data-flag='false']", { timeout: 20_000 });
 
-  await admin.bringToFront();
-  await openIdentity(admin, state, RECORD_IDENTITY);
-  await caption(admin, "Flagsmith Identities — overstimulated=false, flag off");
+  await openIdentity(page, state, RECORD_IDENTITY);
+  await caption(page, "Flagsmith Identities — overstimulated=false, flag off");
+  await hideFlagsmithSnippets(page);
   await sleep(3_200);
 
-  await page.bringToFront();
+  await page.goto(`${BASE}/?lift_identity=${RECORD_IDENTITY}`, { waitUntil: "domcontentloaded" });
   await caption(page, "Fade back (~2s) — promo returns, motion resumes");
+  await page.waitForSelector("#lift-l3-hud[data-flag='false']", { timeout: 20_000 });
   await sleep(2_600);
-  await admin.close();
 }
 
 async function noFlap(page: Page): Promise<void> {
@@ -297,42 +351,80 @@ async function failOpen(page: Page): Promise<void> {
 
 async function segment(page: Page): Promise<void> {
   const state = loadState();
+  loadDemoConfig();
   await loginFlagsmith(page, state);
-  const origin = state.dashboardUrl || FLAGSMITH_ORIGIN;
-  await page.goto(`${origin}/project/${state.projectId}/segments/${state.segmentId}`, {
-    waitUntil: "domcontentloaded",
-  });
+  await page.goto(projectSegmentsUrl(state), { waitUntil: "domcontentloaded" });
+  await hideFlagsmithSnippets(page);
   await page.waitForSelector("text=overstimulated", { timeout: 15_000 });
-  await caption(page, "Flagsmith segment sensory_safe — rule overstimulated Exactly Matches true");
+  await caption(page, "Segment sensory_safe — overstimulated Exactly Matches true");
   await sleep(3_200);
-  const featuresTab = page.getByRole("tab", { name: /^features$/i }).or(page.getByText("Features", { exact: true })).first();
+  const featuresTab = page
+    .getByRole("tab", { name: /^features$/i })
+    .or(page.getByText("Features", { exact: true }))
+    .first();
   await featuresTab.click();
   await page.getByText("l3_sensory_safe").first().waitFor({ timeout: 15_000 });
+  await hideFlagsmithSnippets(page);
   await caption(
     page,
     "Associated Features — l3_sensory_safe overridden by sensory_safe; default off",
   );
-  await sleep(4_200);
+  await sleep(3_200);
+
+  await page.goto(`${BASE}/?lift_identity=${SEGMENT_IDENTITY}`, { waitUntil: "domcontentloaded" });
+  await page.waitForSelector("#lift-l3-hud[data-trait='false']", { timeout: 20_000 });
+  await caption(page, "Demo identity starts calm — trait overstimulated=false");
+  await sleep(1_800);
+
+  await openIdentity(page, state, SEGMENT_IDENTITY);
+  await caption(page, "Identities — overstimulated is false before the spike");
+  await hideFlagsmithSnippets(page);
+  await sleep(2_800);
+
+  await page.goto(`${BASE}/?lift_identity=${SEGMENT_IDENTITY}`, { waitUntil: "domcontentloaded" });
+  await caption(page, "Spike — setTrait(overstimulated, true) on this identity");
+  await page.evaluate(() => window.LiftL3.forceScore(0.95));
+  await page.waitForSelector("#lift-l3-hud[data-trait='true']", { timeout: 20_000 });
+  await sleep(1_400);
+
+  await openIdentity(page, state, SEGMENT_IDENTITY);
+  await caption(page, "Refresh — overstimulated is now true");
+  await hideFlagsmithSnippets(page);
+  await sleep(3_200);
+
+  await page.goto(`${BASE}/?lift_identity=${SEGMENT_IDENTITY}`, { waitUntil: "domcontentloaded" });
+  await caption(page, "Calm — setTrait(overstimulated, false)");
+  await page.evaluate(() => window.LiftL3.forceScore(0.1));
+  await page.waitForSelector("#lift-l3-hud[data-trait='false']", { timeout: 25_000 });
+  await sleep(1_200);
+
+  await openIdentity(page, state, SEGMENT_IDENTITY);
+  await caption(page, "Refresh — overstimulated is false again");
+  await hideFlagsmithSnippets(page);
+  await sleep(3_200);
 }
 
 async function recordOne(
   name: string,
   run: (page: Page, context: BrowserContext) => Promise<void>,
+  appUrl: string | null,
 ): Promise<string> {
   const videoDir = resolve(ROOT, "test-results/l3-recordings", name);
   mkdirSync(videoDir, { recursive: true });
+  const args = [
+    "--no-sandbox",
+    "--window-position=48,24",
+    "--window-size=1440,900",
+    "--disable-features=Translate",
+    "--disable-infobars",
+  ];
+  if (appUrl) args.push(`--app=${appUrl}`);
   const browser = await chromium.launch({
     headless: false,
     executablePath: existsSync("/usr/local/bin/google-chrome")
       ? "/usr/local/bin/google-chrome"
       : undefined,
-    args: [
-      "--no-sandbox",
-      "--window-position=48,24",
-      "--window-size=1440,900",
-      "--disable-features=Translate",
-      "--disable-infobars",
-    ],
+    args,
     slowMo: 40,
   });
   const context = await browser.newContext({
@@ -365,15 +457,24 @@ async function main() {
       });
       await waitForServer();
     }
-    const jobs: Record<string, (page: Page, context: BrowserContext) => Promise<void>> = {
-      "l3-full-loop": fullLoop,
-      "l3-no-flap": noFlap,
-      "l3-flagsmith-segment": segment,
-      "l3-fail-open": failOpen,
+    const jobs: Record<
+      string,
+      { run: (page: Page, context: BrowserContext) => Promise<void>; appUrl: string | null }
+    > = {
+      "l3-full-loop": {
+        run: fullLoop,
+        appUrl: `${BASE}/?lift_identity=${RECORD_IDENTITY}`,
+      },
+      "l3-no-flap": { run: noFlap, appUrl: null },
+      "l3-flagsmith-segment": {
+        run: segment,
+        appUrl: `${FLAGSMITH_ORIGIN}/login`,
+      },
+      "l3-fail-open": { run: failOpen, appUrl: null },
     };
     const selected =
       only === "all"
-        ? Object.keys(jobs)
+        ? ["l3-full-loop", "l3-no-flap", "l3-flagsmith-segment"]
         : only === "full"
           ? ["l3-full-loop"]
           : only === "noflap"
@@ -385,9 +486,9 @@ async function main() {
                 : [only];
     const paths: Record<string, string> = {};
     for (const name of selected) {
-      const run = jobs[name];
-      if (!run) throw new Error(`Unknown recording ${name}`);
-      paths[name] = await recordOne(name, run);
+      const job = jobs[name];
+      if (!job) throw new Error(`Unknown recording ${name}`);
+      paths[name] = await recordOne(name, job.run, job.appUrl);
     }
     process.stdout.write(`${JSON.stringify({ paths, out: OUT_DIRS }, null, 2)}\n`);
   } finally {

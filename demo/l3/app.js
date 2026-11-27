@@ -31,6 +31,15 @@ if (video) {
   }
 }
 
+const playUser = document.getElementById("play-user-video");
+const userVideo = document.getElementById("user-video");
+if (playUser && userVideo) {
+  playUser.addEventListener("click", () => {
+    const play = userVideo.play();
+    if (play && typeof play.catch === "function") play.catch(() => {});
+  });
+}
+
 document.addEventListener("lift:sensory-safe", (event) => {
   const on = Boolean(event.detail?.on);
   document.querySelectorAll("[data-lift-carousel]").forEach((node) => {

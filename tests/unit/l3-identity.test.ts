@@ -1,12 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { isSafeIdentity, parseCookie } from "../../runtime/l3-balancer.js";
 import { L3_COOKIE } from "../../shared/l3-constants.ts";
-import {
-  isSafeIdentity,
-  newLiftIdentity,
-  parseCookie,
-  resolveStickyIdentity,
-  serializeCookie,
-} from "../../shared/l3-identity.ts";
+import { newLiftIdentity, resolveStickyIdentity, serializeCookie } from "../../shared/l3-identity.ts";
 
 const QUERY = "lift-aaaaaaaa-bbbb-4ccc-8ddd-111111111111";
 const COOKIE = "lift-aaaaaaaa-bbbb-4ccc-8ddd-222222222222";
@@ -25,7 +20,7 @@ describe("L3 identity charset", () => {
   it("accepts only lift-<uuid>", () => {
     expect(isSafeIdentity(QUERY)).toBe(true);
     expect(isSafeIdentity("lift-l3-record")).toBe(false);
-    expect(isSafeIdentity('<img src=x onerror=alert(1)>')).toBe(false);
+    expect(isSafeIdentity("<img src=x onerror=alert(1)>")).toBe(false);
     expect(isSafeIdentity("lift-")).toBe(false);
     expect(newLiftIdentity(() => "aaaaaaaa-bbbb-4ccc-8ddd-444444444444")).toBe(
       "lift-aaaaaaaa-bbbb-4ccc-8ddd-444444444444",
@@ -34,7 +29,7 @@ describe("L3 identity charset", () => {
 
   it("rejects XSS and other non-uuid query values", () => {
     const evil = resolveStickyIdentity({
-      queryIdentity: '<img src=x onerror=alert(1)>',
+      queryIdentity: "<img src=x onerror=alert(1)>",
       cookieHeader: `lift_vid=${COOKIE}`,
     });
     expect(evil.source).toBe("cookie");

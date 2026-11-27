@@ -25,7 +25,7 @@ html.lift-sensory-restoring {
   --ink: var(--lift-ink, #2c3038);
   --paper: var(--lift-paper, #f4f0e8);
   --accent: #3d5c4a;
-  --neon: #4a6a5c;
+  --neon: #cfe0d6;
   --muted: #3a3f48;
 }
 
@@ -33,8 +33,6 @@ html.lift-sensory-safe body,
 html.lift-sensory-restoring body,
 html.lift-sensory-safe .masthead,
 html.lift-sensory-restoring .masthead,
-html.lift-sensory-safe .hero,
-html.lift-sensory-restoring .hero,
 html.lift-sensory-safe .long-copy,
 html.lift-sensory-restoring .long-copy {
   background: var(--paper);
@@ -43,6 +41,12 @@ html.lift-sensory-restoring .long-copy {
     background-color var(--lift-fade-ms) ease,
     color var(--lift-fade-ms) ease,
     filter var(--lift-fade-ms) ease;
+}
+
+html.lift-sensory-safe .hero,
+html.lift-sensory-restoring .hero {
+  background: #111;
+  color: #f4f0e8;
 }
 
 html.lift-sensory-safe .layout {
@@ -83,7 +87,8 @@ html.lift-pause-motion #lift-l3-opt-out {
   border: 0;
 }
 
-#lift-l3-opt-out {
+#lift-l3-opt-out,
+#lift-l3-opt-in {
   background: #f4f0e8;
   color: #2c3038;
   border: 2px solid #2c3038;
@@ -93,7 +98,8 @@ html.lift-pause-motion #lift-l3-opt-out {
   cursor: pointer;
 }
 
-#lift-l3-opt-out:focus-visible {
+#lift-l3-opt-out:focus-visible,
+#lift-l3-opt-in:focus-visible {
   outline: 3px solid #f59e0b;
   outline-offset: 2px;
 }
@@ -305,8 +311,16 @@ html.lift-sensory-restoring .hero h1 {
   font-size: 1.05rem;
 }
 
-html.lift-sensory-safe .dense {
-  opacity: 0.82;
+html.lift-sensory-safe .flash-bar,
+html.lift-sensory-restoring .flash-bar {
+  background: var(--neon);
+  color: #1b2420;
+}
+
+html.lift-sensory-safe .cookie button,
+html.lift-sensory-restoring .cookie button {
+  background: var(--neon);
+  color: #1b2420;
 }
 
 .biometric {

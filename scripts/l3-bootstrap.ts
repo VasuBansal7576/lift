@@ -9,7 +9,8 @@
  * Loopback only (127.0.0.1 / localhost / ::1) unless --allow-remote.
  * Reads FLAGSMITH_API_URL and FLAGSMITH_ADMIN_API_TOKEN from a gitignored .env.
  */
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { randomBytes } from "node:crypto";
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { config as loadEnv } from "dotenv";
@@ -115,6 +116,11 @@ export function upsertEnvFile(path: string, values: Record<string, string>): voi
   }
   for (const [key, value] of pending) out.push(`${key}=${value}`);
   writeFileSync(path, `${out.join("\n").replace(/\n+$/, "")}\n`, { mode: 0o600 });
+  chmodSync(path, 0o600);
+}
+
+export function randomBootstrapPassword(): string {
+  return `lift-${randomBytes(12).toString("base64url")}`;
 }
 
 async function jsonRequest<T>(
@@ -187,7 +193,6 @@ async function createOrLoginUser(origin: string, email: string, password: string
       re_password: password,
       first_name: "Lift",
       last_name: "Admin",
-      superuser: true,
     });
     if (!data.key) throw new L3BootstrapError("Flagsmith signup did not return an auth token");
     return data.key;
@@ -285,7 +290,7 @@ async function ensureInstance(apiUrl: string): Promise<InstanceIds> {
   }
 
   const email = env("FLAGSMITH_BOOTSTRAP_EMAIL", "admin@lift.local");
-  const password = env("FLAGSMITH_BOOTSTRAP_PASSWORD", "lift-dev-password");
+  const password = env("FLAGSMITH_BOOTSTRAP_PASSWORD") || randomBootstrapPassword();
   const userToken = await createOrLoginUser(origin, email, password);
   const org = await ensureOrg(origin, userToken, env("FLAGSMITH_ORG_NAME", "Lift"));
   const project = await ensureProject(
@@ -619,10 +624,11 @@ async function applyOverrideClassic(
   return true;
 }
 
-function writeDemoConfig(environmentKey: string, apiUrl: string): void {
+export function writeDemoConfig(environmentKey: string, apiUrl: string): void {
   const dir = resolve(ROOT, "demo/l3");
   mkdirSync(dir, { recursive: true });
-  const sdkApi = env("FLAGSMITH_API_URL", apiUrl).replace(/\/?$/, "/");
+  const sdkApi = apiUrl.replace(/\/?$/, "/");
+  assertLoopback(sdkApi, false);
   writeFileSync(
     resolve(dir, "config.json"),
     `${JSON.stringify(

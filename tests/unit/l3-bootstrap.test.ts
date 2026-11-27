@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -22,7 +22,9 @@ import {
   parseL3Args,
   segmentCreatePayload,
   segmentOverridePatch,
+  randomBootstrapPassword,
   upsertEnvFile,
+  writeDemoConfig,
 } from "../../scripts/l3-bootstrap.ts";
 import { parseCookie, resolveStickyIdentity } from "../../shared/l3-identity.ts";
 
@@ -105,7 +107,19 @@ describe("L3 Flagsmith bootstrap", () => {
     expect(text).toContain("FLAGSMITH_API_URL=http://127.0.0.1:8000/api/v1/");
     expect(text).toContain("FLAGSMITH_PROJECT_ID=1");
     expect(text.match(/FLAGSMITH_API_URL=/g)?.length).toBe(1);
+    expect(statSync(path).mode & 0o777).toBe(0o600);
     rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("generates a random bootstrap password when unset", () => {
+    expect(randomBootstrapPassword()).toMatch(/^lift-/);
+    expect(randomBootstrapPassword()).not.toBe(randomBootstrapPassword());
+  });
+
+  it("refuses to write a demo config pointing at a remote Flagsmith", () => {
+    expect(() => writeDemoConfig("env-key", "https://api.flagsmith.com/api/v1/")).toThrow(
+      /loopback-only/,
+    );
   });
 });
 

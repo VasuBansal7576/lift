@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { WEIGHTS } from "../../shared/l3-constants.ts";
 import {
+  L3_CONSTANTS,
   combineStress,
   dampenTremor,
   detectRageClicks,
@@ -11,14 +11,17 @@ import {
   scoreErraticMouse,
   scoreFromSamples,
   scoreScrollThrash,
-  type PointSample,
-} from "../../shared/l3-score.ts";
+} from "../../runtime/l3-balancer.js";
 
-function line(n: number, t0 = 1_000): PointSample[] {
+const WEIGHTS = L3_CONSTANTS.WEIGHTS;
+
+/** @typedef {{ t: number, x: number, y: number, detail?: number, pointerType?: string }} PointSample */
+
+function line(n: number, t0 = 1_000) {
   return Array.from({ length: n }, (_, i) => ({ t: t0 + i * 16, x: i * 20, y: 10 }));
 }
 
-function zigzag(n: number, t0 = 1_000): PointSample[] {
+function zigzag(n: number, t0 = 1_000) {
   return Array.from({ length: n }, (_, i) => ({
     t: t0 + i * 16,
     x: 100 + (i % 2 === 0 ? -40 : 40) + i,
@@ -46,7 +49,7 @@ describe("L3 detectors and score", () => {
   });
 
   it("detects 3 clicks within 700ms and 30px as rage", () => {
-    const clicks: PointSample[] = [
+    const clicks = [
       { t: 1000, x: 50, y: 50 },
       { t: 1200, x: 55, y: 48 },
       { t: 1400, x: 52, y: 60 },
@@ -105,14 +108,14 @@ describe("L3 detectors and score", () => {
   });
 
   it("ignores keyboard clicks (detail 0) and non-pointer types for rage", () => {
-    const keyboard: PointSample[] = [
+    const keyboard = [
       { t: 1000, x: 50, y: 50, detail: 0, pointerType: "mouse" },
       { t: 1100, x: 50, y: 50, detail: 0 },
       { t: 1200, x: 50, y: 50, detail: 0 },
     ];
     expect(keyboard.every(isKeyboardOrNonPointerClick)).toBe(true);
     expect(detectRageClicks(keyboard, 1200)).toBe(0);
-    const penOk: PointSample[] = [
+    const penOk = [
       { t: 1000, x: 50, y: 50, detail: 1, pointerType: "pen" },
       { t: 1100, x: 51, y: 50, detail: 1, pointerType: "pen" },
       { t: 1200, x: 52, y: 50, detail: 1, pointerType: "pen" },
@@ -121,7 +124,7 @@ describe("L3 detectors and score", () => {
   });
 
   it("damps tiny high-frequency tremor so it does not look erratic", () => {
-    const tremor: PointSample[] = Array.from({ length: 40 }, (_, i) => ({
+    const tremor = Array.from({ length: 40 }, (_, i) => ({
       t: 1000 + i * 8,
       x: 100 + (i % 2),
       y: 100,

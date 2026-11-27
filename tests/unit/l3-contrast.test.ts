@@ -1,12 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { SOFT_INK, SOFT_PAPER, WCAG_AA_MIN } from "../../shared/l3-constants.ts";
 import {
+  L3_CONSTANTS,
   appliedSoftColors,
   assertContrastFloor,
   contrastRatio,
   softenCssPair,
   softenPair,
-} from "../../shared/l3-contrast.ts";
+} from "../../runtime/l3-balancer.js";
+
+const { SOFT_INK, SOFT_PAPER, WCAG_AA_MIN } = L3_CONSTANTS;
 
 describe("L3 soften transform contrast floor", () => {
   it("keeps black-on-white at or above WCAG AA after softening", () => {
@@ -44,5 +46,12 @@ describe("L3 soften transform contrast floor", () => {
     expect(applied.fg.toLowerCase()).not.toBe("#000000");
     const low = appliedSoftColors("#c8c8c8", "#dcdcdc");
     expect(low.contrast).toBeGreaterThanOrEqual(WCAG_AA_MIN);
+  });
+
+  it("keeps Sensory-Safe neon/cookie/flash-bar pairs at or above AA", () => {
+    const neon = [207, 224, 214];
+    const ink = [27, 36, 32];
+    expect(contrastRatio(ink, neon)).toBeGreaterThanOrEqual(WCAG_AA_MIN);
+    expect(contrastRatio([0, 0, 0], neon)).toBeGreaterThanOrEqual(WCAG_AA_MIN);
   });
 });

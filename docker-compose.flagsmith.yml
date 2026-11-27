@@ -78,7 +78,7 @@ services:
     environment:
       <<: *flagsmith-env
     ports:
-      - 8000:8000
+      - 127.0.0.1:8000:8000
     depends_on:
       migrate-db:
         condition: service_completed_successfully
@@ -91,7 +91,7 @@ services:
     environment:
       <<: *flagsmith-env
     ports:
-      - 8001:8000
+      - 127.0.0.1:8001:8000
     depends_on:
       migrate-db:
         condition: service_completed_successfully

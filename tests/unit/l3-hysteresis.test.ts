@@ -1,18 +1,15 @@
 import { describe, expect, it } from "vitest";
 import {
-  ENTER_HOLD_MS,
-  ENTER_THRESHOLD,
-  EXIT_HOLD_MS,
-  EXIT_THRESHOLD,
-} from "../../shared/l3-constants.ts";
-import {
-  describeHysteresisEvent,
+  L3_CONSTANTS,
   hysteresisPhase,
   initialHysteresis,
   shouldApplySensorySafe,
+  shouldIgnoreEscape,
   stepHysteresis,
-  type HysteresisEvent,
-} from "../../shared/l3-hysteresis.ts";
+} from "../../runtime/l3-balancer.js";
+import { describeHysteresisEvent } from "../../shared/l3-hysteresis.ts";
+
+const { ENTER_HOLD_MS, ENTER_THRESHOLD, EXIT_HOLD_MS, EXIT_THRESHOLD } = L3_CONSTANTS;
 
 const cfg = {
   enterThreshold: ENTER_THRESHOLD,
@@ -22,9 +19,15 @@ const cfg = {
   cooldownMs: 10_000,
 };
 
-function drive(score: number, start: number, duration: number, stepMs: number, state = initialHysteresis()) {
+function drive(
+  score: number,
+  start: number,
+  duration: number,
+  stepMs: number,
+  state = initialHysteresis(),
+) {
   let current = state;
-  let last: HysteresisEvent = "none";
+  let last = "none";
   let t = start;
   for (; t <= start + duration; t += stepMs) {
     const next = stepHysteresis(current, score, t, cfg);
@@ -77,22 +80,23 @@ describe("L3 hysteresis and cooldown", () => {
 
   it("cooldown blocks an immediate reverse after enter or exit", () => {
     const entered = drive(0.95, 0, ENTER_HOLD_MS, 50);
-    const bounce = stepHysteresis(entered.state, 0.05, entered.state.lastChangeAt! + 200, cfg);
+    const enteredAt = entered.state.lastChangeAt ?? 0;
+    const bounce = stepHysteresis(entered.state, 0.05, enteredAt + 200, cfg);
     expect(bounce.event).toBe("none");
     expect(bounce.state.overstimulated).toBe(true);
-    expect(hysteresisPhase(bounce.state, entered.state.lastChangeAt! + 200)).toBe("cooldown");
+    expect(hysteresisPhase(bounce.state, enteredAt + 200)).toBe("cooldown");
 
     const afterCooldown = stepHysteresis(bounce.state, 0.05, bounce.state.cooldownUntil, cfg);
     expect(afterCooldown.event).toBe("none");
     const ready = stepHysteresis(
       afterCooldown.state,
       0.05,
-      afterCooldown.state.exitStartedAt! + EXIT_HOLD_MS,
+      afterCooldown.state.exitStartedAt + EXIT_HOLD_MS,
       cfg,
     );
     expect(ready.event).toBe("exit");
 
-    const reverse = stepHysteresis(ready.state, 0.99, ready.state.lastChangeAt! + 100, cfg);
+    const reverse = stepHysteresis(ready.state, 0.99, ready.state.lastChangeAt + 100, cfg);
     expect(reverse.event).toBe("none");
     expect(reverse.state.overstimulated).toBe(false);
   });
@@ -141,5 +145,54 @@ describe("L3 hysteresis and cooldown", () => {
         hysteresisOn: true,
       }),
     ).toBe(true);
+  });
+
+  it("ignores Escape when a dialog is open, composing, or the target is editable", () => {
+    const doc = {
+      querySelector: (sel: string) => (sel.includes("dialog") ? { tagName: "DIALOG" } : null),
+    };
+    expect(
+      shouldIgnoreEscape({ key: "Escape", defaultPrevented: false, isComposing: false, target: {} }, doc),
+    ).toBe(true);
+    expect(
+      shouldIgnoreEscape({
+        key: "Escape",
+        defaultPrevented: true,
+        isComposing: false,
+        target: { closest: () => null },
+      }, { querySelector: () => null }),
+    ).toBe(true);
+    expect(
+      shouldIgnoreEscape({
+        key: "Escape",
+        defaultPrevented: false,
+        isComposing: true,
+        target: { closest: () => null },
+      }, { querySelector: () => null }),
+    ).toBe(true);
+    expect(
+      shouldIgnoreEscape({
+        key: "Escape",
+        defaultPrevented: false,
+        isComposing: false,
+        target: { tagName: "INPUT", isContentEditable: false, closest: () => null },
+      }, { querySelector: () => null }),
+    ).toBe(true);
+    expect(
+      shouldIgnoreEscape({
+        key: "Escape",
+        defaultPrevented: false,
+        isComposing: false,
+        target: { tagName: "DIV", isContentEditable: false, closest: (sel: string) => (sel.includes("listbox") ? {} : null) },
+      }, { querySelector: () => null }),
+    ).toBe(true);
+    expect(
+      shouldIgnoreEscape({
+        key: "Escape",
+        defaultPrevented: false,
+        isComposing: false,
+        target: { tagName: "DIV", isContentEditable: false, closest: () => null },
+      }, { querySelector: () => null }),
+    ).toBe(false);
   });
 });

@@ -21,6 +21,7 @@
     "test": "vitest run",
     "test:unit": "vitest run tests/unit",
     "test:e2e": "playwright test",
+    "test:e2e:l3-stub": "playwright test tests/e2e/l3-balancer.spec.ts --project=l3-stub",
     "typecheck": "tsc --noEmit",
     "test:all": "vitest run tests/unit && playwright test",
     "l3:bootstrap": "tsx scripts/l3-bootstrap.ts",

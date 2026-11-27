@@ -189,14 +189,10 @@ export async function runScenes(browser) {
     timeout: 20_000,
   });
   await axeSnippet(page);
-  try {
-    await page.waitForFunction(() => document.documentElement.dataset.liftApplied === "1", null, {
-      timeout: 8_000,
-    });
-    await keyboardCheckout(page);
-  } catch {
-    /* control visitor: still show the worker page */
-  }
+  await page.waitForFunction(() => document.documentElement.dataset.liftApplied === "1", null, {
+    timeout: 20_000,
+  });
+  await keyboardCheckout(page);
 
   await page.goto(`${FLAGSMITH_UI}/login`, { waitUntil: "domcontentloaded" }).catch(() => {});
   await page.waitForTimeout(500);

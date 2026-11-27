@@ -9,7 +9,7 @@ export { IDENTITY_COOKIE, cookieWriteValue, isUsableIdentity, readCookieIdentity
 
 /**
  * Resolve the sticky visitor id. Mint a `lift_vid` cookie when missing.
- * HttpOnly is omitted so the Flagsmith JS SDK can read it; Secure only on https.
+ * Not HttpOnly: the page must read lift_vid. Secure only on https.
  */
 export function visitorFromRequest(request, url) {
   const header = request.headers.get("Cookie") || request.headers.get("cookie") || "";

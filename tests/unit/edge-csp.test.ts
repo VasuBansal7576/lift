@@ -4,7 +4,7 @@ import { adjustCsp, findMetaCsp, inspectCsp, rewriteMetaCspHtml } from "../../ed
 import { handleRequest } from "../../edge/lib/handler.js";
 import { buildHeadSnippet } from "../../edge/lib/inject.js";
 import { FLAGSMITH_SDK_URL_DEFAULT } from "../../edge/lib/constants.js";
-import { flagsPayload, installEdgeFetch, mockEnv, originHtml } from "./edge-test-helpers.ts";
+import { documentRequest, flagsPayload, installEdgeFetch, mockEnv, originHtml } from "./edge-test-helpers.ts";
 
 describe("CSP nonce, strict-dynamic, meta", () => {
   it("copies the script nonce onto injected tags", () => {
@@ -19,7 +19,8 @@ describe("CSP nonce, strict-dynamic, meta", () => {
       styleNonce: "style-n",
     });
     expect(html).toMatch(/id="lift-edge-config"[^>]*nonce="abc123"/);
-    expect(html.match(/nonce="abc123"/g)?.length).toBeGreaterThanOrEqual(4);
+    expect(html.match(/nonce="abc123"/g)?.length).toBeGreaterThanOrEqual(3);
+    expect(html).not.toContain(`src="${FLAGSMITH_SDK_URL_DEFAULT}"`);
     expect(html).toContain('"evaluated":true');
     expect(html).toContain('"styleNonce":"style-n"');
   });
@@ -32,6 +33,12 @@ describe("CSP nonce, strict-dynamic, meta", () => {
 
     const noNonce = inspectCsp("script-src 'strict-dynamic' https://cdn.example");
     expect(noNonce.ok).toBe(false);
+
+    const commaOk = inspectCsp("default-src 'self', script-src 'nonce-a' 'strict-dynamic'");
+    expect(commaOk.ok).toBe(true);
+    expect(commaOk.scriptNonce).toBe("a");
+    const commaBad = inspectCsp("default-src 'self', script-src 'strict-dynamic'");
+    expect(commaBad.ok).toBe(false);
 
     const widened = adjustCsp("script-src 'nonce-xyz' 'strict-dynamic'", {
       sdkOrigin: "https://cdn.jsdelivr.net",
@@ -64,7 +71,7 @@ describe("CSP nonce, strict-dynamic, meta", () => {
       },
     });
     try {
-      const res = await handleRequest(new Request("http://edge.test/checkout/"), env);
+      const res = await handleRequest(documentRequest("http://edge.test/checkout/"), env);
       const body = await res.text();
       expect(body).toContain('nonce="from-origin"');
       expect(body).toContain('"evaluated":true');
@@ -80,7 +87,7 @@ describe("CSP nonce, strict-dynamic, meta", () => {
     const html = `<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="script-src 'strict-dynamic'"><title>Northline</title></head><body>hi</body></html>`;
     const restore = installEdgeFetch({ originBody: html, flagsmith: flagsPayload(null) });
     try {
-      const res = await handleRequest(new Request("http://edge.test/checkout/"), env);
+      const res = await handleRequest(documentRequest("http://edge.test/checkout/"), env);
       expect(await res.text()).toBe(html);
       expect(res.headers.get("server-timing") || "").toMatch(/csp-strict-dynamic-no-nonce/);
     } finally {

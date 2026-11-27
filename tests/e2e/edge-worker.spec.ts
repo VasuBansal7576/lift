@@ -190,7 +190,11 @@ test("HEAD does not set lift_vid or inject Lift", async () => {
   expect(res.headers.get("set-cookie")).toBeNull();
   const get = await fetch(`${EDGE_ORIGIN}/checkout/`, {
     method: "GET",
-    headers: { cookie: "lift_vid=lift-e2e-control" },
+    headers: {
+      cookie: "lift_vid=lift-e2e-control",
+      Accept: "text/html",
+      "Sec-Fetch-Dest": "document",
+    },
   });
   const body = await get.text();
   expect(body).toContain("lift-edge-config");
@@ -198,16 +202,14 @@ test("HEAD does not set lift_vid or inject Lift", async () => {
 
 test("Flagsmith down serves the origin page intact", async ({ page }) => {
   await stack.mock.server.close();
-  await openAs(page, TREATMENT_ID);
+  await page.context().addCookies([{ name: "lift_vid", value: TREATMENT_ID, url: EDGE_ORIGIN }]);
+  const nav = await page.goto(`${EDGE_ORIGIN}/checkout/`);
   await waitEdgeOrigin(page);
   await expect(page.locator("#shop-trigger")).toHaveJSProperty("tagName", "SPAN");
   const html = await page.content();
   expect(html).not.toContain("lift-edge-config");
   await expect(page.locator("#shop-trigger")).not.toHaveAttribute("role", "button");
-  const timing = await page.evaluate(async () => {
-    const res = await fetch(location.href, { cache: "no-store" });
-    return res.headers.get("server-timing") || "";
-  });
+  const timing = nav?.headers()["server-timing"] || "";
   expect(timing).toMatch(/flagsmith-down|flagsmith-timeout/);
   await mouseOpenCheckout(page);
   await fillCheckout(page);

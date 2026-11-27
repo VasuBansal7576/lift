@@ -56,15 +56,29 @@ export function inspectCsp(header) {
   if (!header || typeof header !== "string") {
     return { ok: true, scriptNonce: null, styleNonce: null, strictDynamic: false };
   }
-  const chunk = header.split(",")[0];
-  const { map } = parsePolicy(chunk);
-  const script = map.get("script-src") || map.get("script-src-elem") || map.get("default-src") || [];
-  const style = map.get("style-src") || map.get("style-src-elem") || map.get("default-src") || [];
-  const strictDynamic = script.includes("'strict-dynamic'");
-  const scriptNonce = nonceFromTokens(script);
-  const styleNonce = nonceFromTokens(style);
-  if (strictDynamic && !scriptNonce) {
-    return { ok: false, reason: "csp-strict-dynamic-no-nonce", scriptNonce: null, styleNonce, strictDynamic };
+  let scriptNonce = null;
+  let styleNonce = null;
+  let strictDynamic = false;
+  for (const chunk of header.split(",")) {
+    const { map } = parsePolicy(chunk);
+    const script = map.get("script-src") || map.get("script-src-elem") || map.get("default-src") || [];
+    const style = map.get("style-src") || map.get("style-src-elem") || map.get("default-src") || [];
+    const chunkNonce = nonceFromTokens(script);
+    const chunkStyle = nonceFromTokens(style);
+    if (script.includes("'strict-dynamic'")) {
+      strictDynamic = true;
+      if (!chunkNonce) {
+        return {
+          ok: false,
+          reason: "csp-strict-dynamic-no-nonce",
+          scriptNonce: null,
+          styleNonce: chunkStyle || styleNonce,
+          strictDynamic: true,
+        };
+      }
+    }
+    if (chunkNonce && !scriptNonce) scriptNonce = chunkNonce;
+    if (chunkStyle && !styleNonce) styleNonce = chunkStyle;
   }
   return { ok: true, scriptNonce, styleNonce, strictDynamic };
 }

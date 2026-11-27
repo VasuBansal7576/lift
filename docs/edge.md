@@ -25,9 +25,9 @@ Set in `edge/wrangler.toml` `[vars]` or overridden with `wrangler dev --var`. Th
 
 | Binding | Purpose |
 | --- | --- |
-| `ORIGIN` | Origin base URL (no trailing slash needed) |
+| `ORIGIN` | Origin **origin** only: scheme + host + optional port. A path on `ORIGIN` is dropped — `dest.pathname` is the incoming request path. |
 | `FLAGSMITH_API_URL` | Flagsmith **API** root, with `/api/v1/`. Cloud: `https://edge.api.flagsmith.com/api/v1/`. Self-hosted: `http://127.0.0.1:8000/api/v1/` |
-| `FLAGSMITH_ENVIRONMENT_KEY` | Public **client** environment key (`X-Environment-Key`). Never an org admin token. Never logged. |
+| `FLAGSMITH_ENVIRONMENT_KEY` | Public **client** environment key (`X-Environment-Key`). A value starting with `ser.` is treated as unset (fail-open, warning without the value). Never an org admin token. Never logged. |
 | `FLAGSMITH_FLAG_NAME` | Multivariate flag (default `lift_edge_spec`) |
 | `FLAGSMITH_SDK_URL` | Injected JS SDK (default jsDelivr `@flagsmith/flagsmith@12.4.0`) |
 | `FLAGSMITH_EVAL_TIMEOUT_MS` | Server-side eval budget (default `300`) |
@@ -39,11 +39,11 @@ Self-hosted Flagsmith is the Track 3 integration point. The Worker only talks to
 
 ## What the Worker does
 
-1. Resolves the origin URL **from parts** of a copy of `ORIGIN`. If `dest.origin !== origin`, or the path is `//host` / `///host` / `/\host` / `/%2F%2Fhost`, it returns **400** (open-proxy / SSRF). Malformed percent-encoding returns **404**. Exceptions never return 502.
-2. Proxies GET/HEAD/POST to `ORIGIN` (rewrites `Location` back onto the Worker host).
-3. **GET HTML only:** sets `lift_vid` if missing, evaluates Flagsmith **in parallel** with the origin fetch, injects Lift. HEAD and non-GET skip eval, injection, and the cookie.
-4. Server-side eval is **authoritative** (`evaluated: true` in the JSON config). The browser does not re-eval unless the server skipped eval.
-5. Control (empty / `"control"` value): injects the SDK, `/__lift/runtime/runtime.js`, and bootstrap. No spec is applied.
+1. Resolves the origin URL **from parts** of a copy of `ORIGIN`. If `dest.origin !== origin`, or the path is `//host` / `///host` / `/\host` / `/%2F%2Fhost`, it returns **400** (open-proxy / SSRF). `/%2F%2Fhost` is rejected even though assigning it as a pathname would stay on the origin host — encoded leading slashes are treated as a host override. Malformed percent-encoding returns **404**. Exceptions never return 502.
+2. Proxies GET/HEAD/POST to `ORIGIN` (rewrites `Location` back onto the Worker host). A path prefix on `ORIGIN` is not joined onto the request; only the origin (scheme/host/port) is kept.
+3. **Document GET only** (`Sec-Fetch-Dest: document`, or `Accept` includes `text/html` when dest is absent): sets `lift_vid` if missing, evaluates Flagsmith **in parallel** with the origin fetch, injects Lift. CSS, JS, images, HEAD, and non-GET skip eval, injection, and the cookie.
+4. Server-side eval is **authoritative** (`evaluated: true` in the JSON config). The browser does not re-eval unless the server skipped eval. The jsDelivr SDK `<script>` is injected only when `evaluated` is false.
+5. Control (empty / `"control"` value): injects `/__lift/runtime/runtime.js` and bootstrap. No spec is applied.
 6. Treatment: the multivariate **value is the spec id**. The Worker loads that JSON from KV and inlines it.
 7. Personalised HTML is never cacheable in a shared cache: `Cache-Control: private, no-store, no-cache, must-revalidate`. `ETag` and `Last-Modified` are stripped after injection.
 8. `Server-Timing: liftwall;dur=…` is **wall time** for the Worker handler (not CPU). Real CPU is in `wrangler tail`.
@@ -54,12 +54,12 @@ HTML is **buffered** (1 MiB cap) before injection so a Miniflare / HTMLRewriter 
 
 ## Fail open
 
-Any of these returns the **origin HTML unmodified** (no injected scripts). The sticky cookie may still be set on GET HTML.
+Any of these returns the **origin HTML unmodified** (no injected scripts). Fail-open HTML keeps the origin `Cache-Control` and CSP; they are not rewritten. The sticky cookie may still be set on document GET.
 
 | Reason | `Server-Timing` desc |
 | --- | --- |
 | Non-HTML | `non-html` |
-| HEAD / non-GET | `head` / `method` |
+| HEAD / non-GET / non-document | `head` / `method` / `non-document` |
 | Flagsmith HTTP error / network | `flagsmith-down` |
 | Flagsmith eval > 300 ms | `flagsmith-timeout` |
 | Spec id in the flag but missing from KV | `kv-miss` |
@@ -71,7 +71,7 @@ The bootstrap also fail-opens: SDK errors, `applyPatchSpec` failures, and 404 sp
 
 ## Sticky identity
 
-Cookie name `lift_vid` matches `sites/shared/identity.js`. Same visitor → same Flagsmith identity → same variant across reloads. The Worker mints a UUID when the cookie is absent. GET HTML only.
+Cookie name `lift_vid` matches `sites/shared/identity.js`. Same visitor → same Flagsmith identity → same variant across reloads. The Worker mints a UUID when the cookie is absent. Document GET only. Not HttpOnly so the page can read it.
 
 ## Specs in KV
 

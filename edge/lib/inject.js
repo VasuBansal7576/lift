@@ -34,12 +34,17 @@ export function buildHeadSnippet(cfg) {
     styleNonce: cfg.styleNonce || null,
   };
   const n = nonceAttr(cfg.scriptNonce);
-  return [
+  const tags = [
     `<script type="application/json" id="${CONFIG_SCRIPT_ID}"${n}>${escapeJsonForScript(payload)}</script>`,
-    `<script type="module" src="${escapeAttr(sdkUrl)}"${n}></script>`,
+  ];
+  if (cfg.evaluated === false) {
+    tags.push(`<script type="module" src="${escapeAttr(sdkUrl)}"${n}></script>`);
+  }
+  tags.push(
     `<script type="module" src="${RUNTIME_PATH_PREFIX}runtime.js"${n}></script>`,
     `<script type="module" src="${BOOTSTRAP_PATH}"${n}></script>`,
-  ].join("");
+  );
+  return tags.join("");
 }
 
 export function injectHead(html, snippet) {
@@ -115,9 +120,12 @@ export async function injectHtmlResponse(response, snippet, extraHeaders, inject
           },
         })
         .transform(response);
+      // Drain inside the try so a mid-stream HTMLRewriter error cannot
+      // escape and truncate the response. Caller fail-opens on null.
+      const out = await rewritten.arrayBuffer();
       const headers = new Headers(rewritten.headers);
       applyExtraHeaders(headers, extraHeaders);
-      return new Response(rewritten.body, { status: rewritten.status, statusText: rewritten.statusText, headers });
+      return new Response(out, { status: rewritten.status, statusText: rewritten.statusText, headers });
     }
     const html = await response.text();
     let out = injectHead(html, snippet);

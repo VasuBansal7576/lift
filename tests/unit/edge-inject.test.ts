@@ -6,13 +6,20 @@ import { CONFIG_SCRIPT_ID, FLAGSMITH_SDK_URL_DEFAULT } from "../../edge/lib/cons
 import { handleRequest } from "../../edge/lib/handler.js";
 import { buildHeadSnippet, injectHead } from "../../edge/lib/inject.js";
 import { adjustCsp } from "../../edge/lib/csp.js";
-import { flagsPayload, installEdgeFetch, mockEnv, originHtml, restoreFetch } from "./edge-test-helpers.ts";
+import {
+  documentRequest,
+  flagsPayload,
+  installEdgeFetch,
+  mockEnv,
+  originHtml,
+  restoreFetch,
+} from "./edge-test-helpers.ts";
 
 const SDK = FLAGSMITH_SDK_URL_DEFAULT;
 
 describe("buildHeadSnippet", () => {
-  it("injects the Flagsmith SDK, runtime.js, bootstrap, and JSON config", () => {
-    const html = buildHeadSnippet({
+  it("injects runtime.js, bootstrap, and JSON config; SDK script only when unevaluated", () => {
+    const evaluated = buildHeadSnippet({
       identity: "vid-1",
       flagName: "lift_edge_spec",
       apiUrl: "http://127.0.0.1:8000/api/v1/",
@@ -20,14 +27,27 @@ describe("buildHeadSnippet", () => {
       specId: "checkout-treatment-v0",
       spec: { id: "checkout-treatment-v0", version: 0, ops: [] },
       sdkUrl: SDK,
+      evaluated: true,
     });
-    expect(html).toContain(`id="${CONFIG_SCRIPT_ID}"`);
-    expect(html).toContain(`src="${SDK}"`);
-      expect(html).toContain('src="/__lift/runtime/runtime.js"');
-    expect(html).toContain('src="/__lift/bootstrap.js"');
-    expect(html).toContain("checkout-treatment-v0");
-    expect(html).toContain('type="application/json"');
-    expect(html).not.toContain("onclick=");
+    expect(evaluated).toContain(`id="${CONFIG_SCRIPT_ID}"`);
+    expect(evaluated).toContain(SDK);
+    expect(evaluated).not.toContain(`src="${SDK}"`);
+    expect(evaluated).toContain('src="/__lift/runtime/runtime.js"');
+    expect(evaluated).toContain('src="/__lift/bootstrap.js"');
+    expect(evaluated).toContain("checkout-treatment-v0");
+    expect(evaluated).toContain('type="application/json"');
+    expect(evaluated).not.toContain("onclick=");
+
+    const unevaluated = buildHeadSnippet({
+      identity: "vid-1",
+      flagName: "lift_edge_spec",
+      apiUrl: "http://127.0.0.1:8000/api/v1/",
+      environmentKey: "env-public",
+      sdkUrl: SDK,
+      evaluated: false,
+    });
+    expect(unevaluated).toContain(`src="${SDK}"`);
+    expect(unevaluated).toContain('"evaluated":false');
   });
 
   it("escapes </ so JSON cannot break out of the config script", () => {
@@ -77,11 +97,12 @@ describe("Worker HTML injection", () => {
       flagsmith: flagsPayload(null),
     });
     try {
-      const res = await handleRequest(new Request("http://edge.test/checkout/"), env);
+      const res = await handleRequest(documentRequest("http://edge.test/checkout/"), env);
       const body = await res.text();
       expect(res.headers.get("content-type")).toMatch(/text\/html/);
       expect(body).toContain(CONFIG_SCRIPT_ID);
       expect(body).toContain(SDK);
+      expect(body).not.toContain(`src="${SDK}"`);
       expect(body).toContain("/__lift/runtime/runtime.js");
       expect(body).toContain('"evaluated":true');
       expect(body).toContain("/__lift/bootstrap.js");
@@ -106,7 +127,7 @@ describe("Worker HTML injection", () => {
     });
     try {
       const res = await handleRequest(
-        new Request("http://edge.test/checkout/", {
+        documentRequest("http://edge.test/checkout/", {
           headers: { cookie: "lift_vid=lift-e2e-treatment" },
         }),
         env,

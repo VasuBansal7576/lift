@@ -1,9 +1,11 @@
 # Edge Worker recordings
 
-Proof videos are live desktop captures produced with `npm run edge:record`
-(`edge/record/live.mjs`) against **self-hosted Flagsmith 2.295.2**. They are
-not Playwright webm and not stitched stills. Chrome address bar, DevTools, and
-a real terminal are in frame.
+These four scenes were captured by hand (headed Chrome with the address bar
+visible, DevTools, and a real terminal) against **self-hosted Flagsmith
+2.295.2**. `edge/record/live.mjs` (`npm run edge:record`) is a helper for
+bringing the origin, Worker, and headed Chromium up; it is not the camera.
+
+They are not Playwright webm and not stitched stills.
 
 | File | What it shows |
 | --- | --- |

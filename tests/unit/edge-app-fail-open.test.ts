@@ -41,5 +41,8 @@ describe("origin checkout fail-open and edge origin mode", () => {
     expect(rec).toContain("edge/.dev.vars");
     expect(rec).not.toContain("startMockFlagsmith");
     expect(rec).not.toContain("18787");
+    expect(rec).not.toMatch(/control visitor: still show/);
+    expect(rec).toContain("await keyboardCheckout(page)");
+    expect(rec).not.toMatch(/catch \{\s*\/\* control visitor/);
   });
 });

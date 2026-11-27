@@ -3,8 +3,8 @@ import { resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { ROOT } from "../../agent/src/config.ts";
 import { CONFIG_SCRIPT_ID } from "../../edge/lib/constants.js";
-import { handleRequest } from "../../edge/lib/handler.js";
-import { flagsPayload, installEdgeFetch, mockEnv, originHtml, restoreFetch } from "./edge-test-helpers.ts";
+import { handleRequest, readEnv } from "../../edge/lib/handler.js";
+import { documentRequest, flagsPayload, installEdgeFetch, mockEnv, originHtml, restoreFetch } from "./edge-test-helpers.ts";
 
 describe("fail-open", () => {
   afterEach(restoreFetch);
@@ -36,7 +36,7 @@ describe("fail-open", () => {
     const html = originHtml();
     const restore = installEdgeFetch({ originBody: html, flagsmith: "down" });
     try {
-      const res = await handleRequest(new Request("http://edge.test/checkout/"), env);
+      const res = await handleRequest(documentRequest("http://edge.test/checkout/"), env);
       const body = await res.text();
       expect(body).toBe(html);
       expect(body).not.toContain(CONFIG_SCRIPT_ID);
@@ -51,7 +51,7 @@ describe("fail-open", () => {
     const html = originHtml();
     const restore = installEdgeFetch({ originBody: html, flagsmith: "http500" });
     try {
-      const res = await handleRequest(new Request("http://edge.test/"), env);
+      const res = await handleRequest(documentRequest("http://edge.test/"), env);
       expect(await res.text()).toBe(html);
       expect(res.headers.get("server-timing") || "").toMatch(/flagsmith-down/);
     } finally {
@@ -68,7 +68,7 @@ describe("fail-open", () => {
       flagsmithDelayMs: 80,
     });
     try {
-      const res = await handleRequest(new Request("http://edge.test/"), env);
+      const res = await handleRequest(documentRequest("http://edge.test/"), env);
       expect(await res.text()).toBe(html);
       expect(res.headers.get("server-timing") || "").toMatch(/flagsmith-timeout/);
     } finally {
@@ -84,7 +84,7 @@ describe("fail-open", () => {
       flagsmith: flagsPayload("missing-spec-id"),
     });
     try {
-      const res = await handleRequest(new Request("http://edge.test/"), env);
+      const res = await handleRequest(documentRequest("http://edge.test/"), env);
       expect(await res.text()).toBe(html);
       expect(res.headers.get("server-timing") || "").toMatch(/kv-miss/);
     } finally {
@@ -101,7 +101,7 @@ describe("fail-open", () => {
       flagsmith: flagsPayload("bad-spec"),
     });
     try {
-      const res = await handleRequest(new Request("http://edge.test/"), env);
+      const res = await handleRequest(documentRequest("http://edge.test/"), env);
       expect(await res.text()).toBe(html);
       expect(res.headers.get("server-timing") || "").toMatch(/parse-error/);
     } finally {
@@ -122,11 +122,75 @@ describe("fail-open", () => {
     };
     const restore = installEdgeFetch({ originBody: originHtml(), flagsmith: "down" });
     try {
-      await handleRequest(new Request("http://edge.test/"), env);
+      await handleRequest(documentRequest("http://edge.test/"), env);
       expect(logs.join("\n")).not.toContain("super-secret-env-key");
     } finally {
       console.log = orig;
       console.error = origErr;
+      restore();
+    }
+  });
+
+  it("does not rewrite CSP or Cache-Control on fail-open HTML", async () => {
+    const env = mockEnv();
+    const html = originHtml();
+    const restore = installEdgeFetch({
+      originBody: html,
+      flagsmith: "down",
+      originHeaders: {
+        "Cache-Control": "public, max-age=60",
+        "Content-Security-Policy": "script-src 'self'",
+      },
+    });
+    try {
+      const res = await handleRequest(documentRequest("http://edge.test/checkout/"), env);
+      expect(await res.text()).toBe(html);
+      expect(res.headers.get("cache-control")).toBe("public, max-age=60");
+      expect(res.headers.get("content-security-policy")).toBe("script-src 'self'");
+    } finally {
+      restore();
+    }
+  });
+
+  it("treats FLAGSMITH_ENVIRONMENT_KEY starting with ser. as unset", () => {
+    const warns: string[] = [];
+    const orig = console.warn;
+    console.warn = (...args: unknown[]) => {
+      warns.push(args.map(String).join(" "));
+    };
+    try {
+      const cfg = readEnv({ FLAGSMITH_ENVIRONMENT_KEY: "ser.secret-server-key" });
+      expect(cfg.environmentKey).toBe("");
+      expect(warns.join("\n")).toMatch(/server-side key/);
+      expect(warns.join("\n")).not.toContain("ser.secret-server-key");
+    } finally {
+      console.warn = orig;
+    }
+  });
+
+  it("fail-opens with zero Flagsmith calls when the env key is ser.", async () => {
+    const env = mockEnv({ FLAGSMITH_ENVIRONMENT_KEY: "ser.abc" });
+    let hits = 0;
+    const html = originHtml();
+    const warns: string[] = [];
+    const orig = console.warn;
+    console.warn = (...args: unknown[]) => {
+      warns.push(args.map(String).join(" "));
+    };
+    const restore = installEdgeFetch({
+      originBody: html,
+      onFetch: (url) => {
+        if (url.includes("/identities/")) hits += 1;
+      },
+    });
+    try {
+      const res = await handleRequest(documentRequest("http://edge.test/checkout/"), env);
+      expect(hits).toBe(0);
+      expect(await res.text()).toBe(html);
+      expect(res.headers.get("server-timing") || "").toMatch(/flagsmith-down/);
+      expect(warns.join("\n")).not.toContain("ser.abc");
+    } finally {
+      console.warn = orig;
       restore();
     }
   });

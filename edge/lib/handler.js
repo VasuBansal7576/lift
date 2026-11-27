@@ -29,12 +29,22 @@ function wallMeter() {
   };
 }
 
+function clientEnvironmentKey(raw) {
+  const key = String(raw || "").trim();
+  if (!key) return "";
+  if (key.startsWith("ser.")) {
+    console.warn("FLAGSMITH_ENVIRONMENT_KEY looks like a server-side key; treating as unset");
+    return "";
+  }
+  return key;
+}
+
 export function readEnv(env) {
   const timeout = Number(env?.FLAGSMITH_EVAL_TIMEOUT_MS);
   return {
     origin: String(env?.ORIGIN || "").replace(/\/+$/, ""),
     apiUrl: trailingSlash(String(env?.FLAGSMITH_API_URL || "")),
-    environmentKey: String(env?.FLAGSMITH_ENVIRONMENT_KEY || ""),
+    environmentKey: clientEnvironmentKey(env?.FLAGSMITH_ENVIRONMENT_KEY),
     flagName: String(env?.FLAGSMITH_FLAG_NAME || DEFAULT_FLAG_NAME),
     sdkUrl: String(env?.FLAGSMITH_SDK_URL || FLAGSMITH_SDK_URL_DEFAULT),
     timeoutMs: Number.isFinite(timeout) && timeout > 0 ? timeout : DEFAULT_EVAL_TIMEOUT_MS,
@@ -49,8 +59,14 @@ export function isHtmlResponse(response) {
   return /text\/html/i.test(type);
 }
 
-function shouldPersonalize(request) {
-  return request.method === "GET";
+/** Document navigations only. CSS/JS/image/empty fetches skip eval and identity. */
+export function isDocumentRequest(request) {
+  if (request.method !== "GET") return false;
+  const dest = (request.headers.get("Sec-Fetch-Dest") || "").toLowerCase();
+  if (dest === "document") return true;
+  if (dest) return false;
+  const accept = request.headers.get("Accept") || "";
+  return /text\/html/i.test(accept);
 }
 
 export function rewriteLocation(headers, originBase, workerOrigin) {
@@ -76,12 +92,13 @@ function withServerTiming(headers, wallMs, failOpen) {
   headers.set("Server-Timing", parts.join(", "));
 }
 
-function applyHtmlHeaders(headers, opts) {
+function applyInjectedHtmlHeaders(headers, opts) {
   headers.set("Cache-Control", PERSONAL_CACHE_CONTROL);
   headers.delete("Age");
   headers.delete("Expires");
   headers.delete("s-maxage");
   headers.delete("Surrogate-Control");
+  stripValidators(headers);
   const cspKeys = ["Content-Security-Policy", "content-security-policy"];
   for (const key of cspKeys) {
     if (!headers.has(key)) continue;
@@ -94,7 +111,6 @@ function applyHtmlHeaders(headers, opts) {
       }),
     );
   }
-  if (opts.injected) stripValidators(headers);
   if (opts.setCookie) headers.append("Set-Cookie", opts.setCookie);
   withServerTiming(headers, opts.cpuMs, opts.failOpen);
 }
@@ -102,8 +118,12 @@ function applyHtmlHeaders(headers, opts) {
 function finalizePassthrough(response, opts) {
   const headers = new Headers(response.headers);
   rewriteLocation(headers, opts.originBase, opts.workerOrigin);
-  if (opts.html) applyHtmlHeaders(headers, opts);
-  else if (opts.cpuMs != null) withServerTiming(headers, opts.cpuMs, opts.failOpen);
+  if (opts.injected) {
+    applyInjectedHtmlHeaders(headers, opts);
+  } else {
+    if (opts.setCookie) headers.append("Set-Cookie", opts.setCookie);
+    if (opts.cpuMs != null) withServerTiming(headers, opts.cpuMs, opts.failOpen);
+  }
   return new Response(response.body, {
     status: response.status,
     statusText: response.statusText,
@@ -209,12 +229,22 @@ async function loadSpecJson(specs, specId) {
   }
 }
 
-async function bufferHtml(originRes) {
-  const len = Number(originRes.headers.get("content-length") || originRes.headers.get("Content-Length"));
-  if (Number.isFinite(len) && len > MAX_HTML_BYTES) {
-    return { tooLarge: true };
+async function decodedOriginBytes(originRes, raw) {
+  const enc = (originRes.headers.get("content-encoding") || "").toLowerCase().split(",")[0].trim();
+  if (enc !== "gzip" && enc !== "deflate" && enc !== "br") return raw;
+  try {
+    const body = new Response(raw).body;
+    if (!body) return raw;
+    const ds = new DecompressionStream(enc);
+    return await new Response(body.pipeThrough(ds)).arrayBuffer();
+  } catch {
+    return raw;
   }
-  const bytes = await originRes.arrayBuffer();
+}
+
+async function bufferHtml(originRes) {
+  const raw = await originRes.arrayBuffer();
+  const bytes = await decodedOriginBytes(originRes, raw);
   if (bytes.byteLength > MAX_HTML_BYTES) {
     return { tooLarge: true, bytes };
   }
@@ -222,10 +252,15 @@ async function bufferHtml(originRes) {
 }
 
 function replayResponse(originRes, bytes) {
+  const headers = new Headers(originRes.headers);
+  headers.delete("Content-Length");
+  headers.delete("content-length");
+  headers.delete("Content-Encoding");
+  headers.delete("content-encoding");
   return new Response(bytes, {
     status: originRes.status,
     statusText: originRes.statusText,
-    headers: originRes.headers,
+    headers,
   });
 }
 
@@ -268,7 +303,7 @@ export async function handleRequest(request, env) {
     });
   }
 
-  const personalize = shouldPersonalize(request);
+  const personalize = isDocumentRequest(request);
   const visitor = personalize ? visitorFromRequest(request, url) : { id: null, setCookie: null, minted: false };
 
   const evalPromise =
@@ -311,7 +346,13 @@ export async function handleRequest(request, env) {
   };
 
   if (!html || !personalize) {
-    const reason = !html ? "non-html" : request.method === "HEAD" ? "head" : "method";
+    const reason = !html
+      ? "non-html"
+      : request.method === "HEAD"
+        ? "head"
+        : request.method === "GET"
+          ? "non-document"
+          : "method";
     return finalizePassthrough(originRes, { ...baseOpts, failOpen: reason, cpuMs: wall.ms() });
   }
 

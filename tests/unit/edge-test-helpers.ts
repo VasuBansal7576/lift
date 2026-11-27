@@ -6,6 +6,18 @@ export function restoreFetch() {
   globalThis.fetch = nativeFetch;
 }
 
+export const DOCUMENT_HEADERS = {
+  "Sec-Fetch-Dest": "document",
+  Accept: "text/html",
+} as const;
+
+export function documentRequest(url: string, init: RequestInit = {}) {
+  const headers = new Headers(init.headers);
+  if (!headers.has("Sec-Fetch-Dest")) headers.set("Sec-Fetch-Dest", "document");
+  if (!headers.has("Accept")) headers.set("Accept", "text/html");
+  return new Request(url, { ...init, headers });
+}
+
 export function originHtml(extra = "") {
   return `<!doctype html><html><head><title>Northline</title></head><body><span id="shop-trigger">Shop</span>${extra}</body></html>`;
 }
@@ -66,7 +78,7 @@ async function delay(ms: number, signal?: AbortSignal | null) {
 }
 
 export function installEdgeFetch(opts: {
-  originBody?: string;
+  originBody?: string | Uint8Array | ArrayBuffer;
   originType?: string;
   originStatus?: number;
   originHeaders?: Record<string, string>;
@@ -84,7 +96,7 @@ export function installEdgeFetch(opts: {
     if (url.startsWith("http://origin.test")) {
       if (opts.originDelayMs) await delay(opts.originDelayMs);
       if (opts.originThrow) throw new TypeError("origin fetch failed");
-      return new Response(opts.originBody ?? originHtml(), {
+      return new Response((opts.originBody ?? originHtml()) as BodyInit, {
         status: opts.originStatus ?? 200,
         headers: {
           "content-type": opts.originType ?? "text/html; charset=utf-8",

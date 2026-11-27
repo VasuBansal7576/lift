@@ -6,7 +6,7 @@ import {
 } from "../../sites/shared/identity.js";
 import { visitorFromRequest } from "../../edge/lib/cookie.js";
 import { handleRequest } from "../../edge/lib/handler.js";
-import { flagsPayload, installEdgeFetch, mockEnv, originHtml } from "./edge-test-helpers.ts";
+import { documentRequest, flagsPayload, installEdgeFetch, mockEnv, originHtml } from "./edge-test-helpers.ts";
 
 describe("lift_vid cookie", () => {
   it("matches the identity runtime: Lax, not HttpOnly, Secure only on https", () => {
@@ -37,7 +37,7 @@ describe("lift_vid cookie", () => {
       flagsmith: flagsPayload(null),
     });
     try {
-      const res = await handleRequest(new Request("http://edge.test/checkout/"), env);
+      const res = await handleRequest(documentRequest("http://edge.test/checkout/"), env);
       const cookie = res.headers.get("set-cookie") || "";
       expect(cookie).toContain(`${IDENTITY_COOKIE}=`);
       expect(cookie).toContain("SameSite=Lax");
@@ -55,7 +55,7 @@ describe("lift_vid cookie", () => {
       flagsmith: flagsPayload(null),
     });
     try {
-      const res = await handleRequest(new Request("https://edge.test/checkout/"), env);
+      const res = await handleRequest(documentRequest("https://edge.test/checkout/"), env);
       expect(res.headers.get("set-cookie") || "").toContain("Secure");
     } finally {
       restore();
@@ -70,7 +70,7 @@ describe("lift_vid cookie", () => {
     });
     try {
       const res = await handleRequest(
-        new Request("http://edge.test/checkout/", {
+        documentRequest("http://edge.test/checkout/", {
           headers: { cookie: "lift_vid=already-there" },
         }),
         env,

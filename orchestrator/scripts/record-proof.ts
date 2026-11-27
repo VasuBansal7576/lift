@@ -140,12 +140,18 @@ async function main() {
     }
   }
 
-  async function showFeature(dashboardUrl: string, flagName: string) {
-    const featureUrl = dashboardUrl.replace(/\/experiments\/\d+$/, "/features");
-    await page.goto(featureUrl, { waitUntil: "domcontentloaded" });
-    await page.waitForTimeout(2000);
-    await page.getByText(flagName).first().click();
+  async function showWinner(dashboardUrl: string, flagName: string) {
+    await page.goto(dashboardUrl, { waitUntil: "domcontentloaded" });
     await page.waitForTimeout(4000);
+    const featuresLink = page.getByRole("link", { name: /^Features$/ });
+    if (await featuresLink.count()) {
+      await featuresLink.first().click().catch(() => undefined);
+      await page.waitForTimeout(2500);
+      const row = page.getByText(flagName, { exact: false }).first();
+      await row.scrollIntoViewIfNeeded().catch(() => undefined);
+      await row.click({ force: true, timeout: 8_000 }).catch(() => undefined);
+      await page.waitForTimeout(4000);
+    }
     if (page.url().includes("login")) {
       throw new Error("Flagsmith session expired; landed on sign-in");
     }
@@ -179,7 +185,7 @@ async function main() {
   if (state.recommendation?.kind === "winner" && state.flag) {
     await typeApproveOnCamera(state.flag.experimentId);
     if (state.flag.dashboardUrl) {
-      await showFeature(state.flag.dashboardUrl, state.flag.flagName);
+      await showWinner(state.flag.dashboardUrl, state.flag.flagName);
     }
   } else {
     process.stdout.write("No winner yet; --approve skipped (keep collecting).\n");
@@ -196,7 +202,11 @@ async function main() {
   await page.getByRole("link", { name: /^Experiments$/ }).click();
   await page.waitForTimeout(2000);
   if (state.flag) {
-    await page.getByText(state.flag.flagName).first().click();
+    const row = page.getByText(state.flag.flagName, { exact: false }).first();
+    await row.scrollIntoViewIfNeeded().catch(() => undefined);
+    await row.click({ force: true, timeout: 8_000 }).catch(async () => {
+      if (state.flag?.dashboardUrl) await page.goto(state.flag.dashboardUrl, { waitUntil: "domcontentloaded" });
+    });
   }
   await page.waitForTimeout(6000);
   if (page.url().includes("login")) {
@@ -229,7 +239,7 @@ async function main() {
   if (gen2.recommendation?.kind === "winner" && gen2.flag) {
     await typeApproveOnCamera(gen2.flag.experimentId);
     if (gen2.flag.dashboardUrl) {
-      await showFeature(gen2.flag.dashboardUrl, gen2.flag.flagName);
+      await showWinner(gen2.flag.dashboardUrl, gen2.flag.flagName);
     }
   }
   if (page.url().includes("login")) {

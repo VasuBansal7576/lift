@@ -66,7 +66,12 @@ describe("rollout agent", () => {
           };
         }
         if (url.includes("/featurestates/77/") && init.method === "PATCH") {
-          patchBodies.push(JSON.parse(init.body ?? "{}"));
+          const parsed = JSON.parse(init.body ?? "{}") as {
+            feature_state_value: unknown;
+            multivariate_feature_state_values: Array<{ percentage_allocation: number; multivariate_feature_option: number }>;
+          };
+          expect(parsed.feature_state_value).toEqual({ type: "unicode", value: "full-v1" });
+          patchBodies.push(parsed);
           return { status: 200, text: async () => "{}" };
         }
         return { status: 200, text: async () => "{}" };
@@ -89,8 +94,11 @@ describe("rollout agent", () => {
     );
     expect(result.winner).toBe("full-v1");
     expect(pickEnvDefaultFeatureState([{ identity: 1, feature_segment: null, id: 1 }, { identity: null, feature_segment: null, id: 77 }]).id).toBe(77);
-    const mv = (patchBodies[0] as { multivariate_feature_state_values: Array<{ percentage_allocation: number; multivariate_feature_option: number }> })
-      .multivariate_feature_state_values;
+    const mv = (
+      patchBodies[0] as {
+        multivariate_feature_state_values: Array<{ percentage_allocation: number; multivariate_feature_option: number }>;
+      }
+    ).multivariate_feature_state_values;
     expect(mv.find((row) => row.multivariate_feature_option === 22)?.percentage_allocation).toBe(100);
     expect(mv.find((row) => row.multivariate_feature_option === 23)?.percentage_allocation).toBe(0);
   });

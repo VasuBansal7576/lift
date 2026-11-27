@@ -95,11 +95,38 @@ export async function runRollout(
     }>(states),
   );
   const mv = winnerAllocations(state.multivariate_feature_state_values ?? [], winnerOption?.optionId);
-  await http.patch(`/features/featurestates/${state.id}/`, {
-    enabled: true,
-    feature_state_value: recommendation.arm,
-    multivariate_feature_state_values: mv,
-  });
+  const patchBodies = [
+    {
+      enabled: true,
+      feature_state_value: { type: "unicode", value: recommendation.arm },
+      multivariate_feature_state_values: mv,
+    },
+    {
+      enabled: true,
+      feature_state_value: { type: "string", value: recommendation.arm },
+      multivariate_feature_state_values: mv,
+    },
+    {
+      enabled: true,
+      multivariate_feature_state_values: mv,
+    },
+  ];
+  let patched = false;
+  let lastPatchError: unknown;
+  for (const body of patchBodies) {
+    try {
+      await http.patch(`/features/featurestates/${state.id}/`, body);
+      patched = true;
+      break;
+    } catch (err) {
+      lastPatchError = err;
+    }
+  }
+  if (!patched) {
+    throw lastPatchError instanceof Error
+      ? lastPatchError
+      : new Error("Failed to set environment-default winner to 100%");
+  }
 
   if (opts.projectId) {
     for (const variant of flag.variants) {

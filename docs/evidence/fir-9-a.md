@@ -31,6 +31,10 @@ That runs `tests/evidence/phase-a.spec.ts` against the real checkout page on `ht
 | `04-guard-page-modal.webm` + `.trace.zip` | A contrast fix is applied, then a page modal appears. Banner: **page-caused, fix kept**. The injected CSS stays. |
 | `04-guard-spec-caused.webm` + `.trace.zip` | A spec-caused white-on-white descendant still undoes the injected CSS. |
 | `04-dropdown-keeps-fix.webm` + `.trace.zip` | A color-only fix on a nav whose submenu opens over a control keeps the fix. |
+| `04-sticky-hit-target-covers-rejected.webm` + `.trace.zip` | A min-height/min-width link in a 40px sticky header grows over Buy. BAD STATE shows the overlap with Buy outlined; then the spec is rejected and Buy is hittable. |
+| `04-capture-click-no-double.webm` + `.trace.zip` | A capture-phase Enter handler clicks without preventDefault. The on-screen counter shows **activations: 1**. |
+| `04-label-in-name-attributed.webm` + `.trace.zip` | `aria-label="Checkout"` is applied, then the visible text becomes `Checkout (2)`. Banner shows the computed name before and after; the attribute op is undone. |
+| `04-overflow-matches-contrast.webm` + `.trace.zip` | New `.item` matches past the 50-match cap are #111-on-#111, selected with an effective-background readout, then the spec is undone and they are readable. |
 | `05-sticky-identity.webm` + `.trace.zip` | The page itself renders `document.cookie` (including `lift_vid=...`) plus `data-variant` / `#flag-status` before and after reload. The cookie string is read from the page, not injected by the runner. **Variant stability is only meaningful with a live Flagsmith environment key.** When that key is present and Flagsmith assigns a variant, it stays the same across reload; without it the spec falls back to `?lift_variant=control`. |
 
 The on-page banner is injected only by this evidence spec (`#lift-evidence-banner`). The cookie readout (`#lift-cookie-readout`) is also evidence-only. Neither is part of the product runtime.

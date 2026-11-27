@@ -52,6 +52,8 @@ export function validatePatchSpec(input) {
 }
 
 const clickListenerHosts = new WeakSet();
+const clickedDuringKey = new WeakMap();
+let currentKeyEvent = null;
 (function watchClickListeners() {
   const patch = (proto) => {
     if (!proto || typeof proto.addEventListener !== "function") return;
@@ -68,6 +70,23 @@ const clickListenerHosts = new WeakSet();
   if (typeof Node !== "undefined") patch(Node.prototype);
   if (typeof Element !== "undefined") patch(Element.prototype);
   if (typeof HTMLElement !== "undefined") patch(HTMLElement.prototype);
+})();
+(function watchKeyActivationClicks() {
+  const onKey = (event) => {
+    if (!clickedDuringKey.has(event)) clickedDuringKey.set(event, false);
+    currentKeyEvent = event;
+  };
+  const onClick = () => {
+    if (currentKeyEvent) clickedDuringKey.set(currentKeyEvent, true);
+  };
+  const add = (target) => {
+    if (!target || typeof target.addEventListener !== "function") return;
+    target.addEventListener("keydown", onKey, true);
+    target.addEventListener("keyup", onKey, true);
+    target.addEventListener("click", onClick, true);
+  };
+  if (typeof window !== "undefined") add(window);
+  if (typeof document !== "undefined") add(document);
 })();
 
 function docOf(root) {
@@ -90,8 +109,8 @@ function miss(index, selector, extra) {
   };
 }
 
-function applied(undo) {
-  return { status: "applied", undo };
+function applied(undo, redo) {
+  return { status: "applied", undo, redo: redo || null };
 }
 
 function noop() {
@@ -158,10 +177,15 @@ function applySetAttribute(root, op, index) {
   const had = el.hasAttribute(op.name);
   const prev = el.getAttribute(op.name);
   el.setAttribute(op.name, op.value);
-  return applied(() => {
-    if (!had) el.removeAttribute(op.name);
-    else el.setAttribute(op.name, prev ?? "");
-  });
+  return applied(
+    () => {
+      if (!had) el.removeAttribute(op.name);
+      else el.setAttribute(op.name, prev ?? "");
+    },
+    () => {
+      el.setAttribute(op.name, op.value);
+    },
+  );
 }
 
 function applySetText(root, op, index) {
@@ -185,9 +209,14 @@ function applySetText(root, op, index) {
   const prevChildren = [...el.childNodes];
   if (el.textContent === op.text) return noop();
   el.textContent = op.text;
-  return applied(() => {
-    el.replaceChildren(...prevChildren);
-  });
+  return applied(
+    () => {
+      el.replaceChildren(...prevChildren);
+    },
+    () => {
+      el.textContent = op.text;
+    },
+  );
 }
 
 function parseComputedRgb(css) {
@@ -210,6 +239,7 @@ let backstopsPaused = false;
 const pendingBackstops = [];
 const guardFlushers = [];
 const TEXT_DESCENDANT_CAP = 500;
+const GUARD_CONTRAST_SAMPLE = 200;
 const SIZE_GROWING_PROPS = new Set([
   "font-size",
   "padding",
@@ -332,6 +362,22 @@ function ancestorGrewPast(el, beforeRects, px) {
   return Math.abs(after.width - before.width) > px || Math.abs(after.height - before.height) > px;
 }
 
+function rectInside(inner, outer, tol) {
+  if (!inner || !outer) return false;
+  return (
+    inner.left >= outer.left - tol &&
+    inner.top >= outer.top - tol &&
+    inner.right <= outer.right + tol &&
+    inner.bottom <= outer.bottom + tol
+  );
+}
+
+function hostStaysInsideAncestor(el) {
+  const anc = outOfFlowAncestor(el);
+  if (!anc) return true;
+  return rectInside(cachedRect(el), cachedRect(anc), 1);
+}
+
 function decorationIncludesLineThrough(el) {
   let node = el;
   while (node && node.nodeType === 1) {
@@ -373,7 +419,57 @@ function hostHasFixedHeightAndHiddenOverflow(el) {
   return Number.isFinite(px) && px > 0;
 }
 
-function cssMatchesViolateHostsOrContrast(root, op, mode, beforeRects) {
+function sampleMatchesForGuard(matches, records) {
+  const list = [...matches];
+  if (list.length <= GUARD_CONTRAST_SAMPLE) return list;
+  const touched = elementsTouchedByRecords(list, records);
+  const out = [];
+  const seen = new Set();
+  for (const el of touched) {
+    if (out.length >= GUARD_CONTRAST_SAMPLE) break;
+    if (seen.has(el)) continue;
+    seen.add(el);
+    out.push(el);
+  }
+  for (const el of list) {
+    if (out.length >= GUARD_CONTRAST_SAMPLE) break;
+    if (seen.has(el)) continue;
+    seen.add(el);
+    out.push(el);
+  }
+  return out;
+}
+
+function elementsTouchedByRecords(elements, records) {
+  if (!records || records.length === 0) return [];
+  const want = new Set(elements);
+  const touched = [];
+  const seen = new Set();
+  const consider = (node) => {
+    if (!node || node.nodeType !== 1 || seen.has(node) || !want.has(node)) return;
+    seen.add(node);
+    touched.push(node);
+  };
+  for (const rec of records) {
+    const nodes = [];
+    if (rec.target && rec.target.nodeType === 1) nodes.push(rec.target);
+    for (const node of rec.addedNodes || []) {
+      if (node && node.nodeType === 1) nodes.push(node);
+    }
+    for (const node of nodes) {
+      let cur = node;
+      while (cur && cur.nodeType === 1) {
+        consider(cur);
+        cur = cur.parentElement;
+      }
+      if (typeof node.querySelectorAll !== "function") continue;
+      for (const child of node.querySelectorAll("*")) consider(child);
+    }
+  }
+  return touched;
+}
+
+function cssMatchesViolateHostsOrContrast(root, op, mode, beforeRects, records) {
   const scope = "querySelectorAll" in root ? root : docOf(root);
   const guard = mode === "guard";
   for (const rule of op.rules || []) {
@@ -387,8 +483,7 @@ function cssMatchesViolateHostsOrContrast(root, op, mode, beforeRects) {
       if (guard) continue;
       return "selector matched nothing";
     }
-    if (matches.length > CSS_MATCH_LIMIT) {
-      if (guard) continue;
+    if (matches.length > CSS_MATCH_LIMIT && !guard) {
       return "too many matches";
     }
     const decls = rule.declarations || [];
@@ -403,7 +498,8 @@ function cssMatchesViolateHostsOrContrast(root, op, mode, beforeRects) {
     const outlineColor = colorValueFromRule(rule, "outline-color");
     const borderColor = colorValueFromRule(rule, "border-color");
     const isState = Boolean(rule.selector && rule.selector.state);
-    for (const el of matches) {
+    const checkList = guard ? sampleMatchesForGuard(matches, records) : [...matches];
+    for (const el of checkList) {
       if (elementIsPageContainer(el) || elementForbiddenAsTextOrTagHost(el)) {
         return "target is not allowlisted";
       }
@@ -414,7 +510,8 @@ function cssMatchesViolateHostsOrContrast(root, op, mode, beforeRects) {
         const allowHit =
           hitOnly &&
           isInlineControl(el) &&
-          (guard || !beforeRects || !ancestorGrewPast(el, beforeRects, 8));
+          (guard || !beforeRects || !ancestorGrewPast(el, beforeRects, 8)) &&
+          hostStaysInsideAncestor(el);
         if (!allowHit) return "size change is not allowlisted";
       }
       if (setsUnderline && decorationIncludesLineThrough(el)) {
@@ -464,12 +561,29 @@ function snapshotOutOfFlowRects(root, op) {
   return map;
 }
 
+function deactivateSheet(style) {
+  if (!style) return;
+  style.disabled = true;
+  style.setAttribute("media", "not all");
+  if (style.parentNode) style.parentNode.removeChild(style);
+}
+
+function activateSheet(style, parent, media) {
+  if (!style) return;
+  style.disabled = false;
+  if (media == null) style.removeAttribute("media");
+  else style.setAttribute("media", media);
+  const host = parent || style.ownerDocument?.head || style.ownerDocument?.documentElement;
+  if (host && !style.isConnected) host.appendChild(style);
+}
+
 function applyInjectCss(root, op, index) {
   const doc = docOf(root);
   const id = cssKey(op);
   const existing = doc.getElementById(id);
   const beforeRects = snapshotOutOfFlowRects(root, op);
   let undo;
+  let redo;
   if (existing && localTagName(existing) === "style") {
     const prev = existing.textContent ?? "";
     if (prev === op.css) {
@@ -479,9 +593,16 @@ function applyInjectCss(root, op, index) {
       }
       return noop();
     }
+    const prevMedia = existing.getAttribute("media");
+    const parent = existing.parentNode;
     existing.textContent = op.css;
     undo = () => {
       existing.textContent = prev;
+      activateSheet(existing, parent, prevMedia);
+    };
+    redo = () => {
+      existing.textContent = op.css;
+      activateSheet(existing, parent, null);
     };
   } else {
     const style = doc.createElement("style");
@@ -491,17 +612,22 @@ function applyInjectCss(root, op, index) {
     const parent = doc.head ?? doc.documentElement;
     parent.appendChild(style);
     undo = () => {
-      style.remove();
+      deactivateSheet(style);
+    };
+    redo = () => {
+      activateSheet(style, parent, null);
     };
   }
   if (!backstopsPaused) {
     const hostErr = cssMatchesViolateHostsOrContrast(root, op, "apply", beforeRects);
     if (hostErr) {
       undo();
+      const live = doc.getElementById(id);
+      if (live) live.remove();
       return { status: "miss", error: `ops[${index}] ${hostErr}` };
     }
   }
-  return applied(undo);
+  return applied(undo, redo);
 }
 
 function alreadyLabelled(input) {
@@ -546,7 +672,7 @@ function applyWrapLabel(root, op, index) {
     replacementOf.set(hint, label);
     hint.replaceWith(label);
   } else input.insertAdjacentElement("beforebegin", label);
-  return applied(() => {
+  const undo = () => {
     if (hint) {
       replacementOf.delete(hint);
       label.replaceWith(hint);
@@ -555,7 +681,16 @@ function applyWrapLabel(root, op, index) {
     else input.setAttribute("data-labelled", labelledValue ?? "");
     if (hadUnlabeled) input.setAttribute("data-unlabeled", unlabeledValue ?? "");
     else input.removeAttribute("data-unlabeled");
-  });
+  };
+  const redo = () => {
+    input.removeAttribute("data-unlabeled");
+    input.setAttribute("data-labelled", "1");
+    if (hint) {
+      replacementOf.set(hint, label);
+      hint.replaceWith(label);
+    } else input.insertAdjacentElement("beforebegin", label);
+  };
+  return applied(undo, redo);
 }
 
 function applyMakeFocusable(root, op, index) {
@@ -571,11 +706,17 @@ function applyMakeFocusable(root, op, index) {
   const prevTab = el.getAttribute("tabindex");
   el.tabIndex = 0;
   el.setAttribute("data-lift-focusable", "1");
-  return applied(() => {
-    el.removeAttribute("data-lift-focusable");
-    if (!hadTab) el.removeAttribute("tabindex");
-    else el.setAttribute("tabindex", prevTab ?? "0");
-  });
+  return applied(
+    () => {
+      el.removeAttribute("data-lift-focusable");
+      if (!hadTab) el.removeAttribute("tabindex");
+      else el.setAttribute("tabindex", prevTab ?? "0");
+    },
+    () => {
+      el.tabIndex = 0;
+      el.setAttribute("data-lift-focusable", "1");
+    },
+  );
 }
 
 function applyBindEnterToClick(root, op, index) {
@@ -590,12 +731,19 @@ function applyBindEnterToClick(root, op, index) {
     return { status: "miss", error: `ops[${index}] target is not allowlisted` };
   }
   if (el.getAttribute("data-lift-enter") === "1") return noop();
-  const stop = installActivationBridge(el, { space: false });
+  let stop = installActivationBridge(el, { space: false });
   el.setAttribute("data-lift-enter", "1");
-  return applied(() => {
-    stop();
-    el.removeAttribute("data-lift-enter");
-  });
+  return applied(
+    () => {
+      stop();
+      stop = () => {};
+      el.removeAttribute("data-lift-enter");
+    },
+    () => {
+      stop = installActivationBridge(el, { space: false });
+      el.setAttribute("data-lift-enter", "1");
+    },
+  );
 }
 
 const FORWARDED_TO = new WeakMap();
@@ -671,33 +819,26 @@ function isActivationKey(event, space) {
   return null;
 }
 
+function keyAlreadyClicked(event) {
+  return Boolean(event && clickedDuringKey.get(event));
+}
+
 function installActivationBridge(el, opts) {
   const space = Boolean(opts && opts.space);
-  let clickDuringKey = false;
   let spaceArmed = false;
-  const onClickArm = () => {
-    clickDuringKey = true;
-  };
-  const onKeyDownCapture = (event) => {
-    if (event.target !== el) return;
-    const kind = isActivationKey(event, space);
-    if (!kind) return;
-    if (event.repeat) return;
-    clickDuringKey = false;
-    el.removeEventListener("click", onClickArm, true);
-    el.addEventListener("click", onClickArm, { capture: true, once: true });
-    if (kind === "space") spaceArmed = true;
-  };
+  let spaceKeydown = null;
   const onKeyDown = (event) => {
     if (event.target !== el) return;
     const kind = isActivationKey(event, space);
     if (!kind) return;
     if (event.repeat) return;
     if (kind === "space") {
+      spaceArmed = true;
+      spaceKeydown = event;
       event.preventDefault();
       return;
     }
-    if (event.defaultPrevented || clickDuringKey) return;
+    if (event.defaultPrevented || keyAlreadyClicked(event)) return;
     event.preventDefault();
     el.click();
     event.stopPropagation();
@@ -709,19 +850,20 @@ function installActivationBridge(el, opts) {
     if (!spaceArmed) return;
     spaceArmed = false;
     if (event.repeat) return;
-    if (event.defaultPrevented || clickDuringKey) return;
+    if (event.defaultPrevented || keyAlreadyClicked(event) || keyAlreadyClicked(spaceKeydown)) {
+      spaceKeydown = null;
+      return;
+    }
+    spaceKeydown = null;
     event.preventDefault();
     el.click();
     event.stopPropagation();
   };
-  el.addEventListener("keydown", onKeyDownCapture, true);
   el.addEventListener("keydown", onKeyDown);
   el.addEventListener("keyup", onKeyUp);
   return () => {
-    el.removeEventListener("keydown", onKeyDownCapture, true);
     el.removeEventListener("keydown", onKeyDown);
     el.removeEventListener("keyup", onKeyUp);
-    el.removeEventListener("click", onClickArm, true);
   };
 }
 
@@ -783,9 +925,10 @@ function applyPromoteToControl(root, op, index) {
   el.setAttribute("role", role);
   el.tabIndex = 0;
   el.setAttribute("data-lift-promoted", role);
-  const stop = installActivationBridge(el, { space: role === "button" });
+  let stop = installActivationBridge(el, { space: role === "button" });
   const restore = () => {
     stop();
+    stop = () => {};
     if (!hadMark) el.removeAttribute("data-lift-promoted");
     else el.setAttribute("data-lift-promoted", prevMark ?? "");
     if (!hadTab) el.removeAttribute("tabindex");
@@ -793,12 +936,18 @@ function applyPromoteToControl(root, op, index) {
     if (!hadRole) el.removeAttribute("role");
     else el.setAttribute("role", prevRole ?? "");
   };
+  const reapply = () => {
+    el.setAttribute("role", role);
+    el.tabIndex = 0;
+    el.setAttribute("data-lift-promoted", role);
+    stop = installActivationBridge(el, { space: role === "button" });
+  };
   const contrastErr = checkNodeContrast(el);
   if (contrastErr) {
     restore();
     return { status: "miss", error: `ops[${index}] ${contrastErr}` };
   }
-  return applied(restore);
+  return applied(restore, reapply);
 }
 
 function findMount(root, mountId) {
@@ -855,9 +1004,29 @@ function applyInsertHtml(root, op, index) {
     default:
       return { status: "miss", error: `ops[${index}] position must be before|after|prepend|append` };
   }
-  return applied(() => {
-    holder.remove();
-  });
+  return applied(
+    () => {
+      holder.remove();
+    },
+    () => {
+      switch (op.position) {
+        case "before":
+          target.before(holder);
+          break;
+        case "after":
+          target.after(holder);
+          break;
+        case "prepend":
+          target.prepend(holder);
+          break;
+        case "append":
+          target.append(holder);
+          break;
+        default:
+          break;
+      }
+    },
+  );
 }
 
 function applyToggleDisclosure(root, op, index) {
@@ -888,14 +1057,21 @@ function applyToggleDisclosure(root, op, index) {
   trigger.addEventListener("click", onClick);
   trigger.setAttribute("data-lift-disclosure", "1");
   if (!hadExpanded) trigger.setAttribute("aria-expanded", "false");
-  return applied(() => {
-    trigger.removeEventListener("click", onClick);
-    trigger.removeAttribute("data-lift-disclosure");
-    if (!hadExpanded) trigger.removeAttribute("aria-expanded");
-    else trigger.setAttribute("aria-expanded", prevExpanded ?? "false");
-    if (!hadOpen) panel.classList.remove("lift-open");
-    else panel.classList.add("lift-open");
-  });
+  return applied(
+    () => {
+      trigger.removeEventListener("click", onClick);
+      trigger.removeAttribute("data-lift-disclosure");
+      if (!hadExpanded) trigger.removeAttribute("aria-expanded");
+      else trigger.setAttribute("aria-expanded", prevExpanded ?? "false");
+      if (!hadOpen) panel.classList.remove("lift-open");
+      else panel.classList.add("lift-open");
+    },
+    () => {
+      trigger.addEventListener("click", onClick);
+      trigger.setAttribute("data-lift-disclosure", "1");
+      if (!hadExpanded) trigger.setAttribute("aria-expanded", "false");
+    },
+  );
 }
 
 function applyOp(root, op, index) {
@@ -923,13 +1099,51 @@ function applyOp(root, op, index) {
   }
 }
 
+function runUndo(item) {
+  if (!item) return;
+  if (typeof item === "function") item();
+  else if (typeof item.undo === "function") item.undo();
+}
+
+function runRedo(item) {
+  if (!item || typeof item !== "object") return;
+  if (typeof item.redo === "function") item.redo();
+}
+
 function undoAll(undos) {
   for (let i = undos.length - 1; i >= 0; i -= 1) {
     try {
-      undos[i]();
+      runUndo(undos[i]);
     } catch {
       /* fail-open: best-effort undo */
     }
+  }
+}
+
+function redoAll(undos) {
+  for (let i = 0; i < undos.length; i += 1) {
+    try {
+      runRedo(undos[i]);
+    } catch {
+      /* fail-open: best-effort redo */
+    }
+  }
+}
+
+function removeSpecSheets(root, spec) {
+  for (const el of specStyleElements(root, spec)) {
+    try {
+      el.remove();
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+function hardUndoAll(root, spec, undos) {
+  undoAll(undos);
+  for (const el of specStyleElements(root, spec)) {
+    if (el.disabled || el.getAttribute("media") === "not all") el.remove();
   }
 }
 
@@ -1233,8 +1447,9 @@ function collectOverlayElements(root, spec) {
       } catch {
         continue;
       }
+      const grows = (rule.declarations || []).some((d) => SIZE_GROWING_PROPS.has(d.property));
       for (const host of matches) {
-        if (isPositionedOverlay(host)) add(host);
+        if (grows || isPositionedOverlay(host)) add(host);
         if (typeof host.querySelectorAll !== "function") continue;
         for (const child of host.querySelectorAll("*")) {
           if (isPositionedOverlay(child)) add(child);
@@ -1303,18 +1518,45 @@ function overlayPaintsAbove(overlay, control, inter) {
   return false;
 }
 
+function unionRects(els) {
+  let u = null;
+  for (const el of els) {
+    const r = cachedRect(el);
+    if (r.width <= 0 && r.height <= 0) continue;
+    if (!u) {
+      u = { left: r.left, top: r.top, right: r.right, bottom: r.bottom };
+      continue;
+    }
+    u.left = Math.min(u.left, r.left);
+    u.top = Math.min(u.top, r.top);
+    u.right = Math.max(u.right, r.right);
+    u.bottom = Math.max(u.bottom, r.bottom);
+  }
+  return u;
+}
+
+function rectsCouldOverlap(a, b) {
+  if (!a || !b) return true;
+  return !(a.right < b.left || a.left > b.right || a.bottom < b.top || a.top > b.bottom);
+}
+
 function coverageHitsFor(control, overlays) {
   const crect = cachedRect(control);
   const area = crect.width * crect.height;
   if (area <= 0) return [];
   const hits = [];
+  const cx = crect.left + crect.width / 2;
+  const cy = crect.top + crect.height / 2;
   for (const overlay of overlays) {
     if (overlay === control) continue;
     if (control.contains && control.contains(overlay)) continue;
     if (overlay.contains && overlay.contains(control)) continue;
-    const inter = rectIntersection(crect, cachedRect(overlay));
+    const orect = cachedRect(overlay);
+    const inter = rectIntersection(crect, orect);
     if (!inter) continue;
-    if (inter.width * inter.height / area < 0.25) continue;
+    const areaHit = inter.width * inter.height / area >= 0.25;
+    const centerHit = cx >= orect.left && cx <= orect.right && cy >= orect.top && cy <= orect.bottom;
+    if (!areaHit && !centerHit) continue;
     if (!overlayPaintsAbove(overlay, control, inter)) continue;
     hits.push(overlay);
   }
@@ -1366,7 +1608,9 @@ function overlayCoverageViolation(root, spec, snapshots, extraFocusables, mode) 
       items.push({ el, before: [] });
     }
   }
+  const grownUnion = unionRects(overlays);
   for (const item of items) {
+    if (grownUnion && !rectsCouldOverlap(cachedRect(item.el), grownUnion)) continue;
     const after = coverageHitsFor(item.el, overlays);
     const beforeSet = new Set(item.before);
     for (const overlay of after) {
@@ -1425,10 +1669,7 @@ function collectFocusables(root) {
   } catch {
     return out;
   }
-  for (const el of nodes) {
-    out.push(el);
-    if (out.length >= WATCH_NODE_CAP) break;
-  }
+  for (const el of nodes) out.push(el);
   return out;
 }
 
@@ -1540,10 +1781,10 @@ function attachOverlayHits(root, spec, snapshots) {
   return snapshots;
 }
 
-function specContrastError(root, spec, mode) {
+function specContrastError(root, spec, mode, records) {
   for (const op of spec.ops) {
     if (op.op !== "injectCSS") continue;
-    const err = cssMatchesViolateHostsOrContrast(root, op, mode);
+    const err = cssMatchesViolateHostsOrContrast(root, op, mode, null, records);
     if (err) return err;
   }
   return null;
@@ -1695,7 +1936,7 @@ function recordsTouchSnapshots(records, snapshots) {
 
 function runGuardCheck(root, spec, snapshots, records) {
   return withRectCache(() => {
-    const contrastErr = specContrastError(root, spec, "guard");
+    const contrastErr = specContrastError(root, spec, "guard", records);
     if (contrastErr) return contrastErr;
     const extra = addedFocusablesFromRecords(records);
     const coverErr = overlayCoverageViolation(root, spec, snapshots, extra, "guard");
@@ -1730,20 +1971,10 @@ function recheckGuardPredicate(root, spec, snapshots, records, err) {
       const extra = addedFocusablesFromRecords(records);
       return overlayCoverageViolation(root, spec, snapshots, extra, "guard");
     }
-    if (isContrastPredicate(err)) return specContrastError(root, spec, "guard");
+    if (isContrastPredicate(err)) return specContrastError(root, spec, "guard", records);
     const subset = recordsTouchSnapshots(records, snapshots);
     return monotonicityViolation(root, subset);
   });
-}
-
-function sheetRuleText(el) {
-  try {
-    const rules = el.sheet && el.sheet.cssRules;
-    if (!rules || rules.length === 0) return el.textContent ?? "";
-    return [...rules].map((rule) => rule.cssText).join("\n");
-  } catch {
-    return el.textContent ?? "";
-  }
 }
 
 function rebaselineSnapshots(root, spec, snapshots) {
@@ -1766,18 +1997,7 @@ function attributeGuardViolation(root, spec, snapshots, records, undos, err) {
     rebaselineSnapshots(root, spec, snapshots);
     return "page";
   }
-  const sheets = specStyleElements(root, spec);
-  const parked = sheets.map((el) => ({
-    el,
-    disabled: el.disabled,
-    media: el.getAttribute("media"),
-    text: sheetRuleText(el),
-  }));
-  for (const { el } of parked) {
-    el.disabled = true;
-    el.setAttribute("media", "not all");
-    el.textContent = "";
-  }
+  undoAll(undos);
   let persists = false;
   try {
     const doc = docOf(root);
@@ -1785,21 +2005,15 @@ function attributeGuardViolation(root, spec, snapshots, records, undos, err) {
     persists = Boolean(recheckGuardPredicate(root, spec, snapshots, records, err));
   } catch {
     persists = true;
-  } finally {
-    for (const { el, disabled, media, text } of parked) {
-      el.textContent = text;
-      el.disabled = disabled;
-      if (media == null) el.removeAttribute("media");
-      else el.setAttribute("media", media);
-    }
-    const doc = docOf(root);
-    if (doc && doc.body) void doc.body.offsetHeight;
   }
   if (persists) {
+    redoAll(undos);
+    const doc = docOf(root);
+    if (doc && doc.body) void doc.body.offsetHeight;
     rebaselineSnapshots(root, spec, snapshots);
     return "page";
   }
-  undoAll(undos);
+  removeSpecSheets(root, spec);
   return "spec";
 }
 
@@ -1922,19 +2136,19 @@ function installMutationGuard(root, spec, snapshots, undos) {
 }
 
 function finishApply(scope, spec, snapshots, undos, opsStatus) {
-  const contrastErr = specContrastError(scope, spec, "apply");
+  const contrastErr = withRectCache(() => specContrastError(scope, spec, "apply"));
   if (contrastErr) {
-    undoAll(undos);
+    hardUndoAll(scope, spec, undos);
     return { ok: false, error: contrastErr, ops: opsStatus };
   }
   const monoErr = monotonicityViolation(scope, snapshots);
   if (monoErr) {
-    undoAll(undos);
+    hardUndoAll(scope, spec, undos);
     return { ok: false, error: monoErr, ops: opsStatus };
   }
-  const coverErr = overlayCoverageViolation(scope, spec, snapshots, null, "apply");
+  const coverErr = withRectCache(() => overlayCoverageViolation(scope, spec, snapshots, null, "apply"));
   if (coverErr) {
-    undoAll(undos);
+    hardUndoAll(scope, spec, undos);
     return { ok: false, error: coverErr, ops: opsStatus };
   }
   const existing = guardsBySpecId.get(spec.id);
@@ -1995,11 +2209,11 @@ export function applyPatchSpec(input, root) {
         const op = parsed.spec.ops[i];
         const result = applyOp(scope, op, i);
         if (result.status === "miss") {
-          undoAll(undos);
+          hardUndoAll(scope, parsed.spec, undos);
           return { ok: false, error: result.error, ops: opsStatus };
         }
         if (result.status === "applied") {
-          undos.push(result.undo);
+          undos.push({ undo: result.undo, redo: result.redo });
           opsStatus.push({ op: op.op, status: "applied" });
         } else {
           opsStatus.push({ op: op.op, status: "noop" });
@@ -2017,7 +2231,7 @@ export function applyPatchSpec(input, root) {
       }
       return finishApply(scope, parsed.spec, snapshots, undos, opsStatus);
     } catch (err) {
-      undoAll(undos);
+      hardUndoAll(scope, parsed.spec, undos);
       return {
         ok: false,
         error: err instanceof Error ? err.message : String(err),

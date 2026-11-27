@@ -1180,6 +1180,256 @@ test("04-dropdown-keeps-fix", async ({ page }) => {
   await pause(page, 2000);
 });
 
+test("04-sticky-hit-target-covers-rejected", async ({ page }) => {
+  await page.goto("/checkout/?lift_variant=control&lift_bot=1");
+  await openCheckoutWithHover(page);
+  await showBanner(page, "I1 — a grown sticky link must not cover Buy");
+  await setBackstopsPaused(page, true);
+  const applied = await page.evaluate(async () => {
+    const href = new URL("/runtime/runtime.js", location.origin).href;
+    const runtime = (await import(href)) as {
+      applyPatchSpec: (input: unknown) => { ok: boolean; error?: string };
+    };
+    const checkout = document.getElementById("checkout") || document.body;
+    const header = document.createElement("header");
+    header.id = "sticky-mast";
+    header.style.cssText =
+      "position:sticky;top:0;height:40px;overflow:visible;background:#fff;z-index:5;border:1px dashed #888";
+    const link = document.createElement("a");
+    link.id = "hit";
+    link.href = "#x";
+    link.textContent = "Go";
+    link.style.cssText = "display:inline-block;color:#111;background:#cfc;font:700 16px/1 system-ui";
+    header.append(link);
+    const buy = document.createElement("button");
+    buy.id = "buy-under";
+    buy.type = "button";
+    buy.textContent = "Buy";
+    buy.style.cssText =
+      "display:block;width:64px;height:40px;margin:0;padding:0;font:700 14px/40px system-ui";
+    checkout.prepend(header, buy);
+    return runtime.applyPatchSpec({
+      id: "sticky-cover",
+      version: 0,
+      ops: [
+        {
+          op: "injectCSS",
+          rules: [
+            {
+              selector: { id: "hit" },
+              declarations: [
+                { property: "min-height", value: "64px" },
+                { property: "min-width", value: "64px" },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+  });
+  expect(applied.ok).toBe(true);
+  await page.evaluate(() => {
+    const buy = document.getElementById("buy-under");
+    if (buy instanceof HTMLElement) {
+      buy.style.outline = "6px solid #f00";
+      buy.style.outlineOffset = "2px";
+    }
+  });
+  await markBadState(page, "#buy-under", "BAD STATE: grown #hit covers Buy (outlined red)");
+  await setBackstopsPaused(page, false);
+  await page.waitForTimeout(80);
+  const restored = await page.evaluate(() => {
+    const buy = document.getElementById("buy-under");
+    if (!buy) return { css: true, hitOk: false };
+    const box = buy.getBoundingClientRect();
+    const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+    return {
+      css: Boolean(document.querySelector("[data-lift-css]")),
+      hitOk: hit === buy || Boolean(buy.contains(hit)),
+    };
+  });
+  expect(restored.css).toBe(false);
+  expect(restored.hitOk).toBe(true);
+  await page.evaluate(() => {
+    const buy = document.getElementById("buy-under");
+    if (buy instanceof HTMLElement) {
+      buy.style.outline = "";
+      buy.style.outlineOffset = "";
+    }
+  });
+  await clearBadState(page);
+  await showBanner(page, "REJECTED — Buy is hittable again; grown sticky link undone");
+  await pause(page, 2000);
+});
+
+test("04-capture-click-no-double", async ({ page }) => {
+  await page.goto("/checkout/?lift_variant=control");
+  await openCheckoutWithHover(page);
+  await showBanner(page, "W2 — capture-phase click without preventDefault must activate once");
+  const setup = await page.evaluate(async () => {
+    const href = new URL("/runtime/runtime.js", location.origin).href;
+    const runtime = (await import(href)) as {
+      applyPatchSpec: (input: unknown) => { ok: boolean; error?: string };
+    };
+    const checkout = document.getElementById("checkout") || document.body;
+    const host = document.createElement("div");
+    host.id = "cap-once";
+    host.style.cssText =
+      "display:inline-block;margin:12px 0;padding:10px 16px;background:#111;color:#fff;cursor:pointer;font:700 18px/1.3 system-ui";
+    host.textContent = "Activate";
+    const counter = document.createElement("div");
+    counter.id = "capture-count";
+    counter.style.cssText = "font:700 28px/1.2 ui-monospace,monospace;margin:8px 0";
+    counter.textContent = "activations: 0";
+    let clicks = 0;
+    host.addEventListener(
+      "keydown",
+      () => {
+        host.click();
+      },
+      true,
+    );
+    host.addEventListener("click", () => {
+      clicks += 1;
+      counter.textContent = `activations: ${clicks}`;
+    });
+    checkout.append(host, counter);
+    return runtime.applyPatchSpec({
+      id: "cap-once",
+      version: 0,
+      ops: [{ op: "promoteToControl", selector: "#cap-once", as: "button" }],
+    });
+  });
+  expect(setup.ok).toBe(true);
+  await page.locator("#cap-once").focus();
+  await page.keyboard.press("Enter");
+  await expect(page.locator("#capture-count")).toHaveText("activations: 1");
+  await showBanner(page, "activations: 1 — capture click plus bridge did not double-fire");
+  await pause(page, 2000);
+});
+
+test("04-label-in-name-attributed", async ({ page }) => {
+  await page.goto("/checkout/?lift_variant=control&lift_bot=1");
+  await openCheckoutWithHover(page);
+  await showBanner(page, "W3 — aria-label is undone when the visible text no longer matches");
+  const applied = await page.evaluate(async () => {
+    const href = new URL("/runtime/runtime.js", location.origin).href;
+    const runtime = (await import(href)) as {
+      applyPatchSpec: (input: unknown) => { ok: boolean; error?: string };
+    };
+    const checkout = document.getElementById("checkout") || document.body;
+    const pay = document.createElement("button");
+    pay.type = "button";
+    pay.id = "named-pay";
+    pay.textContent = "Checkout";
+    pay.style.cssText = "display:block;margin:12px 0;padding:10px 16px;font:700 18px/1.3 system-ui";
+    checkout.append(pay);
+    return runtime.applyPatchSpec({
+      id: "aria-checkout",
+      version: 0,
+      ops: [{ op: "setAttribute", selector: "#named-pay", name: "aria-label", value: "Checkout" }],
+    });
+  });
+  expect(applied.ok).toBe(true);
+  await setBackstopsPaused(page, true);
+  const before = await page.evaluate(() => {
+    const pay = document.getElementById("named-pay");
+    if (!(pay instanceof HTMLElement)) return { name: "", text: "" };
+    pay.textContent = "Checkout (2)";
+    return {
+      labelled: pay.getAttribute("aria-label") ?? "",
+      text: pay.textContent ?? "",
+      computed: pay.getAttribute("aria-label") || pay.textContent || "",
+    };
+  });
+  await showBanner(
+    page,
+    `BEFORE undo — computed name="${before.computed}" visible="${before.text}" (label-in-name broken)`,
+  );
+  await setBackstopsPaused(page, false);
+  await page.waitForTimeout(80);
+  const after = await page.evaluate(() => {
+    const pay = document.getElementById("named-pay");
+    if (!(pay instanceof HTMLElement)) return { labelled: true, computed: "", text: "" };
+    return {
+      labelled: pay.hasAttribute("aria-label"),
+      computed: pay.getAttribute("aria-label") || pay.textContent || "",
+      text: pay.textContent ?? "",
+    };
+  });
+  expect(after.labelled).toBe(false);
+  await showBanner(
+    page,
+    `AFTER undo — computed name="${after.computed}" visible="${after.text}" — aria-label op removed`,
+  );
+  await pause(page, 2000);
+});
+
+test("04-overflow-matches-contrast", async ({ page }) => {
+  await page.goto("/checkout/?lift_variant=control&lift_bot=1");
+  await openCheckoutWithHover(page);
+  await showBanner(page, "W4 — overflow .item matches still get a contrast check");
+  const applied = await page.evaluate(async () => {
+    const href = new URL("/runtime/runtime.js", location.origin).href;
+    const runtime = (await import(href)) as {
+      applyPatchSpec: (input: unknown) => { ok: boolean; error?: string };
+    };
+    const checkout = document.getElementById("checkout") || document.body;
+    const list = document.createElement("div");
+    list.id = "item-list";
+    list.style.cssText = "background-color:#fff;color:#111";
+    for (let i = 0; i < 10; i += 1) {
+      const item = document.createElement("span");
+      item.className = "item";
+      item.textContent = "row";
+      list.append(item);
+    }
+    checkout.append(list);
+    return runtime.applyPatchSpec({
+      id: "items",
+      version: 0,
+      ops: [
+        {
+          op: "injectCSS",
+          rules: [
+            {
+              selector: { classes: ["item"] },
+              declarations: [{ property: "color", value: "#111" }],
+            },
+          ],
+        },
+      ],
+    });
+  });
+  expect(applied.ok).toBe(true);
+  await setBackstopsPaused(page, true);
+  await page.evaluate(() => {
+    const checkout = document.getElementById("checkout") || document.body;
+    const dark = document.createElement("div");
+    dark.id = "dark-items";
+    dark.style.cssText = "background-color:#111;color:#fff;padding:8px;margin:12px 0";
+    for (let i = 0; i < 60; i += 1) {
+      const item = document.createElement("span");
+      item.className = "item";
+      item.textContent = "WHITE ON BLACK FAIL";
+      item.style.cssText = "display:block;font:14px/1.4 system-ui";
+      dark.append(item);
+    }
+    checkout.append(dark);
+  });
+  await showGhostReadout(page, "#dark-items .item", "BAD STATE: overflow .item is #111 on #111");
+  await setBackstopsPaused(page, false);
+  await page.waitForTimeout(80);
+  expect(await page.evaluate(() => Boolean(document.querySelector("[data-lift-css]")))).toBe(false);
+  await showRestoredReadout(
+    page,
+    "#dark-items .item",
+    "UNDONE overflow matches — effective background, items readable",
+  );
+  await clearBadState(page);
+  await pause(page, 800);
+});
+
 test("05-sticky-identity", async ({ page }) => {
   await page.goto("/checkout/");
   await page.waitForTimeout(1500);

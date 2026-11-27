@@ -412,10 +412,27 @@ describe("R9 I1 sticky hit-target", () => {
 
   it("allows min-height on an inline link inside a sticky header", () => {
     document.body.innerHTML = `
-      <header style="position:sticky;top:0;height:80px;background-color:#fff">
+      <header id="mast-ok" style="position:sticky;top:0;height:80px;background-color:#fff">
         <a id="hit" href="#x" style="color:#111;background-color:#fff;display:inline-flex">Go</a>
       </header>
     `;
+    const box = (left: number, top: number, width: number, height: number) => ({
+      x: left,
+      y: top,
+      left,
+      top,
+      width,
+      height,
+      right: left + width,
+      bottom: top + height,
+      toJSON() {
+        return this;
+      },
+    });
+    const mast = document.getElementById("mast-ok") as HTMLElement;
+    const hit = document.getElementById("hit") as HTMLElement;
+    mast.getBoundingClientRect = () => box(0, 0, 400, 80) as DOMRect;
+    hit.getBoundingClientRect = () => box(8, 18, 40, 44) as DOMRect;
     expect(
       applyPatchSpec({
         id: "sticky-hit",

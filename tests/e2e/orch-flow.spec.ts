@@ -1,4 +1,6 @@
-import { existsSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { config as loadEnv } from "dotenv";
 import { expect, test } from "@playwright/test";
 import { parseArgv } from "../../orchestrator/src/config.ts";
@@ -18,25 +20,49 @@ test.describe.configure({ timeout: 600_000 });
 
 test("full orchestrator flow against self-hosted Flagsmith", async () => {
   test.skip(!hasFlagsmith, "self-hosted Flagsmith env is not configured");
-  const opts = parseArgv([
-    "--apply",
-    "--no-ui",
-    "--traffic-n",
-    "8",
-    "--generations",
-    "1",
-    "--site-url",
-    "http://127.0.0.1:4174/checkout",
-  ]);
-  opts.resultsWaitMs = 20_000;
-  const state = await runOrchestrator(opts);
-  expect(state.generations).toHaveLength(1);
-  const gen = state.generations[0];
-  expect(gen.rejected.some((item) => item.specId.includes("bad-contrast"))).toBe(true);
-  expect(gen.passed.length).toBeGreaterThan(0);
-  expect(gen.flag?.flagId).toBeGreaterThan(0);
-  expect(gen.flag?.experimentId).toBeGreaterThan(0);
-  expect(gen.flag?.metricId).toBeGreaterThan(0);
-  expect(state.phase).toBe("WAITING_FOR_HUMAN_APPROVAL");
-  expect(gen.visits?.length ?? 0).toBeGreaterThan(0);
+  const dir = mkdtempSync(join(tmpdir(), "lift-orch-"));
+  const previousStateDir = process.env.LIFT_ORCH_STATE_DIR;
+  const previousExtra = process.env.LIFT_ORCH_MAX_EXTRA_ROUNDS;
+  process.env.LIFT_ORCH_STATE_DIR = dir;
+  const flagName = `lift_orch_e2e_${Date.now().toString(36)}`;
+  try {
+    const opts = parseArgv([
+      "--apply",
+      "--no-ui",
+      "--traffic-n",
+      "8",
+      "--generations",
+      "1",
+      "--flag-name",
+      flagName,
+      "--site-url",
+      "http://127.0.0.1:4184/checkout",
+    ]);
+    opts.resultsWaitMs = 20_000;
+    process.env.LIFT_ORCH_MAX_EXTRA_ROUNDS = "0";
+    const state = await runOrchestrator(opts);
+    expect(state.generations).toHaveLength(1);
+    const gen = state.generations[0];
+    expect(gen.rejected.some((item) => item.specId.includes("bad-contrast"))).toBe(true);
+    expect(gen.passed.length).toBeGreaterThan(0);
+    expect(gen.flag?.flagName.startsWith("lift_orch_")).toBe(true);
+    expect(gen.flag?.flagId).toBeGreaterThan(0);
+    expect(gen.flag?.experimentId).toBeGreaterThan(0);
+    expect(gen.flag?.metricId).toBeGreaterThan(0);
+    expect(state.phase).toBe("WAITING_FOR_HUMAN_APPROVAL");
+    expect(gen.visits?.length ?? 0).toBeGreaterThan(0);
+  } finally {
+    try {
+      const cleanup = parseArgv(["--cleanup", "--apply", "--no-ui"]);
+      cleanup.flagName = flagName;
+      await runOrchestrator(cleanup);
+    } catch {
+      /* best-effort */
+    }
+    if (previousStateDir === undefined) delete process.env.LIFT_ORCH_STATE_DIR;
+    else process.env.LIFT_ORCH_STATE_DIR = previousStateDir;
+    if (previousExtra === undefined) delete process.env.LIFT_ORCH_MAX_EXTRA_ROUNDS;
+    else process.env.LIFT_ORCH_MAX_EXTRA_ROUNDS = previousExtra;
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

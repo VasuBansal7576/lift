@@ -70,6 +70,11 @@ export async function applySpecOnPage(page: Page, spec: PatchSpec): Promise<Appl
   }, spec);
 }
 
+export async function gotoSite(page: Page, siteUrl: string): Promise<void> {
+  const url = siteUrl.endsWith("/") ? siteUrl : `${siteUrl}/`;
+  await page.goto(url, { waitUntil: "domcontentloaded" });
+}
+
 export async function gotoControl(page: Page, siteUrl: string): Promise<void> {
   const url = siteUrl.includes("?")
     ? `${siteUrl}${siteUrl.endsWith("&") ? "" : "&"}lift_variant=control`

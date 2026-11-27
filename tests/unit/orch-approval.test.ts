@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   APPROVAL_PHASE,
   approvalSummary,
-  assertCanApprove,
+  assertApproveArgs,
+  requireTypedApproval,
 } from "../../orchestrator/src/agents/approval.ts";
 import { EventLog } from "../../orchestrator/src/log.ts";
 import { pauseForHumanApproval } from "../../orchestrator/src/agents/approval.ts";
@@ -20,12 +21,22 @@ describe("human approval gate", () => {
     expect(log.phase).toBe("WAITING_FOR_HUMAN_APPROVAL");
   });
 
-  it("refuses rollout without --approve", () => {
-    expect(() => assertCanApprove(APPROVAL_PHASE, false)).toThrow(/--approve/);
+  it("refuses rollout without --approve <id>", () => {
+    expect(() => assertApproveArgs(false, null)).toThrow(/--approve/);
+    expect(() => assertApproveArgs(true, null)).toThrow(/experiment id/);
   });
 
-  it("refuses approve from any other phase", () => {
-    expect(() => assertCanApprove("gating", true)).toThrow(/expected WAITING_FOR_HUMAN_APPROVAL/);
+  it("accepts APPROVE <id> from a TTY and rejects a mismatch or non-TTY", async () => {
+    await requireTypedApproval(12, {
+      isTTY: true,
+      readLine: async () => "APPROVE 12",
+    });
+    await expect(
+      requireTypedApproval(12, { isTTY: true, readLine: async () => "yes" }),
+    ).rejects.toThrow(/did not match/);
+    await expect(
+      requireTypedApproval(12, { isTTY: false, readLine: async () => "APPROVE 12" }),
+    ).rejects.toThrow(/TTY/);
   });
 
   it("summarises flag and experiment ids", () => {
@@ -35,7 +46,7 @@ describe("human approval gate", () => {
       rejected: [{ specId: "bad-contrast-v1" } as never],
       flag: {
         dryRun: false,
-        flagName: "checkout_orch_a11y",
+        flagName: "lift_orch_checkout",
         flagId: 9,
         metricId: 3,
         metricEvent: "checkout_completed",
@@ -57,5 +68,6 @@ describe("human approval gate", () => {
     });
     expect(text).toMatch(/experiment id=12/);
     expect(text).toMatch(/full-v1/);
+    expect(text).toMatch(/APPROVE/);
   });
 });

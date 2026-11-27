@@ -199,6 +199,8 @@ export interface PersistedState {
 export interface OrchOptions {
   apply: boolean;
   approve: boolean;
+  approveExperimentId: number | null;
+  cleanup: boolean;
   allowRemote: boolean;
   generations: number;
   siteUrl: string;

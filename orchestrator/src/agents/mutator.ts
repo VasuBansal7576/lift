@@ -30,17 +30,6 @@ export function labelsSpec(id = "labels-v1"): PatchSpec {
   );
 }
 
-export function controlsSpec(id = "controls-v1"): PatchSpec {
-  return spec(id, [
-    { op: "promoteToControl", selector: "#shop-trigger", as: "button" },
-    { op: "setAttribute", selector: "#shop-trigger", name: "aria-controls", value: "shop-menu" },
-    { op: "toggleDisclosure", trigger: "#shop-trigger", panel: "#shop-menu" },
-    { op: "setAttribute", selector: "#cart-icon", name: "aria-label", value: "View cart and check out" },
-    { op: "setText", selector: "#place-order", text: "Place order" },
-    { op: "promoteToControl", selector: "#place-order", as: "button" },
-  ]);
-}
-
 export function contrastSpec(id = "contrast-v1"): PatchSpec {
   return spec(id, [
     {
@@ -66,7 +55,7 @@ export function fullTreatmentSpec(id = "full-v1"): PatchSpec {
   return { ...raw, id };
 }
 
-/** Hostile candidate: white-on-white. Runtime contrast backstop must reject it. */
+/** Hostile canary: white-on-white. parsePatchSpec rejects equal fg/bg; the runtime CSS allowlist also rejects it. */
 export function badContrastSpec(id = "bad-contrast-v1"): PatchSpec {
   return spec(id, [
     {
@@ -191,9 +180,6 @@ export function templatesFromViolations(
   if (rules.has("label") || rules.has("label-title-only")) {
     out.push(candidate(labelsSpec(), "template", "Wrap visible labels on unlabeled fields", ["label"]));
   }
-  if (rules.has("button-name")) {
-    out.push(candidate(controlsSpec(), "template", "Promote Shop / Place order and name the cart", ["button-name"]));
-  }
   if (rules.has("color-contrast")) {
     out.push(candidate(contrastSpec(), "template", "Raise terms contrast to 4.5:1+", ["color-contrast"]));
   }
@@ -266,7 +252,7 @@ export async function maybeLlmCandidates(
   const gemini = process.env.GEMINI_API_KEY?.trim();
   const generic = process.env.LIFT_LLM_API_KEY?.trim();
   if (!client && !groq && !gemini && !generic) {
-    log.emit("mutator", "info", "No free-tier LLM key in env; deterministic templates only");
+    log.emit("mutator", "info", "template mutator; LLM optional when a key is set");
     return [];
   }
   const prompt = `Return JSON only: a Lift PatchSpec (id, version: 0, ops) that fixes these axe violations without using injectCSS color equal to background: ${JSON.stringify(axe.violations.map((v) => v.id))}`;
@@ -297,7 +283,7 @@ export async function runMutator(
   opts?: { generation?: number; champion?: PatchSpec | null },
 ): Promise<CandidateSpec[]> {
   const generation = opts?.generation ?? 1;
-  log.emit("mutator", "start", `Building candidates for generation ${generation}`);
+  log.emit("mutator", "start", `template mutator; LLM optional when a key is set (generation ${generation})`);
   const templates = templatesFromViolations(axe, generation, opts?.champion);
   const llm = generation === 1 ? await maybeLlmCandidates(axe, log) : [];
   const all = [...templates, ...llm];

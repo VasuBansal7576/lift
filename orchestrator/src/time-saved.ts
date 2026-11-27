@@ -9,6 +9,7 @@ import type { TimeSaved } from "./types.ts";
  */
 export const MANUAL_ESTIMATE_MINUTES = 115;
 export const MANUAL_ESTIMATE_MS = MANUAL_ESTIMATE_MINUTES * 60_000;
+export const TIME_SAVED_LABEL = "vs est. manual 115 min (itemised estimate)";
 
 export function measureTimeSaved(wallClockMs: number): TimeSaved {
   const savedMs = Math.max(0, MANUAL_ESTIMATE_MS - wallClockMs);

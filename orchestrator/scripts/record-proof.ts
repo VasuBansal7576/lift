@@ -1,6 +1,7 @@
 /**
  * Continuous live recordings for Track 1 / Track 2.
  * Logs in to Flagsmith before ffmpeg starts so credentials are not on screen.
+ * Real Flagsmith URLs (public client env key in the path is acceptable).
  */
 import { spawn } from "node:child_process";
 import { appendFileSync, mkdirSync, copyFileSync, existsSync, writeFileSync } from "node:fs";
@@ -59,10 +60,18 @@ async function stopFfmpeg(proc: ReturnType<typeof spawn>) {
   if (proc.exitCode === null) proc.kill("SIGKILL");
 }
 
+function requireBootstrapCreds(): { email: string; password: string } {
+  const email = process.env.FLAGSMITH_BOOTSTRAP_EMAIL?.trim();
+  const password = process.env.FLAGSMITH_BOOTSTRAP_PASSWORD?.trim();
+  if (!email || !password) {
+    throw new Error("FLAGSMITH_BOOTSTRAP_EMAIL and FLAGSMITH_BOOTSTRAP_PASSWORD are required (no default creds)");
+  }
+  return { email, password };
+}
+
 async function loginFlagsmith(page: import("@playwright/test").Page) {
+  const { email, password } = requireBootstrapCreds();
   await page.goto("http://127.0.0.1:8000/login", { waitUntil: "domcontentloaded" });
-  const email = process.env.FLAGSMITH_BOOTSTRAP_EMAIL || "admin@lift.local";
-  const password = process.env.FLAGSMITH_BOOTSTRAP_PASSWORD || "lift-dev-password";
   const emailBox = page.getByLabel(/email/i);
   await emailBox.waitFor({ timeout: 10_000 });
   await emailBox.fill(email);
@@ -71,12 +80,33 @@ async function loginFlagsmith(page: import("@playwright/test").Page) {
   await page.waitForURL((url) => !url.pathname.includes("login"), { timeout: 15_000 });
 }
 
+async function typeApproveOnCamera(experimentId: number): Promise<void> {
+  const title = "lift-approve";
+  const cmd = `cd ${REPO_ROOT} && npx tsx orchestrator/src/cli.ts --approve ${experimentId} --apply --no-ui; echo DONE; sleep 12`;
+  spawn("xterm", ["-T", title, "-geometry", "80x18+20+640", "-fa", "Monospace", "-fs", "14", "-e", "bash", "-lc", cmd], {
+    env: { ...process.env, DISPLAY: ":1" },
+    stdio: "ignore",
+  });
+  await new Promise((r) => setTimeout(r, 3500));
+  spawn(
+    "xdotool",
+    ["search", "--name", title, "windowactivate", "--sync", "type", "--delay", "90", `APPROVE ${experimentId}`],
+    { env: { ...process.env, DISPLAY: ":1" }, stdio: "ignore" },
+  );
+  await new Promise((r) => setTimeout(r, 2500));
+  spawn("xdotool", ["search", "--name", title, "windowactivate", "--sync", "key", "Return"], {
+    env: { ...process.env, DISPLAY: ":1" },
+    stdio: "ignore",
+  });
+  await new Promise((r) => setTimeout(r, 12_000));
+}
+
 async function main() {
   mkdirSync(OUT, { recursive: true });
   writeFileSync("/tmp/lift-orch.log", "");
   spawn(
     "xterm",
-    ["-geometry", "92x50+0+40", "-fa", "Monospace", "-fs", "12", "-e", "bash", "-lc", "tail -n +1 -f /tmp/lift-orch.log"],
+    ["-geometry", "92x28+0+40", "-fa", "Monospace", "-fs", "12", "-e", "bash", "-lc", "tail -n +1 -f /tmp/lift-orch.log"],
     {
       env: { ...process.env, DISPLAY: ":1" },
       stdio: "ignore",
@@ -97,24 +127,28 @@ async function main() {
   });
   const context = await browser.newContext({
     viewport: { width: 960, height: 1100 },
-    recordVideo: { dir: resolve(OUT, "playwright"), size: { width: 960, height: 1100 } },
   });
   const page = await context.newPage();
   await loginFlagsmith(page);
   await page.goto("http://127.0.0.1:4177/", { waitUntil: "domcontentloaded" }).catch(() => undefined);
 
-  async function showExperiment(flagName: string, experimentId: number) {
-    await page.goto("http://127.0.0.1:8000/organisation/1/projects", { waitUntil: "domcontentloaded" });
-    await page.locator("text=Create Project").waitFor({ timeout: 10_000 });
-    await page.getByText("Lift", { exact: true }).nth(1).click();
-    await page.waitForTimeout(2000);
-    await page.getByRole("link", { name: /^Experiments$/ }).click();
+  async function showExperiment(dashboardUrl: string) {
+    await page.goto(dashboardUrl, { waitUntil: "domcontentloaded" });
+    await page.waitForTimeout(4000);
+    if (page.url().includes("login")) {
+      throw new Error("Flagsmith session expired; landed on sign-in");
+    }
+  }
+
+  async function showFeature(dashboardUrl: string, flagName: string) {
+    const featureUrl = dashboardUrl.replace(/\/experiments\/\d+$/, "/features");
+    await page.goto(featureUrl, { waitUntil: "domcontentloaded" });
     await page.waitForTimeout(2000);
     await page.getByText(flagName).first().click();
-    await page.waitForTimeout(3500);
-    await page.evaluate((id) => {
-      history.replaceState({}, "", `/project/1/environment/1/experiments/${id}`);
-    }, experimentId);
+    await page.waitForTimeout(4000);
+    if (page.url().includes("login")) {
+      throw new Error("Flagsmith session expired; landed on sign-in");
+    }
   }
 
   const t2 = resolve(OUT, "t2-orchestrator-run.mp4");
@@ -128,9 +162,9 @@ async function main() {
     "--traffic-n",
     "220",
     "--flag-name",
-    `checkout_orch_${stamp}`,
+    `lift_orch_t2_${stamp}`,
     "--site-url",
-    "http://127.0.0.1:4174/checkout",
+    "http://127.0.0.1:4184/checkout",
     "--ui-port",
     "4177",
   ]);
@@ -138,15 +172,14 @@ async function main() {
 
   await page.goto("http://127.0.0.1:4177/", { waitUntil: "domcontentloaded" });
   await page.waitForTimeout(2500);
-  if (state.flag) {
-    await showExperiment(state.flag.flagName, state.flag.experimentId);
+  if (state.flag?.dashboardUrl) {
+    await showExperiment(state.flag.dashboardUrl);
   }
 
-  if (state.recommendation?.kind === "winner") {
-    const approved = await runOrchestrator(parseArgv(["--approve", "--apply", "--keep-ui", "--no-ui"]));
-    process.stdout.write(`approve phase=${approved.phase}\n`);
-    if (state.flag) {
-      await showExperiment(state.flag.flagName, state.flag.experimentId);
+  if (state.recommendation?.kind === "winner" && state.flag) {
+    await typeApproveOnCamera(state.flag.experimentId);
+    if (state.flag.dashboardUrl) {
+      await showFeature(state.flag.dashboardUrl, state.flag.flagName);
     }
   } else {
     process.stdout.write("No winner yet; --approve skipped (keep collecting).\n");
@@ -156,12 +189,19 @@ async function main() {
 
   const t1 = resolve(OUT, "t1-experiment.mp4");
   const ff1 = startFfmpeg(t1);
+  await page.goto("http://127.0.0.1:8000/organisation/1/projects", { waitUntil: "domcontentloaded" });
+  await page.waitForTimeout(1500);
+  await page.getByText("Lift", { exact: true }).nth(1).click();
+  await page.waitForTimeout(2000);
+  await page.getByRole("link", { name: /^Experiments$/ }).click();
+  await page.waitForTimeout(2000);
   if (state.flag) {
-    await showExperiment(state.flag.flagName, state.flag.experimentId);
+    await page.getByText(state.flag.flagName).first().click();
   }
   await page.waitForTimeout(6000);
-  await page.goto("http://127.0.0.1:4177/", { waitUntil: "domcontentloaded" });
-  await page.waitForTimeout(3000);
+  if (page.url().includes("login")) {
+    throw new Error("t1 ended on sign-in");
+  }
   await stopFfmpeg(ff1);
 
   const l2 = resolve(OUT, "l2-generation-2.mp4");
@@ -172,20 +212,28 @@ async function main() {
     "--generations",
     "2",
     "--traffic-n",
-    "12",
+    "220",
     "--flag-name",
-    `checkout_orch_l2_${Date.now().toString().slice(-6)}`,
+    `lift_orch_l2_${Date.now().toString().slice(-6)}`,
     "--site-url",
-    "http://127.0.0.1:4174/checkout",
+    "http://127.0.0.1:4185/checkout",
     "--ui-port",
-    "4177",
+    "4178",
   ]);
-  opts2.resultsWaitMs = 20_000;
   const gen2 = await runOrchestrator(opts2);
-  await page.goto("http://127.0.0.1:4177/", { waitUntil: "domcontentloaded" });
-  await page.waitForTimeout(3000);
-  if (gen2.flag) {
-    await showExperiment(gen2.flag.flagName, gen2.flag.experimentId);
+  await page.goto("http://127.0.0.1:4178/", { waitUntil: "domcontentloaded" });
+  await page.waitForTimeout(2500);
+  if (gen2.flag?.dashboardUrl) {
+    await showExperiment(gen2.flag.dashboardUrl);
+  }
+  if (gen2.recommendation?.kind === "winner" && gen2.flag) {
+    await typeApproveOnCamera(gen2.flag.experimentId);
+    if (gen2.flag.dashboardUrl) {
+      await showFeature(gen2.flag.dashboardUrl, gen2.flag.flagName);
+    }
+  }
+  if (page.url().includes("login")) {
+    throw new Error("l2 ended on sign-in");
   }
   await stopFfmpeg(ff2);
 

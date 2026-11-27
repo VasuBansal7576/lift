@@ -1,4 +1,12 @@
 import type { EventLog } from "../log.ts";
+import {
+  DESCRIPTION_MARKER,
+  FLAG_PREFIX,
+  assertOrchFlagName,
+  assertSpecId,
+  genFlagName,
+  isOrchDescription,
+} from "../names.ts";
 import type { FlagSetup, FlagVariantRecord, GateResult, OrchOptions } from "../types.ts";
 import { FlagsmithHttp, FlagsmithHttpError, listResults } from "../flagsmith/http.ts";
 import { flagsmithEnv, tryCliJson, type RunCli, runFlagsmithCli } from "../flagsmith/cli.ts";
@@ -7,6 +15,7 @@ export interface FeatureRecord {
   id: number;
   name: string;
   type?: string;
+  description?: string | null;
   multivariate_options?: Array<{
     id: number;
     string_value?: string | null;
@@ -32,6 +41,19 @@ function equalWeights(variantCount: number): number {
   return Math.floor(100 / (variantCount + 1));
 }
 
+function featureIdOf(exp: ExperimentRecord): number | undefined {
+  return typeof exp.feature === "number" ? exp.feature : exp.feature?.id;
+}
+
+function orchDescription(): string {
+  return `${DESCRIPTION_MARKER}. Payloads are axe-gated spec ids.`;
+}
+
+function dashboardExperimentUrl(opts: OrchOptions, experimentId: number): string {
+  const envSlug = opts.environmentKey || opts.environmentId || opts.projectId;
+  return `${opts.dashboardUrl}/project/${opts.projectId}/environment/${envSlug}/experiments/${experimentId}`;
+}
+
 async function createFeatureHttp(
   http: FlagsmithHttp,
   projectId: string,
@@ -43,7 +65,17 @@ async function createFeatureHttp(
     `/projects/${projectId}/features/?search=${encodeURIComponent(name)}`,
   );
   const found = listResults<FeatureRecord>(existing).find((item) => item.name === name);
-  if (found) return found;
+  if (found) {
+    const { data: full } = await http.get<FeatureRecord>(`/projects/${projectId}/features/${found.id}/`);
+    if (!isOrchDescription(full.description ?? found.description)) {
+      throw new Error(
+        `Refusing foreign flag ${name}. Orchestrator only manages ${FLAG_PREFIX}* flags marked "${DESCRIPTION_MARKER}".`,
+      );
+    }
+    throw new Error(
+      `Stale flag ${name} already exists (id=${found.id}). Use a unique --flag-name or --cleanup.`,
+    );
+  }
   const created = await http.post<FeatureRecord>(`/projects/${projectId}/features/`, {
     name,
     default_enabled: true,
@@ -61,6 +93,7 @@ async function addVariantHttp(
   feature: FeatureRecord,
   key: string,
 ): Promise<{ id: number; key: string }> {
+  assertSpecId(key);
   const { data } = await http.get<unknown>(`/projects/${projectId}/features/${feature.id}/mv-options/`);
   const options = listResults<{ id: number; string_value?: string | null; key?: string | null }>(data);
   const existing = options.find((item) => item.key === key || item.string_value === key);
@@ -96,7 +129,7 @@ async function ensureMetric(
   return created.data;
 }
 
-async function ensureExperiment(
+async function createExperiment(
   http: FlagsmithHttp,
   envKey: string,
   flag: FeatureRecord,
@@ -108,10 +141,13 @@ async function ensureExperiment(
 ): Promise<ExperimentRecord> {
   const { data } = await http.get<unknown>(`/environments/${envKey}/experiments/?q=${encodeURIComponent(flag.name)}`);
   const existing = listResults<ExperimentRecord>(data).find((exp) => {
-    const featureId = typeof exp.feature === "number" ? exp.feature : exp.feature?.id;
-    return featureId === flag.id && exp.status !== "completed";
+    return featureIdOf(exp) === flag.id && exp.status !== "completed" && exp.status !== "paused";
   });
-  if (existing) return existing;
+  if (existing) {
+    throw new Error(
+      `Stale experiment ${existing.id} still ${existing.status} on ${flag.name}. Pass --cleanup or a unique --flag-name.`,
+    );
+  }
 
   const weight = equalWeights(variants.length);
   const payload = {
@@ -145,7 +181,7 @@ async function ensureExperiment(
   }
 }
 
-async function startExperiment(
+export async function startExperiment(
   http: FlagsmithHttp,
   envKey: string,
   experiment: ExperimentRecord,
@@ -155,6 +191,16 @@ async function startExperiment(
     `/environments/${envKey}/experiments/${experiment.id}/start/`,
   );
   return started.data;
+}
+
+export async function pauseExperiment(
+  http: FlagsmithHttp,
+  envKey: string,
+  experimentId: number,
+  log: EventLog,
+): Promise<void> {
+  await http.post(`/environments/${envKey}/experiments/${experimentId}/pause/`);
+  log.emit("flag", "info", `Paused experiment ${experimentId}`);
 }
 
 async function createViaCli(
@@ -184,7 +230,7 @@ async function createViaCli(
       controlValue,
       "--enabled",
       "--description",
-      "Lift orchestrator gated accessibility variants",
+      orchDescription(),
       "-p",
       opts.projectId,
       "-e",
@@ -225,6 +271,95 @@ async function createViaCli(
   return { usedCli: true, feature: created.data };
 }
 
+export async function loadFlagSetupFromExperiment(
+  opts: OrchOptions,
+  experimentId: number,
+  http: FlagsmithHttp,
+): Promise<FlagSetup> {
+  if (!opts.environmentKey || !opts.projectId) {
+    throw new Error("FLAGSMITH_ENVIRONMENT_KEY and FLAGSMITH_PROJECT_ID are required to approve");
+  }
+  const { data: experiment } = await http.get<ExperimentRecord>(
+    `/environments/${opts.environmentKey}/experiments/${experimentId}/`,
+  );
+  const featureId = featureIdOf(experiment);
+  if (!featureId) {
+    throw new Error(`Experiment ${experimentId} has no feature`);
+  }
+  const { data: feature } = await http.get<FeatureRecord>(`/projects/${opts.projectId}/features/${featureId}/`);
+  if (!feature.name.startsWith(FLAG_PREFIX) || !isOrchDescription(feature.description)) {
+    throw new Error(`Experiment ${experimentId} is not an orchestrator flag`);
+  }
+  const { data: optionPayload } = await http.get<unknown>(
+    `/projects/${opts.projectId}/features/${feature.id}/mv-options/`,
+  );
+  const options = listResults<{ id: number; string_value?: string | null; key?: string | null }>(optionPayload);
+  const variants: FlagVariantRecord[] = options.map((option) => {
+    const key = option.key || option.string_value || "";
+    return { key, specId: key, optionId: option.id, title: key };
+  });
+  return {
+    dryRun: false,
+    flagName: feature.name,
+    flagId: feature.id,
+    metricId: 0,
+    metricEvent: opts.metricEvent,
+    experimentId: experiment.id,
+    experimentName: experiment.name,
+    variants,
+    controlKey: "control",
+    dashboardUrl: dashboardExperimentUrl(opts, experiment.id),
+    usedCli: false,
+  };
+}
+
+export async function cleanupOrchFlags(
+  opts: OrchOptions,
+  log: EventLog,
+  http?: FlagsmithHttp,
+): Promise<string[]> {
+  if (!opts.adminToken || !opts.projectId || !opts.environmentKey) {
+    throw new Error("FLAGSMITH_ADMIN_API_TOKEN, FLAGSMITH_PROJECT_ID, and FLAGSMITH_ENVIRONMENT_KEY are required for --cleanup");
+  }
+  const client =
+    http ??
+    new FlagsmithHttp({
+      baseUrl: opts.adminApiUrl || opts.apiUrl,
+      token: opts.adminToken,
+    });
+  const { data } = await client.get<unknown>(`/projects/${opts.projectId}/features/`);
+  const features = listResults<FeatureRecord>(data).filter((item) => item.name.startsWith(FLAG_PREFIX));
+  const removed: string[] = [];
+  for (const feature of features) {
+    const { data: full } = await client.get<FeatureRecord>(`/projects/${opts.projectId}/features/${feature.id}/`);
+    if (!isOrchDescription(full.description ?? feature.description)) {
+      log.emit("flag", "warn", `Skipping ${feature.name} (no orch description marker)`);
+      continue;
+    }
+    try {
+      const { data: experiments } = await client.get<unknown>(
+        `/environments/${opts.environmentKey}/experiments/?q=${encodeURIComponent(feature.name)}`,
+      );
+      for (const exp of listResults<ExperimentRecord>(experiments)) {
+        if (featureIdOf(exp) !== feature.id) continue;
+        if (exp.status === "running") {
+          try {
+            await pauseExperiment(client, opts.environmentKey, exp.id, log);
+          } catch {
+            log.emit("flag", "warn", `Could not pause experiment ${exp.id} before cleanup`);
+          }
+        }
+      }
+    } catch {
+      log.emit("flag", "warn", `Could not list experiments for ${feature.name}`);
+    }
+    await client.delete(`/projects/${opts.projectId}/features/${feature.id}/`);
+    removed.push(feature.name);
+    log.emit("flag", "info", `Deleted ${feature.name}`);
+  }
+  return removed;
+}
+
 export async function runFlagAgent(
   opts: OrchOptions,
   passed: GateResult[],
@@ -233,7 +368,9 @@ export async function runFlagAgent(
   log: EventLog,
   deps?: { http?: FlagsmithHttp; runCli?: RunCli },
 ): Promise<FlagSetup> {
-  const flagName = generation === 1 ? opts.flagName : `${opts.flagName}_g${generation}`;
+  const flagName = genFlagName(opts.flagName, generation);
+  assertOrchFlagName(flagName);
+  for (const item of passed) assertSpecId(item.specId);
   const variantsPreview = passed.map((item) => item.specId);
   log.emit("flag", "start", `Multivariate flag ${flagName} variants=${variantsPreview.join(",") || "(none)"}`);
 
@@ -287,9 +424,13 @@ export async function runFlagAgent(
       http,
       opts.projectId,
       flagName,
-      "Lift orchestrator gated accessibility variants. Payloads are axe-gated spec ids.",
+      orchDescription(),
       controlKey,
     ));
+
+  if (!isOrchDescription(feature.description) && !cli.usedCli) {
+    throw new Error(`Refusing foreign flag ${feature.name}`);
+  }
 
   const variants: FlagVariantRecord[] = [];
   for (const item of passed) {
@@ -304,7 +445,7 @@ export async function runFlagAgent(
 
   const metric = await ensureMetric(http, opts.environmentKey, opts.metricEvent);
   const experimentName = `Lift orch g${generation} ${flagName}`;
-  const experiment = await ensureExperiment(
+  const experiment = await createExperiment(
     http,
     opts.environmentKey,
     feature,
@@ -315,8 +456,7 @@ export async function runFlagAgent(
     controlKey,
   );
   const running = await startExperiment(http, opts.environmentKey, experiment);
-  const envSlug = opts.environmentId || opts.projectId;
-  const dashboardUrl = `${opts.dashboardUrl}/project/${opts.projectId}/environment/${envSlug}/experiments/${running.id}`;
+  const dashboardUrl = dashboardExperimentUrl(opts, running.id);
   const setup: FlagSetup = {
     dryRun: false,
     flagName: feature.name,
@@ -335,6 +475,7 @@ export async function runFlagAgent(
     metricId: setup.metricId,
     experimentId: setup.experimentId,
     usedCli: setup.usedCli,
+    dashboardUrl: setup.dashboardUrl,
   });
   return setup;
 }

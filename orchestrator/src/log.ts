@@ -1,6 +1,6 @@
 import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import { EVENTS_PATH, LIVE_PATH } from "./paths.ts";
+import { eventsPath, LIVE_PATH } from "./paths.ts";
 import { redactRecord } from "./secrets.ts";
 import type { AgentName, EventKind, OrchEvent, PersistedState, Phase } from "./types.ts";
 import { assertNever } from "./types.ts";
@@ -103,8 +103,9 @@ export class EventLog {
     this.events.push(event);
     process.stdout.write(`${formatTerminal(event)}\n`);
     if (this.persist) {
-      mkdirSync(dirname(EVENTS_PATH), { recursive: true });
-      appendFileSync(EVENTS_PATH, `${JSON.stringify(event)}\n`);
+      const eventsFile = eventsPath();
+      mkdirSync(dirname(eventsFile), { recursive: true });
+      appendFileSync(eventsFile, `${JSON.stringify(event)}\n`);
     }
     this.writeLive();
     for (const listener of this.listeners) listener(event, this.events);

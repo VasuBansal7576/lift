@@ -15,6 +15,12 @@ describe("loopback guard", () => {
       /not loopback/,
     );
     expect(() => assertAllowedUrl("https://api.flagsmith.com/api/v1/", true, "FLAGSMITH_API_URL")).not.toThrow();
+    expect(() =>
+      assertAllowedUrl("https://api.flagsmith.com/api/v1/", false, "FLAGSMITH_ADMIN_API_URL"),
+    ).toThrow(/not loopback/);
+    expect(() =>
+      assertAllowedUrl("https://events.api.flagsmith.com/", false, "FLAGSMITH_EVENTS_URL"),
+    ).toThrow(/not loopback/);
   });
 
   it("rejects invalid URLs", () => {

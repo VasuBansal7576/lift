@@ -43,7 +43,7 @@ describe("pickChampion", () => {
     expect(pickChampion(generation)?.id).toBe("full-v1");
   });
 
-  it("falls back to the gated spec with the fewest remaining axe hits", () => {
+  it("does not fall back to fewest axe hits when Flagsmith has no winner", () => {
     const full = fullTreatmentSpec("full-v1");
     const labels = labelsSpec();
     const generation = {
@@ -57,6 +57,6 @@ describe("pickChampion", () => {
         reason: "Keep collecting.",
       },
     } as unknown as GenerationRecord;
-    expect(pickChampion(generation)?.id).toBe("full-v1");
+    expect(pickChampion(generation)).toBeNull();
   });
 });

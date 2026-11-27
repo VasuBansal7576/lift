@@ -10,7 +10,7 @@ export interface RolloutResult {
   cleaned: string[];
 }
 
-function completeBody(
+export function completeBody(
   winner: string,
   controlKey: string,
   variants: FlagVariantRecord[],
@@ -20,9 +20,41 @@ function completeBody(
   }
   const option = variants.find((item) => item.key === winner);
   if (!option) {
-    return { rollout_decision: "control" };
+    throw new Error(`Unknown rollout arm ${winner}`);
   }
   return { rollout_decision: "variant", rollout_variant: option.optionId };
+}
+
+export function pickEnvDefaultFeatureState<T extends { identity?: unknown; feature_segment?: unknown }>(
+  states: T[],
+): T {
+  const found = states.find((state) => state.identity == null && state.feature_segment == null);
+  if (!found) {
+    throw new Error("No environment-default featurestate (identity==null && feature_segment==null)");
+  }
+  return found;
+}
+
+export function winnerAllocations(
+  rows: Array<{
+    id?: number;
+    multivariate_feature_option: number | { id: number };
+    percentage_allocation: number;
+  }>,
+  winnerOptionId: number | undefined,
+): Array<{ id?: number; multivariate_feature_option: number; percentage_allocation: number }> {
+  return rows.map((row) => {
+    const optionId =
+      typeof row.multivariate_feature_option === "number"
+        ? row.multivariate_feature_option
+        : row.multivariate_feature_option.id;
+    const isWinner = winnerOptionId !== undefined && optionId === winnerOptionId;
+    return {
+      id: row.id,
+      multivariate_feature_option: optionId,
+      percentage_allocation: isWinner ? 100 : 0,
+    };
+  });
 }
 
 export async function runRollout(
@@ -50,33 +82,24 @@ export async function runRollout(
   const { data: states } = await http.get<unknown>(
     `/environments/${opts.environmentKey}/featurestates/?feature=${flag.flagId}`,
   );
-  const state = listResults<{
-    id: number;
-    multivariate_feature_state_values?: Array<{
-      id?: number;
-      multivariate_feature_option: number | { id: number };
-      percentage_allocation: number;
-    }>;
-  }>(states)[0];
-  if (state) {
-    const mv = (state.multivariate_feature_state_values ?? []).map((row) => {
-      const optionId =
-        typeof row.multivariate_feature_option === "number"
-          ? row.multivariate_feature_option
-          : row.multivariate_feature_option.id;
-      const isWinner = winnerOption ? optionId === winnerOption.optionId : false;
-      return {
-        id: row.id,
-        multivariate_feature_option: optionId,
-        percentage_allocation: isWinner ? 100 : 0,
-      };
-    });
-    await http.patch(`/features/featurestates/${state.id}/`, {
-      enabled: true,
-      feature_state_value: recommendation.arm,
-      multivariate_feature_state_values: mv,
-    });
-  }
+  const state = pickEnvDefaultFeatureState(
+    listResults<{
+      id: number;
+      identity?: unknown;
+      feature_segment?: unknown;
+      multivariate_feature_state_values?: Array<{
+        id?: number;
+        multivariate_feature_option: number | { id: number };
+        percentage_allocation: number;
+      }>;
+    }>(states),
+  );
+  const mv = winnerAllocations(state.multivariate_feature_state_values ?? [], winnerOption?.optionId);
+  await http.patch(`/features/featurestates/${state.id}/`, {
+    enabled: true,
+    feature_state_value: recommendation.arm,
+    multivariate_feature_state_values: mv,
+  });
 
   if (opts.projectId) {
     for (const variant of flag.variants) {

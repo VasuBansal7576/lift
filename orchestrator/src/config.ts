@@ -1,6 +1,7 @@
 import { resolve } from "node:path";
 import { config as loadEnv } from "dotenv";
 import { ROOT, clampWinThreshold } from "../../agent/src/config.ts";
+import { assertOrchFlagName } from "./names.ts";
 import { REPO_ROOT } from "./paths.ts";
 import type { OrchOptions } from "./types.ts";
 
@@ -19,7 +20,7 @@ function envNumber(name: string, fallback: number): number {
 }
 
 function hasFlag(argv: string[], name: string): boolean {
-  return argv.includes(name);
+  return argv.includes(name) || argv.some((item) => item.startsWith(`${name}=`));
 }
 
 function argValue(argv: string[], name: string): string | undefined {
@@ -34,6 +35,25 @@ function argValue(argv: string[], name: string): string | undefined {
 
 function apiBase(raw: string): string {
   return raw.replace(/\/?$/, "/");
+}
+
+export function parseApproveArg(argv: string[]): { approve: boolean; approveExperimentId: number | null } {
+  const index = argv.findIndex((item) => item === "--approve" || item.startsWith("--approve="));
+  if (index < 0) return { approve: false, approveExperimentId: null };
+  const token = argv[index];
+  const raw = token.startsWith("--approve=")
+    ? token.slice("--approve=".length)
+    : argv[index + 1] && !argv[index + 1].startsWith("--")
+      ? argv[index + 1]
+      : undefined;
+  if (!raw) {
+    throw new Error("--approve requires an experiment id, e.g. --approve 12");
+  }
+  const id = Number(raw);
+  if (!Number.isInteger(id) || id <= 0) {
+    throw new Error("--approve requires a positive experiment id");
+  }
+  return { approve: true, approveExperimentId: id };
 }
 
 export function parseArgv(argv: string[] = process.argv.slice(2)): OrchOptions {
@@ -54,17 +74,25 @@ export function parseArgv(argv: string[] = process.argv.slice(2)): OrchOptions {
     env("LIFT_SITE_URL", "http://127.0.0.1:4174/checkout")
   ).replace(/\/$/, "");
   const uiPort = Math.max(1, Math.floor(Number(argValue(argv, "--ui-port") || env("LIFT_ORCH_UI_PORT", "4177"))));
+  const { approve, approveExperimentId } = parseApproveArg(argv);
+  const cleanup = hasFlag(argv, "--cleanup");
+  const flagName = argValue(argv, "--flag-name") || env("LIFT_ORCH_FLAG", "lift_orch_checkout");
+  if (!cleanup && !approve) {
+    assertOrchFlagName(flagName);
+  }
 
   return {
     apply: hasFlag(argv, "--apply"),
-    approve: hasFlag(argv, "--approve"),
+    approve,
+    approveExperimentId,
+    cleanup,
     allowRemote: hasFlag(argv, "--allow-remote"),
     generations,
     siteUrl,
     uiPort,
     trafficN,
     threshold,
-    flagName: argValue(argv, "--flag-name") || env("LIFT_ORCH_FLAG", "checkout_orch_a11y"),
+    flagName,
     metricEvent: argValue(argv, "--metric-event") || env("LIFT_METRIC_EVENT", "checkout_completed"),
     keepUi: hasFlag(argv, "--keep-ui"),
     noUi: hasFlag(argv, "--no-ui"),

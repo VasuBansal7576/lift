@@ -9,6 +9,8 @@ const AGENTS = [
   "rollout",
 ];
 
+const SPEC_ID_RE = /^[a-z0-9-]{1,40}$/;
+
 const agentsEl = document.getElementById("agents");
 const logEl = document.getElementById("log");
 const variantsEl = document.getElementById("variants");
@@ -19,22 +21,39 @@ function lastEvent(events, agent) {
   return [...events].reverse().find((item) => item.agent === agent);
 }
 
+function setText(el, value) {
+  el.textContent = value == null ? "" : String(value);
+}
+
 function renderAgents(state) {
-  agentsEl.innerHTML = AGENTS.map((name) => {
+  agentsEl.replaceChildren();
+  for (const name of AGENTS) {
     const event = lastEvent(state.events || [], name);
     const kind = event?.kind || "idle";
-    return `<div class="agent ${kind}"><div class="name">${name}</div><div class="step">${event ? event.message : "—"}</div></div>`;
-  }).join("");
+    const card = document.createElement("div");
+    card.className = `agent ${kind}`;
+    const nameEl = document.createElement("div");
+    nameEl.className = "name";
+    setText(nameEl, name);
+    const stepEl = document.createElement("div");
+    stepEl.className = "step";
+    setText(stepEl, event ? event.message : "—");
+    card.append(nameEl, stepEl);
+    agentsEl.append(card);
+  }
 }
 
 function renderLog(events) {
-  logEl.innerHTML = (events || [])
-    .slice(-200)
-    .map(
-      (event) =>
-        `<li class="${event.kind}"><span class="agent">${event.agent}</span> ${event.kind} — ${event.message}</li>`,
-    )
-    .join("");
+  logEl.replaceChildren();
+  for (const event of (events || []).slice(-200)) {
+    const li = document.createElement("li");
+    li.className = event.kind;
+    const agent = document.createElement("span");
+    agent.className = "agent";
+    setText(agent, event.agent);
+    li.append(agent, document.createTextNode(` ${event.kind} — ${event.message}`));
+    logEl.append(li);
+  }
   logEl.scrollTop = logEl.scrollHeight;
 }
 
@@ -44,52 +63,74 @@ function lastGeneration(state) {
 }
 
 function renderVariants(state) {
+  variantsEl.replaceChildren();
   const gen = lastGeneration(state);
   const rows = gen?.gated || [];
-  variantsEl.innerHTML = rows
-    .map((row) => {
-      const pill = row.passed ? "pass" : "reject";
-      return `<tr>
-        <td>${row.specId}</td>
-        <td><span class="pill ${pill}">${row.passed ? "PASS" : "REJECT"}</span></td>
-        <td>${row.baseline?.violationCount ?? "—"}</td>
-        <td>${row.after?.violationCount ?? "—"}</td>
-        <td>${row.reason}</td>
-      </tr>`;
-    })
-    .join("");
+  for (const row of rows) {
+    const tr = document.createElement("tr");
+    const spec = document.createElement("td");
+    const specId = SPEC_ID_RE.test(row.specId || "") ? row.specId : "(invalid spec id)";
+    setText(spec, specId);
+    const gate = document.createElement("td");
+    const pill = document.createElement("span");
+    pill.className = `pill ${row.passed ? "pass" : "reject"}`;
+    setText(pill, row.passed ? "PASS" : "REJECT");
+    gate.append(pill);
+    const baseline = document.createElement("td");
+    setText(baseline, row.baseline?.violationCount ?? "—");
+    const after = document.createElement("td");
+    setText(after, row.after?.violationCount ?? "—");
+    const reason = document.createElement("td");
+    setText(reason, row.reason);
+    tr.append(spec, gate, baseline, after, reason);
+    variantsEl.append(tr);
+  }
 }
 
 function renderResults(state) {
   const rec = state.recommendation || lastGeneration(state)?.recommendation;
   const flag = state.flag || lastGeneration(state)?.flag;
-  document.getElementById("flag-id").textContent = flag ? `${flag.flagName} (#${flag.flagId})` : "—";
-  document.getElementById("exp-id").textContent = flag ? String(flag.experimentId) : "—";
-  document.getElementById("metric-id").textContent = flag ? String(flag.metricId) : "—";
+  setText(document.getElementById("flag-id"), flag ? `${flag.flagName} (#${flag.flagId})` : "—");
+  setText(document.getElementById("exp-id"), flag ? String(flag.experimentId) : "—");
+  setText(document.getElementById("metric-id"), flag ? String(flag.metricId) : "—");
   if (state.timeSaved) {
     const minutes = (state.timeSaved.savedMs / 60000).toFixed(1);
-    document.getElementById("time-saved").textContent = `${minutes} min vs ${state.timeSaved.manualEstimateMinutes} min manual`;
+    setText(
+      document.getElementById("time-saved"),
+      `${minutes} min vs est. manual 115 min (itemised estimate)`,
+    );
   }
+  resultsEl.replaceChildren();
   if (!rec) {
-    resultsEl.textContent = "Waiting for experiment results…";
+    setText(resultsEl, "Waiting for experiment results…");
     return;
   }
-  const arms = rec.arms || [];
-  resultsEl.innerHTML =
-    (rec.kind === "winner"
-      ? `<p>Winner <strong>${rec.arm}</strong> at ${(rec.chanceToWin * 100).toFixed(1)}% (threshold ${(rec.threshold * 100).toFixed(0)}%).</p>`
-      : `<p>${rec.reason || "Keep collecting"}</p>`) +
-    arms
-      .map((arm) => {
-        const pct = Math.round((arm.chanceToWin || 0) * 100);
-        return `<p>${arm.key} n=${arm.n ?? "—"} sum=${arm.sum ?? "—"} chance_to_win=${pct}%</p><div class="bar"><span style="width:${pct}%"></span></div>`;
-      })
-      .join("");
+  const summary = document.createElement("p");
+  if (rec.kind === "winner") {
+    setText(
+      summary,
+      `Winner ${rec.arm} at ${((rec.chanceToWin || 0) * 100).toFixed(1)}% (threshold ${((rec.threshold || 0) * 100).toFixed(0)}%).`,
+    );
+  } else {
+    setText(summary, rec.reason || "Keep collecting");
+  }
+  resultsEl.append(summary);
+  for (const arm of rec.arms || []) {
+    const line = document.createElement("p");
+    const pct = Math.round((arm.chanceToWin || 0) * 100);
+    setText(line, `${arm.key} n=${arm.n ?? "—"} sum=${arm.sum ?? "—"} chance_to_win=${pct}%`);
+    const bar = document.createElement("div");
+    bar.className = "bar";
+    const span = document.createElement("span");
+    span.style.width = `${pct}%`;
+    bar.append(span);
+    resultsEl.append(line, bar);
+  }
 }
 
 function render(state) {
   const phase = state.phase || "idle";
-  phaseEl.textContent = `phase: ${phase}`;
+  setText(phaseEl, `phase: ${phase}`);
   phaseEl.className = `phase ${phase === "WAITING_FOR_HUMAN_APPROVAL" ? "wait" : phase}`;
   renderAgents(state);
   renderLog(state.events || []);

@@ -1,27 +1,21 @@
 import { Flagsmith } from "@flagsmith/nodejs";
 import type { Flag } from "@flagsmith/nodejs";
 import { chromium } from "@playwright/test";
-import type { PatchSpec } from "../../../shared/patch-spec.ts";
 import { pickPersona } from "../../../shared/mix.ts";
 import { DEFAULT_PERSONA_MIX } from "../../../shared/types.ts";
 import { mixSeed, mulberry32 } from "../../../shared/rng.ts";
 import { identityFor } from "../../../traffic/src/identity.ts";
 import { applyBaselineDropout } from "../../../traffic/src/runner.ts";
 import { runPersona } from "../../../traffic/src/personas.ts";
-import { applySpecOnPage, gotoControl } from "../browser.ts";
+import { gotoSite } from "../browser.ts";
 import type { EventLog } from "../log.ts";
 import { assertAllowedUrl } from "../loopback.ts";
+import {
+  TrafficAbortError,
+  appliedVariantMatches,
+  cookieMatchesIdentity,
+} from "../traffic-guard.ts";
 import type { FlagSetup, GateResult, OrchOptions, TrafficVisit } from "../types.ts";
-
-function specForVariant(
-  variant: string,
-  controlKey: string,
-  controlSpec: PatchSpec | null,
-  passed: GateResult[],
-): PatchSpec | null {
-  if (variant === controlKey || variant === "control") return controlSpec;
-  return passed.find((item) => item.specId === variant)?.spec ?? null;
-}
 
 export function variantKeyFromFlag(flag: {
   variant?: string | null;
@@ -36,11 +30,20 @@ export function variantKeyFromFlag(flag: {
   return flag.variant;
 }
 
+async function waitForAppliedVariant(page: import("@playwright/test").Page, expected: string): Promise<string> {
+  await page.waitForFunction(
+    (wanted) => document.documentElement.dataset.liftAppliedVariant === wanted,
+    expected,
+    { timeout: 15_000 },
+  );
+  return page.evaluate(() => document.documentElement.dataset.liftAppliedVariant ?? "");
+}
+
 export async function runTrafficAgent(
   opts: OrchOptions,
   flag: FlagSetup,
-  passed: GateResult[],
-  controlSpec: PatchSpec | null,
+  _passed: GateResult[],
+  _controlSpec: unknown,
   log: EventLog,
 ): Promise<TrafficVisit[]> {
   log.emit("traffic", "start", `SIMULATED personas × ${opts.trafficN} sticky identities`);
@@ -69,6 +72,7 @@ export async function runTrafficAgent(
   const dropoutRand = mulberry32(mixSeed(seed, runId, 0, "dropout"));
   const browser = await chromium.launch({ headless: true });
   const visits: TrafficVisit[] = [];
+  const siteOrigin = new URL(opts.siteUrl);
 
   try {
     for (let i = 0; i < opts.trafficN; i += 1) {
@@ -80,52 +84,75 @@ export async function runTrafficAgent(
         site: "checkout",
       })) as Flag;
       const variant = variantKeyFromFlag(flagResult);
-      const spec = specForVariant(variant, flag.controlKey, controlSpec, passed);
 
       const context = await browser.newContext(
         persona === "low-vision" ? { deviceScaleFactor: 2 } : {},
       );
+      await context.addCookies([
+        {
+          name: "lift_vid",
+          value: identity,
+          url: `${siteOrigin.protocol}//${siteOrigin.host}/`,
+        },
+      ]);
       const page = await context.newPage();
-      await gotoControl(page, opts.siteUrl);
-      if (spec) {
-        const applied = await applySpecOnPage(page, spec);
-        if (!applied.ok) {
-          log.emit("traffic", "warn", `${identity} spec ${spec.id} failed to apply`);
-        }
-      }
-      let attempt;
       try {
-        attempt = await runPersona(page, persona);
-      } catch (err) {
-        attempt = {
-          converted: false,
-          blockedBy: [],
-          reason: `persona failed: ${err instanceof Error ? err.message : String(err)}`.slice(0, 160),
-        };
-      }
-      const baseline = applyBaselineDropout(attempt.converted, dropoutRand, 0.75);
-      const converted = baseline.converted;
-      await context.close();
+        await gotoSite(page, opts.siteUrl);
+        const cookiesAfter = await context.cookies();
+        if (!cookieMatchesIdentity(cookiesAfter, identity)) {
+          throw new TrafficAbortError(`lift_vid cookie did not persist for ${identity}`);
+        }
+        let applied: string;
+        try {
+          applied = await waitForAppliedVariant(page, variant);
+        } catch {
+          const actual = await page.evaluate(() => document.documentElement.dataset.liftAppliedVariant ?? "");
+          const status = await page.evaluate(() => document.getElementById("flag-status")?.textContent ?? "");
+          throw new TrafficAbortError(
+            `No runtime variant marker for ${identity} (expected ${variant}, page=${actual || "(none)"}, status=${status || "(none)"})`,
+          );
+        }
+        if (!appliedVariantMatches(applied, variant)) {
+          throw new TrafficAbortError(
+            `Variant mismatch for ${identity}: page=${applied || "(none)"} expected=${variant}. Dropping visit.`,
+          );
+        }
 
-      if (converted) {
-        flagsmith.trackEvent(opts.metricEvent, {
-          identifier: identity,
-          traits: { converted: true, simulated: true, persona, site: "checkout" },
-        });
+        let attempt;
+        try {
+          attempt = await runPersona(page, persona);
+        } catch (err) {
+          attempt = {
+            converted: false,
+            blockedBy: [],
+            reason: `persona failed: ${err instanceof Error ? err.message : String(err)}`.slice(0, 160),
+          };
+        }
+        const baseline = applyBaselineDropout(attempt.converted, dropoutRand, 0.75);
+        const converted = baseline.converted;
+
+        if (converted) {
+          flagsmith.trackEvent(opts.metricEvent, {
+            identifier: identity,
+            traits: { converted: true, simulated: true, persona, site: "checkout" },
+          });
+        }
+        const visit: TrafficVisit = {
+          identity,
+          persona,
+          variant,
+          converted,
+          reason: baseline.dropped ? "baseline drop-off (seeded)" : attempt.reason,
+          simulated: true,
+          at: new Date().toISOString(),
+        };
+        visits.push(visit);
+        process.stdout.write(
+          `${identity} ${persona} ${variant} ${converted ? "converted" : "blocked"} ${visit.reason}\n`,
+        );
+      } finally {
+        await context.close();
       }
-      const visit: TrafficVisit = {
-        identity,
-        persona,
-        variant,
-        converted,
-        reason: baseline.dropped ? "baseline drop-off (seeded)" : attempt.reason,
-        simulated: true,
-        at: new Date().toISOString(),
-      };
-      visits.push(visit);
-      process.stdout.write(
-        `${identity} ${persona} ${variant} ${converted ? "converted" : "blocked"} ${visit.reason}\n`,
-      );
     }
   } finally {
     await browser.close();

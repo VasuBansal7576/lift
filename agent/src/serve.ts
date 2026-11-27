@@ -5,6 +5,7 @@ import { isInsideRoot } from "../../shared/fs-path.ts";
 import { getSite, placeholderSiteConfig } from "../../shared/catalog.ts";
 import { parseIncomingUrl } from "../../shared/request-url.ts";
 import { resolveRuntimePath } from "../../shared/runtime-static.ts";
+import { orchConfigOverlay, resolveOrchSpecPath } from "../../shared/orch-site.ts";
 import { ROOT } from "./config.ts";
 
 const MIME: Record<string, string> = {
@@ -24,7 +25,7 @@ function overlaySiteConfig(
   parsed: Record<string, unknown>,
   opts: { allowMock: boolean },
 ): string {
-  const extra: Record<string, unknown> = {};
+  const extra: Record<string, unknown> = { ...orchConfigOverlay() };
   if (opts.allowMock) extra.allowMock = true;
   if (process.env.LIFT_ALLOW_BOT_OVERRIDE === "true") extra.allowBotOverride = true;
   return JSON.stringify({ ...parsed, ...extra });
@@ -64,6 +65,18 @@ export function serveSites(
         try {
           const raw = await readFile(runtimePath);
           res.writeHead(200, { "Content-Type": MIME[extname(runtimePath)] ?? "text/plain" });
+          res.end(raw);
+        } catch {
+          res.writeHead(404);
+          res.end("not found");
+        }
+        return;
+      }
+      const orchSpec = resolveOrchSpecPath(url.pathname, ROOT);
+      if (orchSpec) {
+        try {
+          const raw = await readFile(orchSpec);
+          res.writeHead(200, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
           res.end(raw);
         } catch {
           res.writeHead(404);

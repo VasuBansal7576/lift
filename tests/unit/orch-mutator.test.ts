@@ -3,7 +3,6 @@ import { parsePatchSpec } from "../../shared/patch-spec.ts";
 import {
   badContrastSpec,
   contrastSpec,
-  controlsSpec,
   focusOutlineChallenger,
   fullTreatmentSpec,
   labelsSpec,
@@ -30,7 +29,7 @@ describe("mutator templates", () => {
     const candidates = templatesFromViolations(axe);
     const ids = candidates.map((item) => item.spec.id);
     expect(ids).toContain("labels-v1");
-    expect(ids).toContain("controls-v1");
+    expect(ids).not.toContain("controls-v1");
     expect(ids).toContain("contrast-v1");
     expect(ids).toContain("full-v1");
     expect(ids).toContain("bad-contrast-v1");
@@ -38,7 +37,7 @@ describe("mutator templates", () => {
   });
 
   it("produces parseable PatchSpecs for the good templates", () => {
-    for (const spec of [labelsSpec(), controlsSpec(), contrastSpec(), fullTreatmentSpec()]) {
+    for (const spec of [labelsSpec(), contrastSpec(), fullTreatmentSpec()]) {
       const parsed = parsePatchSpec(spec);
       expect(parsed.ok, spec.id).toBe(true);
     }

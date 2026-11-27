@@ -1,6 +1,7 @@
 import type { Browser } from "@playwright/test";
 import { applySpecOnPage, gotoControl, launchBrowser, openCheckout, runAxe } from "../browser.ts";
 import type { EventLog } from "../log.ts";
+import type { PatchSpec } from "../../../shared/patch-spec.ts";
 import type { ApplyResult, AxeSummary, CandidateSpec, GateResult } from "../types.ts";
 
 export function evaluateGate(input: {
@@ -31,6 +32,26 @@ export function evaluateGate(input: {
     passed: true,
     reason: `axe ${input.baseline.violationCount} rules / ${input.baseline.nodeCount} nodes → ${input.after.violationCount} / ${input.after.nodeCount}`,
   };
+}
+
+export async function measureChampionBaseline(
+  siteUrl: string,
+  champion: PatchSpec,
+  browser: Browser,
+): Promise<AxeSummary> {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  try {
+    await gotoControl(page, siteUrl);
+    const apply = await applySpecOnPage(page, champion);
+    if (!apply.ok) {
+      throw new Error(`Champion failed to apply for gen-2 baseline: ${apply.error ?? "apply failed"}`);
+    }
+    await openCheckout(page);
+    return await runAxe(page);
+  } finally {
+    await context.close();
+  }
 }
 
 export async function gateCandidate(
@@ -72,13 +93,22 @@ export async function runGatekeeper(
   baseline: AxeSummary,
   log: EventLog,
   browser?: Browser,
+  champion?: PatchSpec | null,
 ): Promise<GateResult[]> {
   log.emit("gatekeeper", "start", `Axe gate on ${candidates.length} candidates (before any traffic)`);
   const owned = browser ?? (await launchBrowser());
   const results: GateResult[] = [];
   try {
+    const gateBaseline = champion ? await measureChampionBaseline(siteUrl, champion, owned) : baseline;
+    if (champion) {
+      log.emit(
+        "gatekeeper",
+        "info",
+        `Gen-2 baseline is champion ${champion.id}: ${gateBaseline.violationCount} rules / ${gateBaseline.nodeCount} nodes`,
+      );
+    }
     for (const candidate of candidates) {
-      const gated = await gateCandidate(siteUrl, candidate, baseline, owned);
+      const gated = await gateCandidate(siteUrl, candidate, gateBaseline, owned);
       results.push(gated);
       log.emit(
         "gatekeeper",

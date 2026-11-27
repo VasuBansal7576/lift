@@ -1,56 +1,89 @@
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import type { PatchSpec } from "../../shared/patch-spec.ts";
 import { serveSites } from "../../agent/src/serve.ts";
 import { runAnalyst } from "./agents/analyst.ts";
-import { assertCanApprove, pauseForHumanApproval } from "./agents/approval.ts";
-import { runFlagAgent } from "./agents/flag.ts";
+import { assertApproveArgs, pauseForHumanApproval, requireTypedApproval } from "./agents/approval.ts";
+import {
+  cleanupOrchFlags,
+  loadFlagSetupFromExperiment,
+  pauseExperiment,
+  runFlagAgent,
+} from "./agents/flag.ts";
 import { runGatekeeper } from "./agents/gatekeeper.ts";
 import { runMutator } from "./agents/mutator.ts";
 import { runRollout } from "./agents/rollout.ts";
 import { runScanner } from "./agents/scanner.ts";
 import { runTrafficAgent } from "./agents/traffic.ts";
-import { waitForResults } from "./flagsmith/results.ts";
+import { FlagsmithHttp } from "./flagsmith/http.ts";
+import { fetchExperimentResults, waitForResults } from "./flagsmith/results.ts";
 import { EventLog } from "./log.ts";
 import { assertAllowedUrl } from "./loopback.ts";
-import { STATE_PATH } from "./paths.ts";
-import { formatDuration, measureTimeSaved } from "./time-saved.ts";
+import { statePath } from "./paths.ts";
+import { writePassedSpecs } from "./specs.ts";
+import { formatDuration, measureTimeSaved, TIME_SAVED_LABEL } from "./time-saved.ts";
 import { startUiServer, type UiServer } from "./ui-server.ts";
 import type {
+  AnalystRecommendation,
+  FlagSetup,
   GenerationRecord,
   GateResult,
   OrchOptions,
   PersistedState,
+  TrafficVisit,
 } from "./types.ts";
 
-function loadState(): PersistedState | null {
-  try {
-    return JSON.parse(readFileSync(STATE_PATH, "utf8")) as PersistedState;
-  } catch {
-    return null;
-  }
-}
-
 function saveState(state: PersistedState): void {
-  mkdirSync(dirname(STATE_PATH), { recursive: true });
-  writeFileSync(STATE_PATH, `${JSON.stringify(state, null, 2)}\n`);
+  const path = statePath();
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, `${JSON.stringify(state, null, 2)}\n`);
 }
 
-/** Gen-1 champion for L2: Flagsmith winner if one exists, else the fewest remaining axe hits. */
+function flagsmithHttp(opts: OrchOptions): FlagsmithHttp {
+  return new FlagsmithHttp({
+    baseUrl: opts.adminApiUrl || opts.apiUrl,
+    token: opts.adminToken,
+  });
+}
+
+/** Gen-1 champion for L2: Flagsmith winner only. No axe-hit fallback. */
 export function pickChampion(generation: GenerationRecord): PatchSpec | null {
   const rec = generation.recommendation;
-  if (rec?.kind === "winner") {
-    if (rec.arm === "control" || rec.arm === generation.flag?.controlKey) {
-      return generation.controlSpec;
-    }
-    return generation.passed.find((item) => item.specId === rec.arm)?.spec ?? generation.passed[0]?.spec ?? null;
+  if (rec?.kind !== "winner") return null;
+  if (rec.arm === "control" || rec.arm === generation.flag?.controlKey) {
+    return generation.controlSpec;
   }
-  const ranked = [...generation.passed].sort((a, b) => {
-    const rules = a.after.violationCount - b.after.violationCount;
-    if (rules !== 0) return rules;
-    return a.after.nodeCount - b.after.nodeCount;
-  });
-  return ranked[0]?.spec ?? null;
+  return generation.passed.find((item) => item.specId === rec.arm)?.spec ?? null;
+}
+
+async function collectUntilWinner(
+  opts: OrchOptions,
+  flag: FlagSetup,
+  passed: GateResult[],
+  controlSpec: PatchSpec | null,
+  log: EventLog,
+): Promise<{ visits: TrafficVisit[]; recommendation: AnalystRecommendation }> {
+  let visits = await runTrafficAgent(opts, flag, passed, controlSpec, log);
+  log.setPhase("analysing");
+  let results = await waitForResults(opts, flag.experimentId, opts.resultsWaitMs);
+  let recommendation = runAnalyst(results, log, opts.threshold);
+  const maxExtra = Math.max(0, Math.floor(Number(process.env.LIFT_ORCH_MAX_EXTRA_ROUNDS ?? 6)));
+  let extra = 0;
+  while (recommendation.kind !== "winner" && extra < maxExtra) {
+    extra += 1;
+    log.emit(
+      "traffic",
+      "info",
+      `Keep collecting (extra round ${extra}/${maxExtra}): sending ${opts.trafficN} more SIMULATED visits`,
+    );
+    log.setPhase("traffic");
+    const more = await runTrafficAgent(opts, flag, passed, controlSpec, log);
+    visits = visits.concat(more);
+    log.setPhase("analysing");
+    results = await waitForResults(opts, flag.experimentId, opts.resultsWaitMs);
+    recommendation = runAnalyst(results, log, opts.threshold);
+  }
+  return { visits, recommendation };
 }
 
 export async function runOrchestrator(opts: OrchOptions): Promise<PersistedState> {
@@ -58,6 +91,28 @@ export async function runOrchestrator(opts: OrchOptions): Promise<PersistedState
   const log = new EventLog();
   assertAllowedUrl(opts.siteUrl, opts.allowRemote, "site URL");
   assertAllowedUrl(opts.apiUrl, opts.allowRemote, "FLAGSMITH_API_URL");
+  assertAllowedUrl(opts.adminApiUrl, opts.allowRemote, "FLAGSMITH_ADMIN_API_URL");
+  assertAllowedUrl(opts.eventsUrl, opts.allowRemote, "FLAGSMITH_EVENTS_URL");
+
+  if (opts.cleanup) {
+    log.emit("conductor", "start", `Cleanup flags with prefix lift_orch_`);
+    const removed = await cleanupOrchFlags(opts, log);
+    const state: PersistedState = {
+      phase: "complete",
+      siteUrl: opts.siteUrl,
+      flagName: opts.flagName,
+      metricEvent: opts.metricEvent,
+      threshold: opts.threshold,
+      generations: [],
+      events: log.events,
+      startedAt: new Date(started).toISOString(),
+      finishedAt: new Date().toISOString(),
+      timeSaved: measureTimeSaved(Date.now() - started),
+    };
+    log.emit("conductor", "done", `Deleted ${removed.length} lift_orch_ flags`);
+    saveState(state);
+    return state;
+  }
 
   let ui: UiServer | undefined;
   if (!opts.noUi) {
@@ -65,19 +120,48 @@ export async function runOrchestrator(opts: OrchOptions): Promise<PersistedState
     log.emit("conductor", "info", `Timeline UI ${ui.url}`);
   }
 
-  const sitePort = Number(new URL(opts.siteUrl).port || 4174);
-  const site = await serveSites(sitePort, { allowMock: true });
-
-  try {
-    if (opts.approve) {
+  if (opts.approve) {
+    try {
       return await approveExisting(opts, log, started);
+    } finally {
+      if (ui && !opts.keepUi) await ui.close();
     }
+  }
+
+  const sitePort = Number(new URL(opts.siteUrl).port || 4174);
+  process.env.LIFT_ORCH_FLAG = opts.flagName;
+  const site = await serveSites(sitePort, { allowMock: true });
+  if (site.reused && opts.apply) {
+    if (ui && !opts.keepUi) await ui.close();
+    throw new Error(
+      `Site port ${sitePort} already in use. Stop the existing server so /orch-specs overlay can be served.`,
+    );
+  }
+
+  const startedExperiments: Array<{ id: number; envKey: string }> = [];
+  let failed = true;
+  try {
 
     log.emit("conductor", "start", opts.apply ? "Apply mode" : "Dry-run (pass --apply to mutate Flagsmith)");
     const generations: GenerationRecord[] = [];
     let previousChampion: PatchSpec | null = null;
+    let previousFlag: FlagSetup | undefined;
 
     for (let generation = 1; generation <= opts.generations; generation += 1) {
+      if (generation >= 2) {
+        if (!previousChampion || !previousFlag) {
+          throw new Error("Generation 2 requires a Flagsmith winner from generation 1 (no axe-hit fallback).");
+        }
+        if (opts.apply && !previousFlag.dryRun && opts.environmentKey) {
+          await pauseExperiment(flagsmithHttp(opts), opts.environmentKey, previousFlag.experimentId, log);
+          log.emit(
+            "conductor",
+            "info",
+            `Paused gen-${generation - 1} experiment ${previousFlag.experimentId} before generation ${generation}`,
+          );
+        }
+      }
+
       log.setPhase("scanning");
       log.emit("conductor", "info", `Generation ${generation}/${opts.generations}`);
       const scan = await runScanner(opts.siteUrl, log);
@@ -89,7 +173,14 @@ export async function runOrchestrator(opts: OrchOptions): Promise<PersistedState
       });
 
       log.setPhase("gating");
-      const gated = await runGatekeeper(opts.siteUrl, candidates, scan.axe, log);
+      const gated = await runGatekeeper(
+        opts.siteUrl,
+        candidates,
+        scan.axe,
+        log,
+        undefined,
+        generation >= 2 ? previousChampion : null,
+      );
       const passed = gated.filter((item) => item.passed);
       const rejected = gated.filter((item) => !item.passed);
       if (passed.length === 0) {
@@ -101,7 +192,10 @@ export async function runOrchestrator(opts: OrchOptions): Promise<PersistedState
           flagName: opts.flagName,
           metricEvent: opts.metricEvent,
           threshold: opts.threshold,
-          generations: [...generations, { generation, scan, candidates, gated, passed, rejected, controlSpec: previousChampion }],
+          generations: [
+            ...generations,
+            { generation, scan, candidates, gated, passed, rejected, controlSpec: previousChampion },
+          ],
           events: log.events,
           startedAt: new Date(started).toISOString(),
           finishedAt: new Date().toISOString(),
@@ -110,23 +204,28 @@ export async function runOrchestrator(opts: OrchOptions): Promise<PersistedState
         saveState(aborted);
         log.snapshot = aborted;
         log.writeLive();
+        failed = false;
         return aborted;
       }
 
       const controlKey = "control";
       const controlSpec = generation === 1 ? null : previousChampion;
+      writePassedSpecs(passed, controlSpec);
+      process.env.LIFT_ORCH_FLAG = generation === 1 ? opts.flagName : `${opts.flagName}_g${generation}`;
 
       log.setPhase("flagging");
       const flag = await runFlagAgent(opts, passed, generation, controlKey, log);
+      if (opts.apply && !flag.dryRun) {
+        startedExperiments.push({ id: flag.experimentId, envKey: opts.environmentKey });
+      }
 
-      let visits = undefined;
-      let recommendation = undefined;
+      let visits: TrafficVisit[] | undefined;
+      let recommendation: AnalystRecommendation | undefined;
       if (opts.apply && !flag.dryRun) {
         log.setPhase("traffic");
-        visits = await runTrafficAgent(opts, flag, passed, controlSpec, log);
-        log.setPhase("analysing");
-        const results = await waitForResults(opts, flag.experimentId, opts.resultsWaitMs);
-        recommendation = runAnalyst(results, log, opts.threshold);
+        const collected = await collectUntilWinner(opts, flag, passed, controlSpec, log);
+        visits = collected.visits;
+        recommendation = collected.recommendation;
       } else {
         log.emit("conductor", "info", "Skipping traffic and analyst (dry-run)");
       }
@@ -145,6 +244,7 @@ export async function runOrchestrator(opts: OrchOptions): Promise<PersistedState
       };
       generations.push(record);
       previousChampion = pickChampion(record);
+      previousFlag = flag;
       log.snapshot = {
         generations,
         flag,
@@ -166,7 +266,7 @@ export async function runOrchestrator(opts: OrchOptions): Promise<PersistedState
     log.emit(
       "conductor",
       "done",
-      `Wall-clock ${formatDuration(timeSaved.wallClockMs)} vs manual ${timeSaved.manualEstimateMinutes} min. Saved ${formatDuration(timeSaved.savedMs)}.`,
+      `Wall-clock ${formatDuration(timeSaved.wallClockMs)} ${TIME_SAVED_LABEL}. Saved ${formatDuration(timeSaved.savedMs)}.`,
     );
     const state: PersistedState = {
       phase: paused.phase,
@@ -186,8 +286,19 @@ export async function runOrchestrator(opts: OrchOptions): Promise<PersistedState
     saveState(state);
     log.snapshot = state;
     log.writeLive();
+    failed = false;
     return state;
   } finally {
+    if (failed && opts.apply) {
+      for (const exp of startedExperiments) {
+        try {
+          await pauseExperiment(flagsmithHttp(opts), exp.envKey, exp.id, log);
+          log.emit("conductor", "warn", `Paused experiment ${exp.id} after a crash`);
+        } catch {
+          log.emit("conductor", "warn", `Could not pause experiment ${exp.id} after a crash`);
+        }
+      }
+    }
     if (!site.reused) await site.close();
     if (ui && !opts.keepUi) await ui.close();
   }
@@ -198,28 +309,37 @@ async function approveExisting(
   log: EventLog,
   started: number,
 ): Promise<PersistedState> {
-  const existing = loadState();
-  if (!existing) {
-    throw new Error("No orchestrator state to approve. Run without --approve first.");
-  }
-  log.events.push(...existing.events);
-  log.phase = existing.phase;
-  log.snapshot = existing;
-  assertCanApprove(existing.phase, true);
-  if (!existing.flag || !existing.recommendation) {
-    throw new Error("State has no flag/recommendation to roll out. Re-run with --apply first.");
-  }
-  if (existing.recommendation.kind !== "winner") {
-    throw new Error(existing.recommendation.reason);
+  assertApproveArgs(opts.approve, opts.approveExperimentId);
+  const experimentId = opts.approveExperimentId as number;
+  await requireTypedApproval(experimentId);
+  const http = flagsmithHttp(opts);
+  const flag = await loadFlagSetupFromExperiment(opts, experimentId, http);
+  log.emit("approval", "info", `Re-fetching Flagsmith /results for experiment ${experimentId}`);
+  const results = await fetchExperimentResults(opts, experimentId, true, http);
+  const recommendation = runAnalyst(results, log, opts.threshold);
+  if (recommendation.kind !== "winner") {
+    throw new Error(
+      recommendation.kind === "keep_collecting"
+        ? recommendation.reason
+        : "Flagsmith /results did not recommend a winner",
+    );
   }
   log.setPhase("rolling_out");
-  const result = await runRollout(opts, existing.flag, existing.recommendation, log);
+  const result = await runRollout(opts, flag, recommendation, log, http);
   const timeSaved = measureTimeSaved(Date.now() - started);
   const state: PersistedState = {
-    ...existing,
     phase: "complete",
+    siteUrl: opts.siteUrl,
+    flagName: flag.flagName,
+    metricEvent: opts.metricEvent,
+    threshold: opts.threshold,
+    generations: [],
     events: log.events,
+    recommendation,
+    flag,
     timeSaved,
+    dashboardExperimentUrl: flag.dashboardUrl,
+    startedAt: new Date(started).toISOString(),
     finishedAt: new Date().toISOString(),
   };
   log.setPhase("complete");

@@ -94,11 +94,7 @@ export function startUiServer(log: EventLog, port: number): Promise<UiServer> {
     });
     server.on("error", (err: NodeJS.ErrnoException) => {
       if (err.code === "EADDRINUSE") {
-        resolveServer({
-          port,
-          url: `http://127.0.0.1:${port}/`,
-          close: async () => undefined,
-        });
+        reject(new Error(`Orchestrator UI port ${port} is already in use.`));
         return;
       }
       reject(err);

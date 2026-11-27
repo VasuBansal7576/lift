@@ -1,8 +1,51 @@
+import readline from "node:readline/promises";
+import { stdin, stdout } from "node:process";
 import type { EventLog } from "../log.ts";
 import type { AnalystRecommendation, FlagSetup, GateResult, Phase } from "../types.ts";
 import { assertNever } from "../types.ts";
 
 export const APPROVAL_PHASE: Phase = "WAITING_FOR_HUMAN_APPROVAL";
+
+export interface ApprovalIo {
+  isTTY: boolean;
+  readLine: () => Promise<string>;
+}
+
+export function defaultApprovalIo(): ApprovalIo {
+  return {
+    isTTY: Boolean(stdin.isTTY),
+    readLine: async () => {
+      const rl = readline.createInterface({ input: stdin, output: stdout });
+      try {
+        return await rl.question("");
+      } finally {
+        rl.close();
+      }
+    },
+  };
+}
+
+export function approvalPhrase(experimentId: number): string {
+  return `APPROVE ${experimentId}`;
+}
+
+export async function requireTypedApproval(
+  experimentId: number,
+  io: ApprovalIo = defaultApprovalIo(),
+): Promise<void> {
+  if (!Number.isInteger(experimentId) || experimentId <= 0) {
+    throw new Error("--approve requires a positive experiment id");
+  }
+  if (!io.isTTY) {
+    throw new Error("Approval requires an interactive TTY. Type APPROVE <experimentId> on a terminal.");
+  }
+  const expected = approvalPhrase(experimentId);
+  stdout.write(`Type ${expected} to roll out the winner:\n`);
+  const line = (await io.readLine()).trim();
+  if (line !== expected) {
+    throw new Error(`Approval phrase did not match (expected ${expected}).`);
+  }
+}
 
 export function approvalSummary(input: {
   recommendation?: AnalystRecommendation;
@@ -25,7 +68,7 @@ export function approvalSummary(input: {
       ? `Flag ${input.flag.flagName} id=${input.flag.flagId}; experiment id=${input.flag.experimentId}; metric id=${input.flag.metricId}.`
       : "No Flagsmith resources (dry-run).",
     recLine,
-    "Rollout happens only on a second invocation with --approve.",
+    "Rollout happens only on a second invocation with --approve <experimentId> plus a typed APPROVE <id> on a TTY.",
   ].join(" ");
 }
 
@@ -53,12 +96,12 @@ export function pauseForHumanApproval(
   return { phase: APPROVAL_PHASE, summary };
 }
 
-export function assertCanApprove(phase: Phase, approve: boolean): void {
+export function assertApproveArgs(approve: boolean, experimentId: number | null): void {
   if (!approve) {
-    throw new Error("Rollout requires an explicit --approve invocation.");
+    throw new Error("Rollout requires --approve <experimentId> plus a typed APPROVE <id> on a TTY.");
   }
-  if (phase !== APPROVAL_PHASE) {
-    throw new Error(`Cannot approve from phase ${phase}; expected ${APPROVAL_PHASE}.`);
+  if (!experimentId || !Number.isInteger(experimentId) || experimentId <= 0) {
+    throw new Error("--approve requires a positive experiment id, e.g. --approve 12");
   }
 }
 

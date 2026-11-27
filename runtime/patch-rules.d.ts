@@ -1,6 +1,9 @@
 export const PATCH_SPEC_VERSION: 0;
 export const PATCH_OPS: readonly string[];
 export const INSERT_HTML_POSITIONS: readonly string[];
+export const PROMOTE_AS: readonly string[];
+export const PROMOTE_SOURCE_TAGS: Set<string>;
+export const BLOCK_PROMOTE_CHILD_TAGS: Set<string>;
 export const ALLOWED_REPLACE_TAGS: readonly string[];
 export const REPLACE_SOURCE_TAGS: Set<string>;
 export const WATCH_NODE_CAP: 2000;
@@ -31,6 +34,8 @@ export function isInteractiveElement(el: Element): boolean;
 export function isNativeInteractiveHost(el: Element): boolean;
 export function isFormControl(el: Element): boolean;
 export function replaceTagHostAllowed(el: Element): boolean;
+export function promoteHostAllowed(el: Element): boolean;
+export function hasBlockPromoteChild(el: Element): boolean;
 export function elementOrAncestorInteractive(el: Element): boolean;
 export function roleAllowedOnElement(el: Element, value: string): boolean;
 export function elementHasInteractiveDescendant(el: Element): boolean;

@@ -103,7 +103,7 @@
           "required": ["property", "value"],
           "properties": {
             "property": { "const": "outline-width" },
-            "value": { "$ref": "#/$defs/px1to8" }
+            "value": { "$ref": "#/$defs/px1to4" }
           }
         },
         {
@@ -112,7 +112,7 @@
           "required": ["property", "value"],
           "properties": {
             "property": { "const": "outline-offset" },
-            "value": { "$ref": "#/$defs/px0to8" }
+            "value": { "$ref": "#/$defs/px0to4" }
           }
         },
         {
@@ -354,31 +354,17 @@
         {
           "type": "object",
           "additionalProperties": false,
-          "required": ["op", "selector", "tag"],
+          "required": ["op", "selector", "as"],
           "properties": {
-            "op": { "const": "replaceTag" },
+            "op": { "const": "promoteToControl" },
             "selector": {
               "allOf": [
                 { "$ref": "#/$defs/selector" },
                 { "$ref": "#/$defs/forbiddenHostSelector" }
               ]
             },
-            "tag": { "enum": ["button", "a"] },
-            "attributes": {
-              "type": "object",
-              "propertyNames": { "$ref": "#/$defs/replaceAttrName" },
-              "additionalProperties": { "type": "string" }
-            }
-          },
-          "if": { "properties": { "tag": { "const": "a" } } },
-          "then": {
-            "required": ["attributes"],
-            "properties": {
-              "attributes": {
-                "type": "object",
-                "required": ["href"]
-              }
-            }
+            "as": { "enum": ["button", "link"] },
+            "hasClickAffordance": { "type": "boolean" }
           }
         },
         {

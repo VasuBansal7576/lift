@@ -62,10 +62,11 @@ describe("R6 #1 replaceTag interactive hosts", () => {
       applyPatchSpec({
         id: "rt-plain",
         version: 0,
-        ops: [{ op: "replaceTag", selector: "#plain", tag: "button" }],
+        ops: [{ op: "promoteToControl", selector: "#plain", as: "button", hasClickAffordance: true }],
       }).ok,
     ).toBe(true);
-    expect(document.getElementById("plain")?.tagName).toBe("BUTTON");
+    expect(document.getElementById("plain")?.tagName).toBe("SPAN");
+    expect(document.getElementById("plain")?.getAttribute("role")).toBe("button");
   });
 });
 
@@ -403,10 +404,11 @@ describe("R6 #9 replaceTag to button forces type=button", () => {
       applyPatchSpec({
         id: "to-btn",
         version: 0,
-        ops: [{ op: "replaceTag", selector: "#pay", tag: "button" }],
+        ops: [{ op: "promoteToControl", selector: "#pay", as: "button", hasClickAffordance: true }],
       }).ok,
     ).toBe(true);
-    expect(document.getElementById("pay")?.getAttribute("type")).toBe("button");
+    expect(document.getElementById("pay")?.getAttribute("role")).toBe("button");
+    expect(document.getElementById("pay")?.tagName).toBe("DIV");
   });
 });
 

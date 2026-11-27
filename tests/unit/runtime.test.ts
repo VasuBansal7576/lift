@@ -79,8 +79,8 @@ describe("applyPatchSpec ops", () => {
     expect(applyPatchSpec(spec).ok).toBe(true);
 
     const shop = document.getElementById("shop-trigger");
-    expect(shop?.tagName).toBe("BUTTON");
-    expect(shop?.getAttribute("type")).toBe("button");
+    expect(shop?.tagName).toBe("SPAN");
+    expect(shop?.getAttribute("role")).toBe("button");
     expect(shop?.getAttribute("aria-expanded")).toBe("false");
     expect(shop?.textContent).toBe("Shop");
 
@@ -95,35 +95,37 @@ describe("applyPatchSpec ops", () => {
     expect(document.querySelector('label[for="terms"]')?.textContent).toContain("I agree to the terms");
 
     const pay = document.getElementById("place-order");
-    expect(pay?.tagName).toBe("BUTTON");
+    expect(pay?.tagName).toBe("DIV");
+    expect(pay?.getAttribute("role")).toBe("button");
     expect(pay?.textContent).toBe("Place order");
-    expect(pay?.getAttribute("type")).toBe("button");
     expect(pay?.classList.contains("div-pay")).toBe(true);
 
     expect(document.querySelectorAll("[data-lift-css]")).toHaveLength(1);
   });
 
-  it("replaceTag moves children, copies data-* / style, and forwards click to the original node", () => {
-    document.body.innerHTML = `<div id="place-order" class="div-pay" data-barrier="div_button" style="color: red">💳<span id="kid">x</span></div>`;
+  it("promoteToControl keeps the original node and fires its click handler", () => {
+    document.body.innerHTML = `<div id="place-order" class="div-pay" data-barrier="div_button" style="color: red; cursor: pointer">💳<span id="kid">x</span></div>`;
     const original = document.getElementById("place-order");
     let clicks = 0;
     original?.addEventListener("click", () => {
       clicks += 1;
     });
     const result = applyPatchSpec({
-      id: "replace",
+      id: "promote",
       version: 0,
-      ops: [{ op: "replaceTag", selector: "#place-order", tag: "button" }],
+      ops: [{ op: "promoteToControl", selector: "#place-order", as: "button" }],
     });
     expect(result.ok).toBe(true);
     const next = document.getElementById("place-order");
-    expect(next?.tagName).toBe("BUTTON");
+    expect(next).toBe(original);
+    expect(next?.tagName).toBe("DIV");
+    expect(next?.getAttribute("role")).toBe("button");
     expect(next?.getAttribute("data-barrier")).toBe("div_button");
-    expect(next?.getAttribute("style")).toBe("color: red");
-    expect(document.getElementById("kid")?.textContent).toBe("x");
     expect(document.getElementById("kid")?.parentElement).toBe(next);
     next?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     expect(clicks).toBe(1);
+    next?.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    expect(clicks).toBe(2);
   });
 
   it("wrapLabel only replaces a previous-sibling hint and skips already-labelled inputs", () => {
@@ -349,8 +351,8 @@ describe("applyPatchSpec ops", () => {
     expect(document.getElementById("keep")?.textContent).toBe("old");
   });
 
-  it("forwards chained replaceTag clicks to the original node once", () => {
-    document.body.innerHTML = `<div id="x" class="pay">Pay</div>`;
+  it("promoteToControl is idempotent and keeps the original click handler", () => {
+    document.body.innerHTML = `<div id="x" class="pay" style="cursor:pointer">Pay</div>`;
     let clicks = 0;
     document.getElementById("x")?.addEventListener("click", () => {
       clicks += 1;
@@ -359,32 +361,33 @@ describe("applyPatchSpec ops", () => {
       applyPatchSpec({
         id: "chain-1",
         version: 0,
-        ops: [{ op: "replaceTag", selector: "#x", tag: "button" }],
+        ops: [{ op: "promoteToControl", selector: "#x", as: "button" }],
       }).ok,
     ).toBe(true);
     expect(
       applyPatchSpec({
-        id: "chain-2",
+        id: "chain-1",
         version: 0,
-        ops: [{ op: "replaceTag", selector: "#x", tag: "button" }],
+        ops: [{ op: "promoteToControl", selector: "#x", as: "button" }],
       }).ok,
     ).toBe(true);
     document.getElementById("x")?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     expect(clicks).toBe(1);
-    expect(document.getElementById("x")?.tagName).toBe("BUTTON");
+    expect(document.getElementById("x")?.tagName).toBe("DIV");
+    expect(document.getElementById("x")?.getAttribute("role")).toBe("button");
   });
 
-  it("is idempotent for replaceTag on a class selector that drops the class", () => {
-    document.body.innerHTML = `<span class="chip">Go</span>`;
+  it("is idempotent for promoteToControl on a class selector", () => {
+    document.body.innerHTML = `<span class="chip" style="cursor:pointer">Go</span>`;
     const spec = {
-      id: "class-replace",
+      id: "class-promote",
       version: 0,
-      ops: [{ op: "replaceTag", selector: ".chip", tag: "button" }],
+      ops: [{ op: "promoteToControl", selector: ".chip", as: "button" }],
     };
     expect(applyPatchSpec(spec).ok).toBe(true);
     expect(applyPatchSpec(spec).ok).toBe(true);
-    expect(document.querySelectorAll("button.chip")).toHaveLength(1);
-    expect(document.querySelectorAll("span.chip")).toHaveLength(0);
+    expect(document.querySelectorAll("span.chip")).toHaveLength(1);
+    expect(document.querySelector("span.chip")?.getAttribute("role")).toBe("button");
   });
 
   it("updates injectCSS text when the same id carries different css", () => {
@@ -447,15 +450,14 @@ describe("applyPatchSpec ops", () => {
       applyPatchSpec({
         id: "wrap-input",
         version: 0,
-        ops: [{ op: "replaceTag", selector: "#wrap", tag: "button" }],
+        ops: [{ op: "promoteToControl", selector: "#wrap", as: "button", hasClickAffordance: true }],
       }).ok,
     ).toBe(false);
     expect(document.getElementById("wrap")?.tagName).toBe("DIV");
     expect(document.getElementById("in")).not.toBeNull();
   });
 
-  it("rejects replaceTag to a without href", () => {
-    document.body.innerHTML = `<span id="x">Go</span>`;
+  it("rejects replaceTag in favor of promoteToControl", () => {
     const parsed = validatePatchSpec({
       id: "a-no-href",
       version: 0,
@@ -463,7 +465,7 @@ describe("applyPatchSpec ops", () => {
     });
     expect(parsed.ok).toBe(false);
     if (parsed.ok) return;
-    expect(parsed.error).toContain("a requires href");
+    expect(parsed.error).toContain("promoteToControl");
   });
 
   it("does not forward keydown when bindEnterToClick is on the replacement", () => {
@@ -481,15 +483,14 @@ describe("applyPatchSpec ops", () => {
         id: "enter-once",
         version: 0,
         ops: [
-          { op: "replaceTag", selector: "#pay", tag: "button" },
-          { op: "bindEnterToClick", selector: "#pay" },
+          { op: "promoteToControl", selector: "#pay", as: "button", hasClickAffordance: true },
         ],
       }).ok,
     ).toBe(true);
     const next = document.getElementById("pay");
     next?.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
     expect(clicks).toBe(1);
-    expect(keys).toBe(0);
+    expect(keys).toBe(1);
   });
 
   it("refuses insertHTML buttons and reserves data-lift-*", () => {
@@ -694,7 +695,7 @@ describe("applyPatchSpec ops", () => {
       applyPatchSpec({
         id: "rt-a",
         version: 0,
-        ops: [{ op: "replaceTag", selector: "#wrap", tag: "button" }],
+        ops: [{ op: "promoteToControl", selector: "#wrap", as: "button", hasClickAffordance: true }],
       }).ok,
     ).toBe(false);
     document.body.innerHTML = `<div id="wrap"><span contenteditable="true">x</span></div>`;
@@ -702,7 +703,7 @@ describe("applyPatchSpec ops", () => {
       applyPatchSpec({
         id: "rt-ce",
         version: 0,
-        ops: [{ op: "replaceTag", selector: "#wrap", tag: "button" }],
+        ops: [{ op: "promoteToControl", selector: "#wrap", as: "button", hasClickAffordance: true }],
       }).ok,
     ).toBe(false);
   });

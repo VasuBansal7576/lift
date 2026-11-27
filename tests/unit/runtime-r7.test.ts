@@ -69,22 +69,25 @@ describe("R7 E1 replaceTag hosts and submit buttons", () => {
       applyPatchSpec({
         id: "rt-ok",
         version: 0,
-        ops: [{ op: "replaceTag", selector: "#ok", tag: "button" }],
+        ops: [{ op: "promoteToControl", selector: "#ok", as: "button", hasClickAffordance: true }],
       }).ok,
     ).toBe(true);
-    expect(document.getElementById("ok")?.getAttribute("type")).toBe("button");
+    expect(document.getElementById("ok")?.tagName).toBe("SPAN");
+    expect(document.getElementById("ok")?.getAttribute("role")).toBe("button");
   });
 
-  it("forces type=button only on newly created buttons from div/span", () => {
+  it("promotes a div in place without swapping the node", () => {
     document.body.innerHTML = `<div id="pay">Pay</div>`;
+    const original = document.getElementById("pay");
     expect(
       applyPatchSpec({
         id: "new-btn",
         version: 0,
-        ops: [{ op: "replaceTag", selector: "#pay", tag: "button" }],
+        ops: [{ op: "promoteToControl", selector: "#pay", as: "button", hasClickAffordance: true }],
       }).ok,
     ).toBe(true);
-    expect(document.getElementById("pay")?.getAttribute("type")).toBe("button");
+    expect(document.getElementById("pay")).toBe(original);
+    expect(document.getElementById("pay")?.getAttribute("role")).toBe("button");
   });
 });
 
@@ -253,7 +256,7 @@ describe("R7 W8 interactive ancestor and structural roles", () => {
       applyPatchSpec({
         id: "nested",
         version: 0,
-        ops: [{ op: "replaceTag", selector: "#inner", tag: "button" }],
+        ops: [{ op: "promoteToControl", selector: "#inner", as: "button", hasClickAffordance: true }],
       }).ok,
     ).toBe(false);
     expect(document.getElementById("inner")?.tagName).toBe("SPAN");

@@ -16,12 +16,16 @@
       ]
     },
     {
-      "op": "replaceTag",
+      "op": "promoteToControl",
       "selector": "#shop-trigger",
-      "tag": "button",
-      "attributes": {
-        "aria-controls": "shop-menu"
-      }
+      "as": "button",
+      "hasClickAffordance": true
+    },
+    {
+      "op": "setAttribute",
+      "selector": "#shop-trigger",
+      "name": "aria-controls",
+      "value": "shop-menu"
     },
     {
       "op": "toggleDisclosure",
@@ -70,9 +74,10 @@
       "text": "Place order"
     },
     {
-      "op": "replaceTag",
+      "op": "promoteToControl",
       "selector": "#place-order",
-      "tag": "button"
+      "as": "button",
+      "hasClickAffordance": true
     }
   ]
 }

@@ -195,10 +195,10 @@ function parseDeclaration(raw) {
       emitted = parseKeyword(value, BORDER_STYLES);
       break;
     case "outline-width":
-      emitted = parsePx(value, 1, 8);
+      emitted = parsePx(value, 1, 4);
       break;
     case "outline-offset":
-      emitted = parsePx(value, 0, 8);
+      emitted = parsePx(value, 0, 4);
       break;
     case "border-width":
       emitted = parsePx(value, 1, 8);
@@ -344,6 +344,13 @@ export function parseCssRules(rawRules, index) {
       return { error: `ops[${index}] css is not allowlisted` };
     }
     if (stateRuleNotAllowlisted(selector, declarations)) {
+      return { error: `ops[${index}] css is not allowlisted` };
+    }
+    const outlineWidth = declarations.find((d) => d.property === "outline-width");
+    const outlineOffset = declarations.find((d) => d.property === "outline-offset");
+    const widthPx = outlineWidth ? Number.parseFloat(outlineWidth.value) : 0;
+    const offsetPx = outlineOffset ? Number.parseFloat(outlineOffset.value) : 0;
+    if ((Number.isFinite(widthPx) ? widthPx : 0) + (Number.isFinite(offsetPx) ? offsetPx : 0) > 4) {
       return { error: `ops[${index}] css is not allowlisted` };
     }
     rules.push({ selector, declarations });

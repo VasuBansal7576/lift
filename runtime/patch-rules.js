@@ -13,13 +13,55 @@ export const PATCH_OPS = [
   "wrapLabel",
   "makeFocusable",
   "bindEnterToClick",
-  "replaceTag",
+  "promoteToControl",
   "insertHTML",
   "toggleDisclosure",
 ];
 export const INSERT_HTML_POSITIONS = ["before", "after", "prepend", "append"];
-export const ALLOWED_REPLACE_TAGS = ["button", "a"];
-export const REPLACE_SOURCE_TAGS = new Set(["div", "span"]);
+export const PROMOTE_AS = ["button", "link"];
+export const PROMOTE_SOURCE_TAGS = new Set(["div", "span"]);
+export const BLOCK_PROMOTE_CHILD_TAGS = new Set([
+  "h1",
+  "h2",
+  "h3",
+  "h4",
+  "h5",
+  "h6",
+  "p",
+  "ul",
+  "ol",
+  "li",
+  "dl",
+  "dt",
+  "dd",
+  "table",
+  "thead",
+  "tbody",
+  "tfoot",
+  "tr",
+  "td",
+  "th",
+  "caption",
+  "div",
+  "section",
+  "article",
+  "header",
+  "footer",
+  "nav",
+  "main",
+  "aside",
+  "form",
+  "fieldset",
+  "blockquote",
+  "pre",
+  "hr",
+  "figure",
+  "figcaption",
+  "address",
+]);
+/** @deprecated parse-rejected; use promoteToControl */
+export const ALLOWED_REPLACE_TAGS = [];
+export const REPLACE_SOURCE_TAGS = PROMOTE_SOURCE_TAGS;
 export const WATCH_NODE_CAP = 2000;
 export const GUARD_MAX_WAIT_MS = 250;
 export const MOUNT_ID_RE = /^[a-z0-9_-]+$/i;
@@ -55,7 +97,7 @@ const REPLACE_EXTRA_ATTRS = new Set(["href", "for"]);
 
 const PATCH_OP_SET = new Set(PATCH_OPS);
 const INSERT_POS_SET = new Set(INSERT_HTML_POSITIONS);
-const REPLACE_TAG_SET = new Set(ALLOWED_REPLACE_TAGS);
+const PROMOTE_AS_SET = new Set(PROMOTE_AS);
 const DROP_INSERT_ATTR = new Set([
   "src",
   "srcset",
@@ -248,7 +290,7 @@ const OP_KEYS = {
   wrapLabel: new Set(["op", "selector", "text"]),
   makeFocusable: new Set(["op", "selector"]),
   bindEnterToClick: new Set(["op", "selector"]),
-  replaceTag: new Set(["op", "selector", "tag", "attributes"]),
+  promoteToControl: new Set(["op", "selector", "as", "hasClickAffordance"]),
   insertHTML: new Set(["op", "selector", "position", "html", "mountId"]),
   toggleDisclosure: new Set(["op", "trigger", "panel"]),
 };
@@ -435,15 +477,27 @@ export function isFormControl(el) {
 }
 
 export function replaceTagHostAllowed(el) {
+  return promoteHostAllowed(el);
+}
+
+export function promoteHostAllowed(el) {
   if (!el || el.nodeType !== 1) return false;
   const tag = localTagName(el);
-  if (!REPLACE_SOURCE_TAGS.has(tag)) return false;
+  if (!PROMOTE_SOURCE_TAGS.has(tag)) return false;
   if (FORBIDDEN_REPLACE_SOURCE_TAGS.has(tag)) return false;
   const roles = roleTokens(el.getAttribute("role") || "");
   if (roles.some((role) => LANDMARK_ROLES.has(role) || STRUCTURAL_ROLES.has(role))) {
     return false;
   }
   return true;
+}
+
+export function hasBlockPromoteChild(el) {
+  if (!el || typeof el.querySelectorAll !== "function") return true;
+  for (const child of el.querySelectorAll("*")) {
+    if (BLOCK_PROMOTE_CHILD_TAGS.has(localTagName(child))) return true;
+  }
+  return false;
 }
 
 export function elementOrAncestorInteractive(el) {
@@ -645,6 +699,9 @@ function parseOp(raw, index, doc) {
   if (!isRecord(raw)) return { error: `ops[${index}] must be an object` };
   const op = raw.op;
   if (typeof op !== "string") return { error: `ops[${index}] missing op` };
+  if (op === "replaceTag") {
+    return { error: `ops[${index}] replaceTag is not allowlisted; use promoteToControl` };
+  }
   if (!PATCH_OP_SET.has(op)) return { error: `ops[${index}] unknown op: ${op}` };
   const unknown = rejectUnknownKeys(raw, index, OP_KEYS[op]);
   if (unknown) return unknown;
@@ -709,24 +766,20 @@ function parseOp(raw, index, doc) {
       }
       return { op, selector: raw.selector };
     }
-    case "replaceTag": {
+    case "promoteToControl": {
       if (!isNonEmptyString(raw.selector)) return { error: `ops[${index}] selector required` };
-      if (typeof raw.tag !== "string" || !REPLACE_TAG_SET.has(raw.tag)) {
-        return { error: `ops[${index}] tag is not allowlisted` };
+      if (typeof raw.as !== "string" || !PROMOTE_AS_SET.has(raw.as)) {
+        return { error: `ops[${index}] as must be button|link` };
+      }
+      if (raw.hasClickAffordance !== undefined && typeof raw.hasClickAffordance !== "boolean") {
+        return { error: `ops[${index}] hasClickAffordance must be a boolean` };
       }
       if (selectorTargetsForbiddenHost(raw.selector)) {
         return { error: `ops[${index}] target is not allowlisted` };
       }
-      const attributes = parseAttributes(raw.attributes, index);
-      if (attributes.error) return { error: attributes.error };
-      if (raw.tag === "a") {
-        if (typeof attributes.href !== "string" || !isSafeHref(attributes.href)) {
-          return { error: `ops[${index}] a requires href` };
-        }
-      }
-      return Object.keys(attributes).length > 0
-        ? { op, selector: raw.selector, tag: raw.tag, attributes }
-        : { op, selector: raw.selector, tag: raw.tag };
+      return raw.hasClickAffordance === undefined
+        ? { op, selector: raw.selector, as: raw.as }
+        : { op, selector: raw.selector, as: raw.as, hasClickAffordance: raw.hasClickAffordance };
     }
     case "insertHTML": {
       if (!isNonEmptyString(raw.selector)) return { error: `ops[${index}] selector required` };

@@ -29,7 +29,8 @@ import {
   localTagName,
   mountKeyFor,
   parsePatchSpec,
-  replaceTagHostAllowed,
+  hasBlockPromoteChild,
+  promoteHostAllowed,
   roleAllowedOnElement,
   sanitizeInsertHtml,
   STRUCTURAL_ROLES,
@@ -196,6 +197,9 @@ const SIZE_GROWING_PROPS = new Set([
   "margin",
   "letter-spacing",
   "word-spacing",
+  "min-height",
+  "min-width",
+  "border-width",
 ]);
 
 function backgroundUnknown(el) {
@@ -268,14 +272,45 @@ function colorValueFromRule(rule, property) {
   return decl ? cssColorToRgb(decl.value) : null;
 }
 
-function hostOrAncestorIsFixedOrSticky(el) {
+function hostOrAncestorIsOutOfFlow(el) {
   let node = el;
   while (node && node.nodeType === 1) {
     const pos = String(getComputedStyle(node).position || "").toLowerCase();
-    if (pos === "fixed" || pos === "sticky") return true;
+    if (pos === "fixed" || pos === "sticky" || pos === "absolute") return true;
     node = node.parentElement;
   }
   return false;
+}
+
+function decorationIncludesLineThrough(el) {
+  let node = el;
+  while (node && node.nodeType === 1) {
+    const tag = localTagName(node);
+    if (tag === "del" || tag === "s" || tag === "strike") return true;
+    const deco = `${getComputedStyle(node).textDecorationLine || ""} ${
+      getComputedStyle(node).textDecoration || ""
+    }`;
+    if (/\bline-through\b/i.test(deco)) return true;
+    node = node.parentElement;
+  }
+  return false;
+}
+
+function pxFromDeclOrStyle(decls, property, styleValue) {
+  const decl = (decls || []).find((d) => d.property === property);
+  if (decl) {
+    const n = Number.parseFloat(decl.value);
+    return Number.isFinite(n) ? n : 0;
+  }
+  const n = Number.parseFloat(styleValue || "0");
+  return Number.isFinite(n) ? n : 0;
+}
+
+function outlineBudgetExceeded(decls, el) {
+  const style = el ? getComputedStyle(el) : null;
+  const width = pxFromDeclOrStyle(decls, "outline-width", style?.outlineWidth);
+  const offset = pxFromDeclOrStyle(decls, "outline-offset", style?.outlineOffset);
+  return width + offset > 4;
 }
 
 function hostHasFixedHeightAndHiddenOverflow(el) {
@@ -299,13 +334,19 @@ function cssMatchesViolateHostsOrContrast(root, op, mode) {
     } catch {
       return "invalid selector";
     }
-    if (matches.length === 0) return guard ? null : "selector matched nothing";
+    if (matches.length === 0) {
+      if (guard) continue;
+      return "selector matched nothing";
+    }
     if (matches.length > CSS_MATCH_LIMIT) return "too many matches";
     const decls = rule.declarations || [];
     const changesPaint = decls.some(
       (d) => d.property === "color" || d.property === "background-color",
     );
     const grows = decls.some((d) => SIZE_GROWING_PROPS.has(d.property));
+    const setsUnderline = decls.some(
+      (d) => d.property === "text-decoration-line" && String(d.value) === "underline",
+    );
     const outlineColor = colorValueFromRule(rule, "outline-color");
     const borderColor = colorValueFromRule(rule, "border-color");
     const isState = Boolean(rule.selector && rule.selector.state);
@@ -313,9 +354,13 @@ function cssMatchesViolateHostsOrContrast(root, op, mode) {
       if (elementIsPageContainer(el) || elementForbiddenAsTextOrTagHost(el)) {
         return "target is not allowlisted";
       }
-      if (grows && (hostOrAncestorIsFixedOrSticky(el) || hostHasFixedHeightAndHiddenOverflow(el))) {
+      if (grows && (hostOrAncestorIsOutOfFlow(el) || hostHasFixedHeightAndHiddenOverflow(el))) {
         return "size change is not allowlisted";
       }
+      if (setsUnderline && decorationIncludesLineThrough(el)) {
+        return "text-decoration is not allowlisted";
+      }
+      if (outlineBudgetExceeded(decls, el)) return "outline is not allowlisted";
       if (changesPaint && backgroundUnknown(el)) return "background is not allowlisted";
       const nodes = [el, ...el.querySelectorAll("*")];
       if (nodes.length > TEXT_DESCENDANT_CAP) return "too many descendants";
@@ -545,104 +590,76 @@ function forwardUiEvents(from, to) {
   };
 }
 
-function replaceTagKey(op) {
-  return hashKey(`${op.selector}|${op.tag}|${JSON.stringify(op.attributes ?? {})}`);
+function hostHasClickAffordance(el, op) {
+  if (op && op.hasClickAffordance === true) return true;
+  if (el.hasAttribute && el.hasAttribute("onclick")) return true;
+  const cursor = String(getComputedStyle(el).cursor || "").toLowerCase();
+  return cursor === "pointer";
 }
 
-function findReplaced(root, key) {
-  const scope = "querySelectorAll" in root ? root : docOf(root);
-  for (const el of scope.querySelectorAll("[data-lift-replaced]")) {
-    if (el.getAttribute("data-lift-replaced") === key) return el;
-  }
-  return null;
-}
-
-function copyAttributesExceptHandlers(from, to) {
-  for (const attr of [...from.attributes]) {
-    if (attr.name.toLowerCase().startsWith("on")) continue;
-    to.setAttribute(attr.name, attr.value);
-  }
-}
-
-function forTargetAllowed(root, op) {
-  const forValue = op.attributes && op.attributes.for;
-  if (op.tag !== "label" || !forValue) return true;
-  return isLabelableTextControl(resolveForTarget(root, forValue));
-}
-
-function overlayAttributes(el, attrs) {
-  const undoAttrs = [];
-  for (const [name, value] of Object.entries(attrs)) {
-    const attrName = name.toLowerCase();
-    if (attrName === "class" || attrName === "type") continue;
-    if (el.getAttribute(name) === value) continue;
-    const had = el.hasAttribute(name);
-    const prev = el.getAttribute(name);
-    el.setAttribute(name, value);
-    undoAttrs.push(() => {
-      if (!had) el.removeAttribute(name);
-      else el.setAttribute(name, prev ?? "");
-    });
-  }
-  if (undoAttrs.length === 0) return noop();
-  return applied(() => {
-    for (const undo of undoAttrs.reverse()) undo();
-  });
-}
-
-function applyReplaceTag(root, op, index) {
-  const key = replaceTagKey(op);
-  const existing = findReplaced(root, key);
-  if (existing) {
-    return overlayAttributes(existing, op.attributes || {});
-  }
+function applyPromoteToControl(root, op, index) {
   const found = queryOne(root, op.selector);
   if (found.error) return miss(index, op.selector, found.error);
   const el = found.el;
-  if (!(el instanceof Element)) return miss(index, op.selector);
+  if (!(el instanceof HTMLElement)) return miss(index, op.selector);
   if (elementForbiddenAsTextOrTagHost(el) || elementIsPageContainer(el)) {
     return { status: "miss", error: `ops[${index}] target is not allowlisted` };
   }
-  if (!replaceTagHostAllowed(el)) {
+  if (!promoteHostAllowed(el)) {
     return { status: "miss", error: `ops[${index}] target is not allowlisted` };
   }
-  if (op.tag !== "button" && op.tag !== "a") {
-    return { status: "miss", error: `ops[${index}] tag is not allowlisted` };
-  }
-  if (
-    (op.tag === "button" || op.tag === "a") &&
-    el.parentElement &&
-    elementOrAncestorInteractive(el.parentElement)
-  ) {
+  if (el.parentElement && elementOrAncestorInteractive(el.parentElement)) {
     return { status: "miss", error: `ops[${index}] target is not allowlisted` };
   }
-  if (elementHasVoidOrControlDescendant(el) || elementHasInteractiveDescendant(el)) {
+  if (elementHasInteractiveDescendant(el) || elementHasVoidOrControlDescendant(el)) {
     return { status: "miss", error: `ops[${index}] target is not allowlisted` };
   }
-  if (el.getAttribute("data-lift-replaced") === key) {
-    return overlayAttributes(el, op.attributes || {});
+  if (hasBlockPromoteChild(el)) {
+    return { status: "miss", error: `ops[${index}] target is not allowlisted` };
   }
-  const doc = docOf(root);
-  const next = doc.createElement(op.tag);
-  copyAttributesExceptHandlers(el, next);
-  for (const [name, value] of Object.entries(op.attributes || {})) {
-    if (name.toLowerCase() === "class" || name.toLowerCase() === "type") continue;
-    next.setAttribute(name, value);
+  if (!hostHasClickAffordance(el, op)) {
+    return { status: "miss", error: `ops[${index}] click affordance required` };
   }
-  if (op.tag === "button") next.setAttribute("type", "button");
-  next.setAttribute("data-lift-replaced", key);
-  while (el.firstChild) next.appendChild(el.firstChild);
-  const rootOriginal = replacementRoot.get(el) ?? el;
-  replacementRoot.set(next, rootOriginal);
-  replacementOf.set(el, next);
-  el.replaceWith(next);
-  const stopForward = forwardUiEvents(next, rootOriginal);
+  const role = op.as === "link" ? "link" : "button";
+  if (el.getAttribute("data-lift-promoted") === role) return noop();
+  const hadRole = el.hasAttribute("role");
+  const prevRole = el.getAttribute("role");
+  const hadTab = el.hasAttribute("tabindex");
+  const prevTab = el.getAttribute("tabindex");
+  const hadMark = el.hasAttribute("data-lift-promoted");
+  const prevMark = el.getAttribute("data-lift-promoted");
+  el.setAttribute("role", role);
+  if (!hadTab) el.tabIndex = 0;
+  el.setAttribute("data-lift-promoted", role);
+  const onKey = (event) => {
+    if (event.target !== el) return;
+    const isEnter = event.key === "Enter";
+    const isSpace = event.key === " " || event.key === "Spacebar";
+    if (!isEnter && !(role === "button" && isSpace)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    el.click();
+  };
+  el.addEventListener("keydown", onKey);
+  const contrastErr = checkNodeContrast(el);
+  if (contrastErr) {
+    el.removeEventListener("keydown", onKey);
+    if (!hadMark) el.removeAttribute("data-lift-promoted");
+    else el.setAttribute("data-lift-promoted", prevMark ?? "");
+    if (!hadTab) el.removeAttribute("tabindex");
+    else el.setAttribute("tabindex", prevTab ?? "0");
+    if (!hadRole) el.removeAttribute("role");
+    else el.setAttribute("role", prevRole ?? "");
+    return { status: "miss", error: `ops[${index}] ${contrastErr}` };
+  }
   return applied(() => {
-    stopForward();
-    replacementRoot.delete(next);
-    replacementOf.delete(el);
-    while (next.firstChild) el.appendChild(next.firstChild);
-    next.replaceWith(el);
+    el.removeEventListener("keydown", onKey);
+    if (!hadMark) el.removeAttribute("data-lift-promoted");
+    else el.setAttribute("data-lift-promoted", prevMark ?? "");
+    if (!hadTab) el.removeAttribute("tabindex");
+    else el.setAttribute("tabindex", prevTab ?? "0");
+    if (!hadRole) el.removeAttribute("role");
+    else el.setAttribute("role", prevRole ?? "");
   });
 }
 
@@ -757,8 +774,8 @@ function applyOp(root, op, index) {
       return applyMakeFocusable(root, op, index);
     case "bindEnterToClick":
       return applyBindEnterToClick(root, op, index);
-    case "replaceTag":
-      return applyReplaceTag(root, op, index);
+    case "promoteToControl":
+      return applyPromoteToControl(root, op, index);
     case "insertHTML":
       return applyInsertHtml(root, op, index);
     case "toggleDisclosure":
@@ -1021,6 +1038,162 @@ function snapshotA11y(el) {
   };
 }
 
+function isPositionedOverlay(el) {
+  const pos = String(getComputedStyle(el).position || "").toLowerCase();
+  return pos === "fixed" || pos === "sticky" || pos === "absolute";
+}
+
+function collectOverlayElements(root, spec) {
+  const scope = "querySelectorAll" in root ? root : docOf(root);
+  const overlays = [];
+  const seen = new Set();
+  const add = (el) => {
+    if (!el || seen.has(el)) return;
+    seen.add(el);
+    overlays.push(el);
+  };
+  for (const op of spec.ops || []) {
+    if (op.op !== "injectCSS") continue;
+    for (const rule of op.rules || []) {
+      let matches;
+      try {
+        matches = scope.querySelectorAll(serializeSelectorForQuery(rule.selector));
+      } catch {
+        continue;
+      }
+      for (const host of matches) {
+        if (isPositionedOverlay(host)) add(host);
+        if (typeof host.querySelectorAll !== "function") continue;
+        for (const child of host.querySelectorAll("*")) {
+          if (isPositionedOverlay(child)) add(child);
+        }
+      }
+    }
+  }
+  return overlays;
+}
+
+function rectIntersection(a, b) {
+  const left = Math.max(a.left, b.left);
+  const top = Math.max(a.top, b.top);
+  const right = Math.min(a.right, b.right);
+  const bottom = Math.min(a.bottom, b.bottom);
+  const width = right - left;
+  const height = bottom - top;
+  if (width <= 0 || height <= 0) return null;
+  return { left, top, right, bottom, width, height };
+}
+
+function elementsFromPointAt(doc, x, y) {
+  if (!doc || typeof doc.elementsFromPoint !== "function") return [];
+  const view = doc.defaultView;
+  const vw = view ? view.innerWidth || 0 : 0;
+  const vh = view ? view.innerHeight || 0 : 0;
+  try {
+    if (vw > 0 && vh > 0 && x >= 0 && y >= 0 && x <= vw && y <= vh) {
+      return [...doc.elementsFromPoint(x, y)];
+    }
+    if (!view || typeof view.scrollTo !== "function") return [];
+    const prevX = view.scrollX || 0;
+    const prevY = view.scrollY || 0;
+    view.scrollTo(prevX + x - vw / 2, prevY + y - vh / 2);
+    const adjX = x - ((view.scrollX || 0) - prevX);
+    const adjY = y - ((view.scrollY || 0) - prevY);
+    const hits = [...doc.elementsFromPoint(adjX, adjY)];
+    view.scrollTo(prevX, prevY);
+    return hits;
+  } catch {
+    return [];
+  }
+}
+
+function overlayPaintsAbove(overlay, control, inter) {
+  const doc = control.ownerDocument;
+  const hits = elementsFromPointAt(
+    doc,
+    inter.left + inter.width / 2,
+    inter.top + inter.height / 2,
+  );
+  if (hits.length === 0) {
+    const oz = Number.parseFloat(getComputedStyle(overlay).zIndex);
+    const cz = Number.parseFloat(getComputedStyle(control).zIndex);
+    if (Number.isFinite(oz) && Number.isFinite(cz)) return oz > cz;
+    return false;
+  }
+  for (const hit of hits) {
+    if (hit === overlay || (overlay.contains && overlay.contains(hit))) return true;
+    if (hit === control || (control.contains && control.contains(hit))) return false;
+  }
+  return false;
+}
+
+function coverageHitsFor(control, overlays) {
+  const crect = control.getBoundingClientRect();
+  const area = crect.width * crect.height;
+  if (area <= 0) return [];
+  const hits = [];
+  for (const overlay of overlays) {
+    if (overlay === control) continue;
+    if (control.contains && control.contains(overlay)) continue;
+    if (overlay.contains && overlay.contains(control)) continue;
+    const inter = rectIntersection(crect, overlay.getBoundingClientRect());
+    if (!inter) continue;
+    if (inter.width * inter.height / area < 0.25) continue;
+    if (!overlayPaintsAbove(overlay, control, inter)) continue;
+    hits.push(overlay);
+  }
+  return hits;
+}
+
+function overlayCoverageViolation(root, spec, snapshots, extraFocusables) {
+  const overlays = collectOverlayElements(root, spec);
+  if (overlays.length === 0) return null;
+  const items = [];
+  const seen = new Set();
+  for (const snap of snapshots) {
+    const live = liveSuccessor(snap.el) || (snap.el.isConnected ? snap.el : null);
+    if (!live || !snap.focusable) continue;
+    seen.add(live);
+    items.push({ el: live, before: snap.overlayHits || [] });
+  }
+  for (const el of extraFocusables || []) {
+    if (!el || seen.has(el) || !isFocusableSnap(el)) continue;
+    seen.add(el);
+    items.push({ el, before: [] });
+  }
+  for (const el of collectFocusables(root)) {
+    if (!el || seen.has(el) || !isFocusableSnap(el)) continue;
+    seen.add(el);
+    items.push({ el, before: [] });
+  }
+  for (const item of items) {
+    const after = coverageHitsFor(item.el, overlays);
+    const beforeSet = new Set(item.before);
+    for (const overlay of after) {
+      if (!beforeSet.has(overlay)) return "covered control";
+    }
+  }
+  return null;
+}
+
+function addedFocusablesFromRecords(records) {
+  const out = [];
+  if (!records) return out;
+  for (const rec of records) {
+    for (const node of rec.addedNodes || []) {
+      if (!node || node.nodeType !== 1) continue;
+      if (isFocusableSnap(node)) out.push(node);
+      if (typeof node.querySelectorAll !== "function") continue;
+      for (const child of node.querySelectorAll(
+        'a[href],button,input,select,textarea,[tabindex]:not([tabindex="-1"])',
+      )) {
+        if (isFocusableSnap(child)) out.push(child);
+      }
+    }
+  }
+  return out;
+}
+
 function opMatchSelectors(op) {
   if (op.op === "injectCSS") {
     return (op.rules || []).map((rule) => serializeSelectorForQuery(rule.selector));
@@ -1038,7 +1211,7 @@ function addWatched(set, el) {
   if (shouldWatch(el)) set.add(el);
 }
 
-function viewportFocusables(root) {
+function collectFocusables(root) {
   const doc = docOf(root);
   const scope = "querySelectorAll" in root ? root : doc;
   const out = [];
@@ -1051,8 +1224,8 @@ function viewportFocusables(root) {
     return out;
   }
   for (const el of nodes) {
-    if (inViewport(el)) out.push(el);
-    if (out.length >= 200) break;
+    out.push(el);
+    if (out.length >= WATCH_NODE_CAP) break;
   }
   return out;
 }
@@ -1097,7 +1270,7 @@ function collectWatchElements(root, spec) {
       }
     }
   }
-  for (const el of viewportFocusables(scope)) addWatched(watched, el);
+  for (const el of collectFocusables(scope)) addWatched(watched, el);
   if (watched.size > WATCH_NODE_CAP) return { error: "too many watched nodes" };
   return { elements: [...watched], matches };
 }
@@ -1144,13 +1317,23 @@ function monotonicityViolation(root, snapshots) {
       return "button type changed";
     }
     if (before.formOwner && after.formOwner !== before.formOwner) return "lost form owner";
-    if (before.hitOk) {
+    if (before.hitOk && inViewport(live)) {
       const hit = hitTargetAtCenter(live);
       if (!hitIsSelfOrDescendant(live, hit)) return "lost hit target";
     }
     if (!before.clipped && after.clipped) return "clipped by overflow";
   }
   return null;
+}
+
+function attachOverlayHits(root, spec, snapshots) {
+  const overlays = collectOverlayElements(root, spec);
+  if (overlays.length === 0) return snapshots;
+  for (const snap of snapshots) {
+    if (!snap.focusable) continue;
+    snap.overlayHits = coverageHitsFor(snap.el, overlays);
+  }
+  return snapshots;
 }
 
 function specContrastError(root, spec, mode) {
@@ -1164,23 +1347,81 @@ function specContrastError(root, spec, mode) {
 
 const activeGuards = [];
 const guardsBySpecId = new Map();
+const guardKickers = [];
+let cssomWatchCount = 0;
+let cssomCleanup = null;
 
 function removeGuard(stop) {
   const i = activeGuards.indexOf(stop);
   if (i >= 0) activeGuards.splice(i, 1);
-  for (const [id, fn] of guardsBySpecId) {
-    if (fn === stop) guardsBySpecId.delete(id);
+  for (const [id, entry] of guardsBySpecId) {
+    if (entry === stop || (entry && entry.stop === stop)) guardsBySpecId.delete(id);
   }
 }
 
 function stopGuardForSpec(id) {
-  const stop = guardsBySpecId.get(id);
-  if (!stop) return;
+  const entry = guardsBySpecId.get(id);
+  if (!entry) return [];
+  const undos = entry.undos || [];
   try {
-    stop();
+    entry.stop();
   } catch {
     /* already stopped */
   }
+  return undos;
+}
+
+function kickAllGuards() {
+  for (const kick of [...guardKickers]) kick();
+}
+
+function ensureCssomWatch() {
+  cssomWatchCount += 1;
+  if (cssomWatchCount > 1 || cssomCleanup) return;
+  const view = typeof window !== "undefined" ? window : null;
+  const doc = typeof document !== "undefined" ? document : null;
+  if (!view || !doc) return;
+  const onResize = () => kickAllGuards();
+  const onVis = () => kickAllGuards();
+  const onLoad = () => kickAllGuards();
+  view.addEventListener("resize", onResize);
+  doc.addEventListener("visibilitychange", onVis);
+  doc.addEventListener("load", onLoad, true);
+  doc.addEventListener("error", onLoad, true);
+  const interval = view.setInterval(kickAllGuards, 1500);
+  let unpatchSheet = () => {};
+  try {
+    const proto = CSSStyleSheet.prototype;
+    const orig = proto.insertRule;
+    if (typeof orig === "function" && !proto.insertRule.__liftPatched) {
+      const wrapped = function insertRuleLifted(...args) {
+        const result = orig.apply(this, args);
+        kickAllGuards();
+        return result;
+      };
+      wrapped.__liftPatched = true;
+      proto.insertRule = wrapped;
+      unpatchSheet = () => {
+        if (proto.insertRule === wrapped) proto.insertRule = orig;
+      };
+    }
+  } catch {
+    unpatchSheet = () => {};
+  }
+  cssomCleanup = () => {
+    view.removeEventListener("resize", onResize);
+    doc.removeEventListener("visibilitychange", onVis);
+    doc.removeEventListener("load", onLoad, true);
+    doc.removeEventListener("error", onLoad, true);
+    view.clearInterval(interval);
+    unpatchSheet();
+    cssomCleanup = null;
+  };
+}
+
+function releaseCssomWatch() {
+  cssomWatchCount = Math.max(0, cssomWatchCount - 1);
+  if (cssomWatchCount === 0 && cssomCleanup) cssomCleanup();
 }
 
 export function resetRuntimeGuards() {
@@ -1188,7 +1429,10 @@ export function resetRuntimeGuards() {
   guardsBySpecId.clear();
   pendingBackstops.length = 0;
   guardFlushers.length = 0;
+  guardKickers.length = 0;
   backstopsPaused = false;
+  cssomWatchCount = 0;
+  if (cssomCleanup) cssomCleanup();
   for (const stop of stops) {
     try {
       stop();
@@ -1220,31 +1464,37 @@ function testHooksAllowed() {
 
 function recordsTouchSnapshots(records, snapshots) {
   if (!records || records.length === 0) return snapshots;
-  const touched = new Set();
+  const snapByEl = new Set();
+  for (const snap of snapshots) snapByEl.add(snap.el);
+  const related = new Set();
   for (const rec of records) {
-    if (rec.target && rec.target.nodeType === 1) touched.add(rec.target);
-    if (rec.addedNodes) {
-      for (const node of rec.addedNodes) {
-        if (node.nodeType === 1) touched.add(node);
+    const nodes = [];
+    if (rec.target && rec.target.nodeType === 1) nodes.push(rec.target);
+    for (const node of rec.addedNodes || []) {
+      if (node && node.nodeType === 1) nodes.push(node);
+    }
+    for (const node of nodes) {
+      let cur = node;
+      while (cur && cur.nodeType === 1) {
+        if (snapByEl.has(cur)) related.add(cur);
+        cur = cur.parentElement;
       }
     }
   }
-  if (touched.size === 0) return snapshots;
+  if (related.size === 0) return snapshots;
   return snapshots.filter((snap) => {
     const live = liveSuccessor(snap.el) || (snap.el.isConnected ? snap.el : null);
     if (!live) return true;
-    for (const node of touched) {
-      if (node === live || (live.contains && live.contains(node)) || (node.contains && node.contains(live))) {
-        return true;
-      }
-    }
-    return false;
+    return related.has(live) || related.has(snap.el);
   });
 }
 
 function runGuardCheck(root, spec, snapshots, records) {
   const contrastErr = specContrastError(root, spec, "guard");
   if (contrastErr) return contrastErr;
+  const extra = addedFocusablesFromRecords(records);
+  const coverErr = overlayCoverageViolation(root, spec, snapshots, extra);
+  if (coverErr) return coverErr;
   const subset = recordsTouchSnapshots(records, snapshots);
   return monotonicityViolation(root, subset);
 }
@@ -1277,10 +1527,9 @@ function installMutationGuard(root, spec, snapshots, undos) {
     }
     const err = runGuardCheck(root, spec, snapshots, records);
     if (err) {
-      stopped = true;
       undoAll(undos);
       recordFailOpen(err, spec.id);
-      removeGuard(stop);
+      stop();
       return;
     }
     startObserving();
@@ -1313,7 +1562,12 @@ function installMutationGuard(root, spec, snapshots, undos) {
     queued = [];
     run(batch);
   };
+  const kick = () => {
+    if (stopped || backstopsPaused) return;
+    schedule([]);
+  };
   guardFlushers.push(flushQueued);
+  guardKickers.push(kick);
 
   const observer = new MutationObserver((records) => schedule(records));
   const onMedia = () => schedule([]);
@@ -1341,6 +1595,9 @@ function installMutationGuard(root, spec, snapshots, undos) {
     observer.disconnect();
     const fi = guardFlushers.indexOf(flushQueued);
     if (fi >= 0) guardFlushers.splice(fi, 1);
+    const ki = guardKickers.indexOf(kick);
+    if (ki >= 0) guardKickers.splice(ki, 1);
+    releaseCssomWatch();
     if (media && media.removeEventListener) {
       try {
         media.removeEventListener("change", onMedia);
@@ -1351,6 +1608,7 @@ function installMutationGuard(root, spec, snapshots, undos) {
     removeGuard(stop);
   };
 
+  ensureCssomWatch();
   startObserving();
   return stop;
 }
@@ -1366,10 +1624,26 @@ function finishApply(scope, spec, snapshots, undos, opsStatus) {
     undoAll(undos);
     return { ok: false, error: monoErr, ops: opsStatus };
   }
-  stopGuardForSpec(spec.id);
-  const stopGuard = installMutationGuard(scope, spec, snapshots, [...undos]);
+  const coverErr = overlayCoverageViolation(scope, spec, snapshots);
+  if (coverErr) {
+    undoAll(undos);
+    return { ok: false, error: coverErr, ops: opsStatus };
+  }
+  const existing = guardsBySpecId.get(spec.id);
+  if (undos.length === 0 && existing) {
+    return { ok: true, ops: opsStatus };
+  }
+  const merged = [...(existing && existing.undos ? existing.undos : []), ...undos];
+  if (existing) {
+    try {
+      existing.stop();
+    } catch {
+      /* replace */
+    }
+  }
+  const stopGuard = installMutationGuard(scope, spec, snapshots, merged);
   activeGuards.push(stopGuard);
-  guardsBySpecId.set(spec.id, stopGuard);
+  guardsBySpecId.set(spec.id, { stop: stopGuard, undos: merged });
   return { ok: true, ops: opsStatus };
 }
 
@@ -1387,6 +1661,7 @@ export function setTestBackstopsPaused(paused) {
   if (!backstopsPaused) {
     flushPendingBackstops();
     for (const flush of [...guardFlushers]) flush();
+    kickAllGuards();
   }
   return true;
 }
@@ -1401,7 +1676,11 @@ export function applyPatchSpec(input, root) {
     if (!scope) return { ok: false, error: "no document", ops: opsStatus };
     const collected = collectWatchElements(scope, parsed.spec);
     if (collected.error) return { ok: false, error: collected.error, ops: opsStatus };
-    const snapshots = collected.elements.map(snapshotA11y);
+    const snapshots = attachOverlayHits(
+      scope,
+      parsed.spec,
+      collected.elements.map(snapshotA11y),
+    );
     const undos = [];
     try {
       for (let i = 0; i < parsed.spec.ops.length; i++) {
@@ -1450,7 +1729,13 @@ if (typeof window !== "undefined") {
   window.LiftRuntime = {
     applyPatchSpec,
     validatePatchSpec,
-    resetRuntimeGuards,
     setTestBackstopsPaused,
   };
+  Object.defineProperty(window.LiftRuntime, "resetRuntimeGuards", {
+    enumerable: true,
+    get() {
+      if (!testHooksAllowed()) return undefined;
+      return resetRuntimeGuards;
+    },
+  });
 }

@@ -21,7 +21,8 @@ describe("parsePatchSpec", () => {
     expect(parsed.spec.version).toBe(0);
     expect(parsed.spec.ops.map((op) => op.op)).toEqual([
       "injectCSS",
-      "replaceTag",
+      "promoteToControl",
+      "setAttribute",
       "toggleDisclosure",
       "setAttribute",
       "wrapLabel",
@@ -31,7 +32,7 @@ describe("parsePatchSpec", () => {
       "wrapLabel",
       "wrapLabel",
       "setText",
-      "replaceTag",
+      "promoteToControl",
     ]);
   });
 
@@ -54,13 +55,13 @@ describe("parsePatchSpec", () => {
         ops: [{ op: "insertHTML", selector: "body", position: "append", html: "<script>x</script>" }],
       }).ok,
     ).toBe(false);
-    expect(
-      parsePatchSpec({
-        id: "x",
-        version: 0,
-        ops: [{ op: "replaceTag", selector: "#x", tag: "script" }],
-      }).ok,
-    ).toBe(false);
+    const replaced = parsePatchSpec({
+      id: "x",
+      version: 0,
+      ops: [{ op: "replaceTag", selector: "#x", tag: "script" }],
+    });
+    expect(replaced.ok).toBe(false);
+    if (!replaced.ok) expect(replaced.error).toContain("promoteToControl");
   });
 
   it("accepts every declared op with a minimal valid payload", () => {
@@ -79,7 +80,12 @@ describe("parsePatchSpec", () => {
       wrapLabel: { op: "wrapLabel", selector: "#email", text: "Email" },
       makeFocusable: { op: "makeFocusable", selector: "#x" },
       bindEnterToClick: { op: "bindEnterToClick", selector: "#x" },
-      replaceTag: { op: "replaceTag", selector: "#x", tag: "button" },
+      promoteToControl: {
+        op: "promoteToControl",
+        selector: "#x",
+        as: "button",
+        hasClickAffordance: true,
+      },
       insertHTML: {
         op: "insertHTML",
         selector: "main",

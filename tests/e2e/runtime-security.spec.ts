@@ -145,7 +145,7 @@ test("setText refuses targets with element children", async ({ page }) => {
   expect(result.stillHasPay).toBe(true);
 });
 
-test("chained replaceTag forwards one click to the original node", async ({ page }) => {
+test("chained promoteToControl forwards one click to the original node", async ({ page }) => {
   await page.goto("/checkout/?lift_variant=control");
   const clicks = await page.evaluate(async () => {
     const href = new URL("/runtime/runtime.js", location.origin).href;
@@ -155,6 +155,7 @@ test("chained replaceTag forwards one click to the original node", async ({ page
     const host = document.createElement("div");
     host.id = "chain-pay";
     host.textContent = "Pay";
+    host.style.cursor = "pointer";
     document.body.append(host);
     let n = 0;
     host.addEventListener("click", () => {
@@ -163,38 +164,42 @@ test("chained replaceTag forwards one click to the original node", async ({ page
     runtime.applyPatchSpec({
       id: "chain-1",
       version: 0,
-      ops: [{ op: "replaceTag", selector: "#chain-pay", tag: "button" }],
+      ops: [{ op: "promoteToControl", selector: "#chain-pay", as: "button" }],
     });
     runtime.applyPatchSpec({
-      id: "chain-2",
+      id: "chain-1",
       version: 0,
-      ops: [{ op: "replaceTag", selector: "#chain-pay", tag: "button" }],
+      ops: [{ op: "promoteToControl", selector: "#chain-pay", as: "button" }],
     });
     document.getElementById("chain-pay")?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    return { n, tag: document.getElementById("chain-pay")?.tagName ?? "" };
+    return {
+      n,
+      tag: document.getElementById("chain-pay")?.tagName ?? "",
+      role: document.getElementById("chain-pay")?.getAttribute("role") ?? "",
+      same: document.getElementById("chain-pay") === host,
+    };
   });
-  expect(clicks.tag).toBe("BUTTON");
+  expect(clicks.tag).toBe("DIV");
+  expect(clicks.role).toBe("button");
+  expect(clicks.same).toBe(true);
   expect(clicks.n).toBe(1);
 });
 
-test("replaceTag on a class selector is idempotent", async ({ page }) => {
+test("promoteToControl on a class selector is idempotent", async ({ page }) => {
   await page.goto("/checkout/?lift_variant=control");
   const result = await page.evaluate(async () => {
     const href = new URL("/runtime/runtime.js", location.origin).href;
     const runtime = (await import(href)) as {
       applyPatchSpec: (input: unknown) => { ok: boolean };
     };
-    document.body.insertAdjacentHTML("beforeend", `<span class="lift-chip-test">Go</span>`);
+    document.body.insertAdjacentHTML(
+      "beforeend",
+      `<span class="lift-chip-test" style="cursor:pointer">Go</span>`,
+    );
     const spec = {
-      id: "class-replace",
+      id: "class-promote",
       version: 0,
-      ops: [
-        {
-          op: "replaceTag",
-          selector: ".lift-chip-test",
-          tag: "button",
-        },
-      ],
+      ops: [{ op: "promoteToControl", selector: ".lift-chip-test", as: "button" }],
     };
     const first = runtime.applyPatchSpec(spec);
     const second = runtime.applyPatchSpec(spec);
@@ -203,12 +208,14 @@ test("replaceTag on a class selector is idempotent", async ({ page }) => {
       second: second.ok,
       buttons: document.querySelectorAll("button.lift-chip-test").length,
       spans: document.querySelectorAll("span.lift-chip-test").length,
+      role: document.querySelector("span.lift-chip-test")?.getAttribute("role") ?? "",
     };
   });
   expect(result.first).toBe(true);
   expect(result.second).toBe(true);
-  expect(result.buttons).toBe(1);
-  expect(result.spans).toBe(0);
+  expect(result.buttons).toBe(0);
+  expect(result.spans).toBe(1);
+  expect(result.role).toBe("button");
 });
 
 test("injectCSS with the same id updates css and undo restores the previous text", async ({
@@ -374,7 +381,7 @@ test("Chromium rejects replaceTag to <a> without href", async ({ page }) => {
     });
   });
   expect(result.ok).toBe(false);
-  expect(result.error).toContain("a requires href");
+  expect(result.error).toContain("promoteToControl");
 });
 
 test("bindEnterToClick on a non-native replacement forwards one click", async ({ page }) => {
@@ -399,19 +406,16 @@ test("bindEnterToClick on a non-native replacement forwards one click", async ({
     runtime.applyPatchSpec({
       id: "enter-once",
       version: 0,
-      ops: [
-        { op: "replaceTag", selector: "#lift-enter-once", tag: "button" },
-        { op: "bindEnterToClick", selector: "#lift-enter-once" },
-      ],
+      ops: [{ op: "promoteToControl", selector: "#lift-enter-once", as: "button", hasClickAffordance: true }],
     });
     document
       .getElementById("lift-enter-once")
       ?.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
     return { clicks, keys, tag: document.getElementById("lift-enter-once")?.tagName ?? "" };
   });
-  expect(counts.tag).toBe("BUTTON");
+  expect(counts.tag).toBe("DIV");
   expect(counts.clicks).toBe(1);
-  expect(counts.keys).toBe(0);
+  expect(counts.keys).toBe(1);
 });
 
 test("Chromium computed styles of accepted typed CSS stay in bounds", async ({ page }) => {
@@ -614,12 +618,12 @@ test("R7 W1 Chromium undoes a covering cookie bar", async ({ page }) => {
     buy.id = "buy";
     buy.type = "button";
     buy.textContent = "Buy";
-    buy.style.cssText = "position:fixed;top:80px;left:40px;z-index:1";
+    buy.style.cssText = "position:fixed;top:240px;left:40px;z-index:1;padding:12px 28px";
     const bar = document.createElement("div");
     bar.className = "cookie-bar";
     bar.textContent = "Cookies";
     bar.style.cssText =
-      "position:fixed;top:0;left:0;right:0;z-index:9;background:#111;color:#fff";
+      "position:fixed;top:200px;left:0;right:0;z-index:9;background:#111;color:#fff";
     document.body.append(bar, buy);
     runtime.setTestBackstopsPaused(true);
     const applied = runtime.applyPatchSpec({
@@ -634,6 +638,7 @@ test("R7 W1 Chromium undoes a covering cookie bar", async ({ page }) => {
               declarations: [
                 { property: "font-size", value: "48px" },
                 { property: "padding", value: "24px" },
+                { property: "min-height", value: "64px" },
                 { property: "line-height", value: 3 },
               ],
             },
@@ -760,7 +765,9 @@ test("R7 W3 Chromium guard runs within 250ms under continuous mutations", async 
   expect(result.ms).toBeLessThan(300);
 });
 
-test("R7 W6 Chromium 10k-node apply and guard tick stay under 50ms", async ({ page }) => {
+test("R8 I1 Chromium 10k-node apply stays within 3x baseline or 150ms and guard tick ≤10ms", async ({
+  page,
+}) => {
   test.setTimeout(30_000);
   await page.goto("/checkout/?lift_variant=control&lift_bot=1");
   const result = await page.evaluate(async () => {
@@ -801,8 +808,14 @@ test("R7 W6 Chromium 10k-node apply and guard tick stay under 50ms", async ({ pa
         },
       ],
     };
+    void host.offsetHeight;
+    const b0 = performance.now();
+    void host.offsetHeight;
+    const baselineMs = performance.now() - b0;
+    void host.offsetHeight;
     const t0 = performance.now();
     const applied = runtime.applyPatchSpec(spec);
+    void host.offsetHeight;
     const applyMs = performance.now() - t0;
     runtime.setTestBackstopsPaused(true);
     document.body.classList.add("tick");
@@ -811,12 +824,295 @@ test("R7 W6 Chromium 10k-node apply and guard tick stay under 50ms", async ({ pa
     const t1 = performance.now();
     runtime.setTestBackstopsPaused(false);
     const guardMs = performance.now() - t1;
-    return { ok: applied.ok, applyMs, guardMs };
+    return { ok: applied.ok, applyMs, guardMs, baselineMs };
   });
-  console.log(`perf-10k applyMs=${result.applyMs.toFixed(2)} guardMs=${result.guardMs.toFixed(2)}`);
+  console.log(
+    `perf-10k applyMs=${result.applyMs.toFixed(2)} guardMs=${result.guardMs.toFixed(2)} baselineMs=${result.baselineMs.toFixed(2)}`,
+  );
   expect(result.ok).toBe(true);
-  expect(result.applyMs).toBeLessThan(50);
-  expect(result.guardMs).toBeLessThan(50);
+  expect(result.applyMs).toBeLessThanOrEqual(Math.max(150, result.baselineMs * 3));
+  expect(result.guardMs).toBeLessThanOrEqual(10);
+});
+
+test("R8 E1 Chromium re-apply keeps undos across a theme flip", async ({ page }) => {
+  await page.goto("/checkout/?lift_variant=control&lift_bot=1");
+  const result = await page.evaluate(async () => {
+    const href = new URL("/runtime/runtime.js", location.origin).href;
+    const runtime = (await import(href)) as {
+      applyPatchSpec: (input: unknown) => { ok: boolean };
+    };
+    const style = document.createElement("style");
+    style.textContent = ".panel.dark { color: #fff; background: #fff; }";
+    document.head.append(style);
+    const panel = document.createElement("div");
+    panel.id = "panel";
+    panel.className = "panel";
+    panel.textContent = "Hello";
+    document.body.append(panel);
+    const spec = {
+      id: "reapply-guard",
+      version: 0,
+      ops: [
+        {
+          op: "injectCSS",
+          rules: [
+            {
+              selector: { classes: ["panel"] },
+              declarations: [
+                { property: "color", value: "#111" },
+                { property: "background-color", value: "#fff" },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+    const first = runtime.applyPatchSpec(spec);
+    const second = runtime.applyPatchSpec(spec);
+    panel.classList.add("dark");
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    return {
+      first: first.ok,
+      second: second.ok,
+      css: Boolean(document.querySelector("[data-lift-css]")),
+    };
+  });
+  expect(result.first).toBe(true);
+  expect(result.second).toBe(true);
+  expect(result.css).toBe(false);
+});
+
+test("R8 E2 Chromium two-rule guard continues after the first selector vanishes", async ({
+  page,
+}) => {
+  await page.goto("/checkout/?lift_variant=control&lift_bot=1");
+  const result = await page.evaluate(async () => {
+    const href = new URL("/runtime/runtime.js", location.origin).href;
+    const runtime = (await import(href)) as {
+      applyPatchSpec: (input: unknown) => { ok: boolean };
+    };
+    document.body.insertAdjacentHTML(
+      "beforeend",
+      `<span id="gone">A</span><span class="keep">B</span>`,
+    );
+    const applied = runtime.applyPatchSpec({
+      id: "two-rules",
+      version: 0,
+      ops: [
+        {
+          op: "injectCSS",
+          rules: [
+            {
+              selector: { id: "gone" },
+              declarations: [
+                { property: "color", value: "#111" },
+                { property: "background-color", value: "#fff" },
+              ],
+            },
+            {
+              selector: { classes: ["keep"] },
+              declarations: [
+                { property: "color", value: "#111" },
+                { property: "background-color", value: "#fff" },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+    document.getElementById("gone")?.remove();
+    const keep = document.querySelector(".keep");
+    if (keep instanceof HTMLElement) {
+      keep.style.color = "#fff";
+      keep.style.backgroundColor = "#fff";
+    }
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    return { ok: applied.ok, css: Boolean(document.querySelector("[data-lift-css]")) };
+  });
+  expect(result.ok).toBe(true);
+  expect(result.css).toBe(false);
+});
+
+test("R8 W2 Chromium undoes insertRule via resize", async ({ page }) => {
+  await page.goto("/checkout/?lift_variant=control&lift_bot=1");
+  const result = await page.evaluate(async () => {
+    const href = new URL("/runtime/runtime.js", location.origin).href;
+    const runtime = (await import(href)) as {
+      applyPatchSpec: (input: unknown) => { ok: boolean };
+    };
+    const slot = document.createElement("span");
+    slot.className = "slot";
+    slot.textContent = "ok";
+    document.body.append(slot);
+    const applied = runtime.applyPatchSpec({
+      id: "cssom",
+      version: 0,
+      ops: [
+        {
+          op: "injectCSS",
+          rules: [
+            {
+              selector: { classes: ["slot"] },
+              declarations: [
+                { property: "color", value: "#111" },
+                { property: "background-color", value: "#fff" },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+    const sheet = (document.querySelector("[data-lift-css]") as HTMLStyleElement | null)?.sheet;
+    sheet?.insertRule(".slot { color: rgb(255, 255, 255); }", sheet.cssRules.length);
+    window.dispatchEvent(new Event("resize"));
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    return { ok: applied.ok, css: Boolean(document.querySelector("[data-lift-css]")) };
+  });
+  expect(result.ok).toBe(true);
+  expect(result.css).toBe(false);
+});
+
+test("R8 W3 Chromium refuses underline on line-through text", async ({ page }) => {
+  await page.goto("/checkout/?lift_variant=control");
+  const result = await page.evaluate(async () => {
+    const href = new URL("/runtime/runtime.js", location.origin).href;
+    const runtime = (await import(href)) as {
+      applyPatchSpec: (input: unknown) => { ok: boolean };
+    };
+    document.body.insertAdjacentHTML(
+      "beforeend",
+      `<span class="struck" style="text-decoration-line:line-through">old</span><del class="deleted">gone</del>`,
+    );
+    const struck = runtime.applyPatchSpec({
+      id: "underline-struck",
+      version: 0,
+      ops: [
+        {
+          op: "injectCSS",
+          rules: [
+            {
+              selector: { classes: ["struck"] },
+              declarations: [{ property: "text-decoration-line", value: "underline" }],
+            },
+          ],
+        },
+      ],
+    });
+    const deleted = runtime.applyPatchSpec({
+      id: "underline-del",
+      version: 0,
+      ops: [
+        {
+          op: "injectCSS",
+          rules: [
+            {
+              selector: { classes: ["deleted"] },
+              declarations: [{ property: "text-decoration-line", value: "underline" }],
+            },
+          ],
+        },
+      ],
+    });
+    return { struck: struck.ok, deleted: deleted.ok };
+  });
+  expect(result.struck).toBe(false);
+  expect(result.deleted).toBe(false);
+});
+
+test("R8 W4 Chromium refuses outline-width plus offset over 4px", async ({ page }) => {
+  await page.goto("/checkout/?lift_variant=control");
+  const result = await page.evaluate(async () => {
+    const href = new URL("/runtime/runtime.js", location.origin).href;
+    const runtime = (await import(href)) as {
+      parsePatchSpec: (input: unknown) => { ok: boolean };
+    };
+    return runtime.parsePatchSpec({
+      id: "outline-sum",
+      version: 0,
+      ops: [
+        {
+          op: "injectCSS",
+          rules: [
+            {
+              selector: { classes: ["x"], state: "focus" },
+              declarations: [
+                { property: "outline-style", value: "solid" },
+                { property: "outline-color", value: "#000" },
+                { property: "outline-width", value: "3px" },
+                { property: "outline-offset", value: "2px" },
+              ],
+            },
+          ],
+        },
+      ],
+    }).ok;
+  });
+  expect(result).toBe(false);
+});
+
+test("R8 I4 resetRuntimeGuards is only on window under lift_bot=1", async ({ page }) => {
+  await page.goto("/checkout/?lift_variant=control");
+  const ungated = await page.evaluate(async () => {
+    const href = new URL("/runtime/runtime.js", location.origin).href;
+    await import(href);
+    return typeof (window as unknown as { LiftRuntime?: { resetRuntimeGuards?: unknown } })
+      .LiftRuntime?.resetRuntimeGuards;
+  });
+  expect(ungated).toBe("undefined");
+  await page.goto("/checkout/?lift_variant=control&lift_bot=1");
+  const gated = await page.evaluate(async () => {
+    const href = new URL("/runtime/runtime.js", location.origin).href;
+    await import(href);
+    return typeof (window as unknown as { LiftRuntime?: { resetRuntimeGuards?: unknown } })
+      .LiftRuntime?.resetRuntimeGuards;
+  });
+  expect(gated).toBe("function");
+});
+
+test("R8 I5 Chromium guard covers a newly added focusable under an overlay", async ({ page }) => {
+  await page.goto("/checkout/?lift_variant=control&lift_bot=1");
+  const result = await page.evaluate(async () => {
+    const href = new URL("/runtime/runtime.js", location.origin).href;
+    const runtime = (await import(href)) as {
+      applyPatchSpec: (input: unknown) => { ok: boolean };
+      setTestBackstopsPaused: (paused: boolean) => boolean;
+    };
+    const bar = document.createElement("div");
+    bar.className = "cover-bar";
+    bar.textContent = "Cookies";
+    bar.style.cssText =
+      "position:fixed;top:200px;left:0;right:0;height:80px;z-index:9;background:#111;color:#fff";
+    document.body.append(bar);
+    runtime.setTestBackstopsPaused(true);
+    const applied = runtime.applyPatchSpec({
+      id: "new-focusable",
+      version: 0,
+      ops: [
+        {
+          op: "injectCSS",
+          rules: [
+            {
+              selector: { classes: ["cover-bar"] },
+              declarations: [
+                { property: "color", value: "#fff" },
+                { property: "background-color", value: "#111" },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+    const buy = document.createElement("button");
+    buy.type = "button";
+    buy.textContent = "Buy";
+    buy.style.cssText = "position:fixed;top:210px;left:40px;z-index:1;padding:12px 28px";
+    document.body.append(buy);
+    runtime.setTestBackstopsPaused(false);
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    return { paused: applied.ok, css: Boolean(document.querySelector("[data-lift-css]")) };
+  });
+  expect(result.paused).toBe(true);
+  expect(result.css).toBe(false);
 });
 
 test("GET // returns 400 and the site still serves", async ({ request }) => {

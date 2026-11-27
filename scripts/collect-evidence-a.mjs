@@ -19,9 +19,11 @@ const NAMES = [
   "04-replace-button-to-span",
   "04-late-content",
   "04-descendant-contrast",
-  "04-submit-button-kept",
+  "04-promote-keeps-handlers",
   "04-focus-within-color",
   "04-covered-control",
+  "04-reapply-guard",
+  "04-cssom-insertRule",
   "05-sticky-identity",
 ];
 

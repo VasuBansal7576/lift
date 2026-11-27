@@ -17,7 +17,7 @@ export const PATCH_OPS = [
   "wrapLabel",
   "makeFocusable",
   "bindEnterToClick",
-  "replaceTag",
+  "promoteToControl",
   "insertHTML",
   "toggleDisclosure",
 ] as const;
@@ -30,8 +30,8 @@ export type AxeGateRule = (typeof AXE_GATE_RULES)[number];
 export const INSERT_HTML_POSITIONS = ["before", "after", "prepend", "append"] as const;
 export type InsertHtmlPosition = (typeof INSERT_HTML_POSITIONS)[number];
 
-export const ALLOWED_REPLACE_TAGS = ["button", "a"] as const;
-export type AllowedReplaceTag = (typeof ALLOWED_REPLACE_TAGS)[number];
+export const PROMOTE_AS = ["button", "link"] as const;
+export type PromoteAs = (typeof PROMOTE_AS)[number];
 
 export interface SetAttributeOp {
   op: "setAttribute";
@@ -121,11 +121,11 @@ export interface BindEnterToClickOp {
   selector: string;
 }
 
-export interface ReplaceTagOp {
-  op: "replaceTag";
+export interface PromoteToControlOp {
+  op: "promoteToControl";
   selector: string;
-  tag: AllowedReplaceTag;
-  attributes?: Record<string, string>;
+  as: PromoteAs;
+  hasClickAffordance?: boolean;
 }
 
 export interface InsertHtmlOp {
@@ -149,7 +149,7 @@ export type PatchOp =
   | WrapLabelOp
   | MakeFocusableOp
   | BindEnterToClickOp
-  | ReplaceTagOp
+  | PromoteToControlOp
   | InsertHtmlOp
   | ToggleDisclosureOp;
 

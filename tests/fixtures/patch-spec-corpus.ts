@@ -619,7 +619,7 @@ export const PATCH_SPEC_CORPUS: CorpusCase[] = [
     name: "replaceTag script",
     spec: op([{ op: "replaceTag", selector: "#x", tag: "script" }]),
     ok: false,
-    error: "ops[0] tag is not allowlisted",
+    error: "ops[0] replaceTag is not allowlisted; use promoteToControl",
   },
   {
     name: "mountId injection",
@@ -703,13 +703,13 @@ export const PATCH_SPEC_CORPUS: CorpusCase[] = [
     name: "replaceTag a without href",
     spec: op([{ op: "replaceTag", selector: "#x", tag: "a" }]),
     ok: false,
-    error: "ops[0] a requires href",
+    error: "ops[0] replaceTag is not allowlisted; use promoteToControl",
   },
   {
     name: "replaceTag body",
     spec: op([{ op: "replaceTag", selector: "body", tag: "span" }]),
     ok: false,
-    error: "ops[0] tag is not allowlisted",
+    error: "ops[0] replaceTag is not allowlisted; use promoteToControl",
   },
   {
     name: "setText body",
@@ -1090,7 +1090,7 @@ export const PATCH_SPEC_CORPUS: CorpusCase[] = [
       },
     ]),
     ok: false,
-    error: "ops[0] disallowed attribute: type",
+    error: "ops[0] replaceTag is not allowlisted; use promoteToControl",
   },
   {
     name: "replaceTag class attribute",
@@ -1103,7 +1103,7 @@ export const PATCH_SPEC_CORPUS: CorpusCase[] = [
       },
     ]),
     ok: false,
-    error: "ops[0] tag is not allowlisted",
+    error: "ops[0] replaceTag is not allowlisted; use promoteToControl",
   },
   {
     name: "insertHTML anchor",
@@ -1117,6 +1117,28 @@ export const PATCH_SPEC_CORPUS: CorpusCase[] = [
     ]),
     ok: false,
     error: "ops[0] html is not allowlisted",
+  },
+  {
+    name: "outline-width plus offset over 4px",
+    spec: op([
+      {
+        op: "injectCSS",
+        rules: [
+          {
+            selector: { classes: ["x"], state: "focus" },
+            declarations: [
+              { property: "outline-style", value: "solid" },
+              { property: "outline-color", value: "#000" },
+              { property: "outline-width", value: "3px" },
+              { property: "outline-offset", value: "2px" },
+            ],
+          },
+        ],
+      },
+    ]),
+    ok: false,
+    error: "ops[0] css is not allowlisted",
+    schema: "skip",
   },
 ];
 

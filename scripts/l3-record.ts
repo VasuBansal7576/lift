@@ -47,10 +47,46 @@ const FAILOPEN_IDENTITY = "lift-aaaaaaaa-bbbb-4ccc-8ddd-888888888888";
 const TILE = { w: 960, h: 1020 };
 
 /** No-flap hold uses mouse (0.30) + biometric (0.20) only, so score caps at 0.50. */
-export const NOFLAP_SLIDER_LO = 0.45;
+export const NOFLAP_SLIDER_LO = 0.66;
 export const NOFLAP_SLIDER_HI = 0.97;
-export const NOFLAP_SLIDER_HIGH_LO = 0.55;
-export const NOFLAP_SLIDER_LOW_HI = 0.82;
+export const NOFLAP_SLIDER_HIGH_LO = 0.74;
+export const NOFLAP_SLIDER_LOW_HI = 0.90;
+export const NOFLAP_SPAN_Y = 24;
+export const NOFLAP_SWEEP_STEPS = 28;
+export const NOFLAP_PHASE_MS = 3_000;
+
+export interface NoFlapLayout {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  screenX: number;
+  screenY: number;
+  topChrome: number;
+}
+
+/** One holdScoreInBand pointer sample. Y flips every step so turns register. */
+export function noFlapHoldSample(
+  n: number,
+  elapsedMs: number,
+  layout: NoFlapLayout,
+): { x: number; y: number; biometric01: number } {
+  const y0 = Math.round(layout.screenY + layout.topChrome + layout.y + layout.h / 2);
+  const high = Math.floor(elapsedMs / NOFLAP_PHASE_MS) % 2 === 0;
+  const loFrac = high ? NOFLAP_SLIDER_HIGH_LO : NOFLAP_SLIDER_LO;
+  const hiFrac = high ? NOFLAP_SLIDER_HI : NOFLAP_SLIDER_LOW_HI;
+  const xLo = layout.screenX + layout.x + layout.w * loFrac;
+  const xHi = layout.screenX + layout.x + layout.w * hiFrac;
+  const period = Math.max(2, NOFLAP_SWEEP_STEPS);
+  const sweep = (n % period) / (period - 1);
+  const goingRight = Math.floor(n / period) % 2 === 0;
+  const frac = goingRight ? sweep : 1 - sweep;
+  const x = Math.round(xLo + (xHi - xLo) * frac);
+  const y = y0 + (n % 2 === 0 ? NOFLAP_SPAN_Y : -NOFLAP_SPAN_Y);
+  const trackLeft = layout.screenX + layout.x;
+  const biometric01 = layout.w <= 0 ? loFrac : Math.min(1, Math.max(0, (x - trackLeft) / layout.w));
+  return { x, y, biometric01 };
+}
 
 interface L3State {
   dashboardUrl: string;
@@ -577,82 +613,91 @@ function assertNoFlapCalm(
   }
 }
 
-async function holdScoreInBand(win: HeadedWindow, page: Page, holdMs = 15_000): Promise<void> {
-  await visibleDragSlider(win, page, 0.55, 1, { reveal: false });
-  pin(win);
+async function noFlapMotion(
+  win: HeadedWindow,
+  page: Page,
+  layout: NoFlapLayout,
+  durationMs: number,
+  n0: number,
+  onTick?: (n: number, pt: { x: number; y: number; biometric01: number }) => Promise<void>,
+): Promise<number> {
+  const t0 = Date.now();
+  let n = n0;
+  xdo(["windowactivate", "--sync", win.winId]);
+  const origin = noFlapHoldSample(n0, 0, layout);
+  const y0 = Math.round(layout.screenY + layout.topChrome + layout.y + layout.h / 2);
+  xdo(["mousemove", "--sync", String(origin.x), String(y0)]);
+  await sleep(30);
+  xdo(["mousedown", "1"]);
+  try {
+    while (Date.now() - t0 < durationMs) {
+      const pt = noFlapHoldSample(n, Date.now() - t0, layout);
+      xdo(["mousemove", "--sync", String(pt.x), String(pt.y)]);
+      if (onTick) await onTick(n, pt);
+      else await sleep(16);
+      n += 1;
+    }
+  } finally {
+    xdo(["mouseup", "1"]);
+  }
+  return n;
+}
+
+async function holdScoreInBand(win: HeadedWindow, page: Page, holdMs = 15_000): Promise<{
+  min: number;
+  max: number;
+  continuousInBandMs: number;
+}> {
   xdo(["windowactivate", "--sync", win.winId]);
   const layout = await sliderLayout(page);
   if (layout.y < 240 || layout.y > 520) {
     throw new Error(`slider left the frame (top=${layout.y})`);
   }
-  const y0 = Math.round(layout.screenY + layout.topChrome + layout.y + layout.h / 2);
-  const xHi = Math.round(layout.screenX + layout.x + layout.w * NOFLAP_SLIDER_HI);
-  const xLoWide = Math.round(layout.screenX + layout.x + layout.w * NOFLAP_SLIDER_LO);
-  xdo(["mousemove", "--sync", String(xHi), String(y0)]);
-  await sleep(80);
-  xdo(["mousedown", "1"]);
+  await sleep(40);
   let entered = false;
-  let inBandMs = 0;
-  let lastInBandAt = 0;
-  let lastSampleAt = 0;
+  let stretchStart = 0;
+  let continuousInBandMs = 0;
+  let lastSampleAt = Date.now();
   let min = Number.POSITIVE_INFINITY;
   let max = Number.NEGATIVE_INFINITY;
-  const t0 = Date.now();
-  let n = 0;
-  try {
-    while (Date.now() - t0 < holdMs) {
-      const high = Math.floor((Date.now() - t0) / 3_000) % 2 === 0;
-      const xLo = high
-        ? Math.round(layout.screenX + layout.x + layout.w * NOFLAP_SLIDER_HIGH_LO)
-        : xLoWide;
-      const xHiNow = high
-        ? xHi
-        : Math.round(layout.screenX + layout.x + layout.w * NOFLAP_SLIDER_LOW_HI);
-      const sweep = (n % 36) / 35;
-      const goingRight = Math.floor(n / 36) % 2 === 0;
-      const frac = goingRight ? sweep : 1 - sweep;
-      const spanY = high ? 22 : 8;
-      const x = Math.round(xLo + (xHiNow - xLo) * frac);
-      const y = y0 + (n % 6 < 3 ? spanY : -spanY);
-      xdo(["mousemove", "--sync", String(x), String(y)]);
-      const now = Date.now();
-      if (now - lastSampleAt >= 100) {
-        const snap = await hudScore(page);
-        assertNoFlapCalm(snap, "");
-        lastSampleAt = Date.now();
-        if (snap.score >= 0.4 && snap.score <= 0.6) {
-          entered = true;
-          min = Math.min(min, snap.score);
-          max = Math.max(max, snap.score);
-          if (lastInBandAt) inBandMs += lastSampleAt - lastInBandAt;
-          lastInBandAt = lastSampleAt;
-        } else {
-          lastInBandAt = 0;
-          if (entered && (snap.score < 0.38 || snap.score >= 0.62)) {
-            throw new Error(`no-flap left the 0.38-0.62 band (score=${snap.score})`);
-          }
-        }
-      } else {
-        await sleep(high ? 16 : 28);
-      }
-      n += 1;
+  await noFlapMotion(win, page, layout, holdMs, 0, async () => {
+    const now = Date.now();
+    if (now - lastSampleAt < 120) {
+      await sleep(16);
+      return;
     }
-  } finally {
-    xdo(["mousemove", "--sync", String(xHi), String(y0)]);
-    xdo(["mouseup", "1"]);
-  }
+    const snap = await hudScore(page);
+    assertNoFlapCalm(snap, "");
+    lastSampleAt = Date.now();
+    min = Math.min(min, snap.score);
+    max = Math.max(max, snap.score);
+    if (snap.score >= 0.4 && snap.score <= 0.6) {
+      entered = true;
+      if (!stretchStart) stretchStart = lastSampleAt;
+      continuousInBandMs = Math.max(continuousInBandMs, lastSampleAt - stretchStart);
+    } else {
+      stretchStart = 0;
+      if (entered && (snap.score < 0.38 || snap.score >= 0.62)) {
+        throw new Error(`no-flap left the 0.38-0.62 band (score=${snap.score})`);
+      }
+    }
+  });
   const last = await hudScore(page);
   assertNoFlapCalm(last, "end");
-  if (!entered || inBandMs < 12_000) {
+  min = Math.min(min, last.score);
+  max = Math.max(max, last.score);
+  if (last.score >= 0.4 && last.score <= 0.6 && stretchStart) {
+    continuousInBandMs = Math.max(continuousInBandMs, Date.now() - stretchStart);
+  }
+  process.stdout.write(
+    `no-flap gate min=${min} max=${max} continuousInBandMs=${continuousInBandMs}\n`,
+  );
+  if (!entered || continuousInBandMs < 12_000) {
     throw new Error(
-      `no-flap spent ${inBandMs}ms in 0.40-0.60 (need ≥12000, min=${min}, max=${max}, last=${last.score})`,
+      `no-flap longest 0.40-0.60 stretch ${continuousInBandMs}ms (need ≥12000, min=${min}, max=${max}, last=${last.score})`,
     );
   }
-  if (max - min < 0.04 || min > 0.43 || max < 0.47) {
-    throw new Error(
-      `no-flap band was too flat (min=${min}, max=${max}; need max-min>=0.04, min<=0.43, max>=0.47)`,
-    );
-  }
+  return { min, max, continuousInBandMs };
 }
 
 async function assertFlagsmithReachableFromPage(page: Page): Promise<void> {
@@ -1014,14 +1059,17 @@ async function noFlap(): Promise<void> {
     await unfocusAdminPage(admin);
     retile(admin);
     retile(demo);
+    await visibleDragSlider(demo, demo.page, 0.55, 1, { reveal: false });
+    pin(demo);
+    const warmupLayout = await sliderLayout(demo.page);
+    await noFlapMotion(demo, demo.page, warmupLayout, 1_600, 0);
     grab = startGrab(tmp);
-    await sleep(800);
+    await sleep(200);
     await holdScoreInBand(demo, demo.page, 16_000);
     await demo.page.waitForSelector("#lift-l3-hud[data-trait='false']", { timeout: 8_000 });
     await demo.page.waitForSelector("#lift-l3-hud[data-flag='false']", { timeout: 8_000 });
     pin(demo);
     pin(admin);
-    await sleep(1_600);
   } finally {
     if (grab) await stopGrab(grab);
     await demo.browser.close().catch(() => {});

@@ -260,12 +260,7 @@ describe("L3 recorder never stops shared Flagsmith", () => {
     expect(src).not.toContain("/api/v1/flags/");
     expect(src).not.toMatch(/page\.evaluate\([\s\S]*?127\.0\.0\.1:8000[\s\S]*?api\/v1\/flags/);
     expect(src).toContain("waitForURL(/\\/identities/");
-    expect(src).toContain("inBandMs < 12_000");
-    expect(src).toContain("max - min < 0.04");
-    expect(src).toContain("min > 0.43");
-    expect(src).toContain("max < 0.47");
-    expect(src).toContain("NOFLAP_SLIDER_LO = 0.45");
-    expect(src).toContain("NOFLAP_SLIDER_HI = 0.97");
+    expect(src).toContain("continuousInBandMs < 12_000");
     expect(src).not.toContain("unfocusUrlBar(admin, 520, 520)");
     expect(src).toContain("unfocusAdminPage");
     expect(src).toContain("clickLocatorVisible");

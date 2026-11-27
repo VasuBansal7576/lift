@@ -12,12 +12,7 @@ import {
   scoreFromSamples,
   scoreScrollThrash,
 } from "../../runtime/l3-balancer.js";
-import {
-  NOFLAP_SLIDER_HI,
-  NOFLAP_SLIDER_HIGH_LO,
-  NOFLAP_SLIDER_LO,
-  NOFLAP_SLIDER_LOW_HI,
-} from "../../scripts/l3-record.ts";
+import { noFlapHoldSample, type NoFlapLayout } from "../../scripts/l3-record.ts";
 
 const WEIGHTS = L3_CONSTANTS.WEIGHTS;
 
@@ -184,31 +179,56 @@ describe("L3 detectors and score", () => {
     expect(scored.components.biometric).toBeCloseTo(0.8);
   });
 
-  it("no-flap slider sweep stays in 0.38-0.62 and can meet the movement bar", () => {
-    const hold = (biometric: number) =>
-      combineStress({
-        erraticMouse: 1,
-        rageClicks: 0,
-        scrollThrash: 0,
-        biometric,
-      });
-    const endpoints = [
-      hold(NOFLAP_SLIDER_LO),
-      hold(NOFLAP_SLIDER_HIGH_LO),
-      hold(NOFLAP_SLIDER_LOW_HI),
-      hold(NOFLAP_SLIDER_HI),
-    ];
-    for (const score of endpoints) {
-      expect(score).toBeGreaterThanOrEqual(0.38);
-      expect(score).toBeLessThan(0.62);
+  it("replays holdScoreInBand points through scoreFromSamples at 20-50ms steps", () => {
+    const holdMs = 16_000;
+    const steps = [20, 30, 40, 50];
+    // 960px tile main column is ~560px; cookie/narrow layouts are smaller.
+    const widths = [240, 280, 320, 352, 480, 560, 640];
+    for (const stepMs of steps) {
+      for (const w of widths) {
+        const layout: NoFlapLayout = {
+          x: 40,
+          y: 360,
+          w,
+          h: 18,
+          screenX: 12,
+          screenY: 48,
+          topChrome: 94,
+        };
+        const mouse: { t: number; x: number; y: number }[] = [];
+        let min = Number.POSITIVE_INFINITY;
+        let max = Number.NEGATIVE_INFINITY;
+        let stretchStart = 0;
+        let longest = 0;
+        let n = 0;
+        for (let t = 0; t <= holdMs; t += stepMs) {
+          const pt = noFlapHoldSample(n, t, layout);
+          mouse.push({ t, x: pt.x, y: pt.y });
+          n += 1;
+          if (mouse.length < 5) continue;
+          const scored = scoreFromSamples({
+            mouse,
+            clicks: [],
+            scrolls: [],
+            biometric: pt.biometric01 * 100,
+            now: t,
+          });
+          expect(scored.score).toBeCloseTo(combineStress(scored.components), 10);
+          if (scored.score >= 0.4 && scored.score <= 0.6) {
+            if (!stretchStart) stretchStart = t;
+            longest = Math.max(longest, t - stretchStart);
+          } else {
+            stretchStart = 0;
+          }
+          // Jitter needs ~20 zigzag samples before path/displacement saturates.
+          if (n < 20) continue;
+          min = Math.min(min, scored.score);
+          max = Math.max(max, scored.score);
+        }
+        expect(min, `min step=${stepMs} w=${w}`).toBeGreaterThanOrEqual(0.42);
+        expect(max, `max step=${stepMs} w=${w}`).toBeLessThan(0.58);
+        expect(longest, `in-band step=${stepMs} w=${w}`).toBeGreaterThanOrEqual(12_000);
+      }
     }
-    const min = Math.min(...endpoints);
-    const max = Math.max(...endpoints);
-    expect(min).toBeLessThanOrEqual(0.43);
-    expect(max).toBeGreaterThanOrEqual(0.47);
-    expect(max - min).toBeGreaterThanOrEqual(0.04);
-    expect(hold(1)).toBeCloseTo(0.5);
-    expect(hold(1)).toBeLessThan(0.53);
-    expect(hold(0.18)).toBeLessThan(0.38);
   });
 });

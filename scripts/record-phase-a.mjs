@@ -15,14 +15,11 @@
  *   node scripts/record-phase-a.mjs 01 02
  */
 import { spawn, spawnSync } from "node:child_process";
-import { createRequire } from "node:module";
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, unlinkSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "@playwright/test";
 
-const require = createRequire(import.meta.url);
-const axePath = require.resolve("axe-core/axe.min.js");
 const here = dirname(fileURLToPath(import.meta.url));
 
 function requireEnv(name) {
@@ -51,6 +48,10 @@ if (!VID) {
   process.exit(1);
 }
 const XDOTOOL_ENV = { ...process.env, DISPLAY };
+const AXE_LOAD =
+  "s=document.createElement('script');s.src='/vendor/axe.min.js';await new Promise((res,rej)=>{s.onload=res;s.onerror=()=>rej(new Error('axe load'));document.head.append(s)});window.__axeIds=(await axe.run()).violations.map(v=>v.id).sort();window.__axeIds";
+const CONTROL_AXE = ["button-name", "color-contrast", "label", "region"];
+const TREATMENT_AXE = ["region"];
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -87,9 +88,31 @@ function winGeom(id) {
   };
 }
 
+function mouseLocation() {
+  const out = xdo(["getmouselocation"]);
+  return {
+    x: Number((out.match(/x:(-?\d+)/) || [])[1] || 0),
+    y: Number((out.match(/y:(-?\d+)/) || [])[1] || 0),
+  };
+}
+
 async function xMoveTo(x, y) {
-  xdo(["mousemove", "--sync", String(Math.round(x)), String(Math.round(y))]);
-  await sleep(90);
+  const destX = Math.round(x);
+  const destY = Math.round(y);
+  const cur = mouseLocation();
+  const dx = destX - cur.x;
+  const dy = destY - cur.y;
+  const dist = Math.hypot(dx, dy);
+  const steps = dist < 12 ? 1 : Math.max(6, Math.min(28, Math.ceil(dist / 45)));
+  for (let i = 1; i <= steps; i += 1) {
+    xdo([
+      "mousemove",
+      "--sync",
+      String(Math.round(cur.x + (dx * i) / steps)),
+      String(Math.round(cur.y + (dy * i) / steps)),
+    ]);
+    if (steps > 1) await sleep(14);
+  }
 }
 
 async function xMoveClick(x, y, hold = 90) {
@@ -104,8 +127,8 @@ const LEFT_CHROME = 0;
 let WIN = { x: 78, y: 39, w: 1734, h: 1103, id: "" };
 
 async function screenBox(page, locator) {
-  await locator.scrollIntoViewIfNeeded({ timeout: 5000 }).catch(() => {});
-  const box = await locator.boundingBox();
+  await locator.scrollIntoViewIfNeeded({ timeout: 1500 }).catch(() => {});
+  const box = await locator.boundingBox({ timeout: 2000 });
   if (!box) throw new Error("locator has no box");
   const inner = await page.evaluate(() => ({
     screenX: window.screenX,
@@ -182,7 +205,6 @@ function ffprobeDuration(file) {
     ["-v", "error", "-show_entries", "format=duration", "-of", "default=nw=1:nk=1", file],
     { encoding: "utf8" },
   );
-  // ffprobe binary preferred; ffmpeg -i also works via the same flags on some builds
   const probe = spawnSync(
     "ffprobe",
     ["-v", "error", "-show_entries", "format=duration", "-of", "default=nw=1:nk=1", file],
@@ -198,40 +220,60 @@ async function recordClip(name, run) {
   try {
     await run();
     await sleep(700);
-  } finally {
+  } catch (err) {
     await stopFfmpeg(proc);
+    try {
+      unlinkSync(file);
+    } catch {
+      /* keep going */
+    }
+    throw err;
   }
+  await stopFfmpeg(proc);
   const dur = ffprobeDuration(file);
   console.log(`saved ${file} duration=${dur.toFixed(1)}s`);
   if (dur < 8) throw new Error(`${name} too short (${dur.toFixed(1)}s)`);
   return { file, duration: dur };
 }
 
-function clickCheckoutTab() {
-  return xMoveClick(WIN.x + 240, WIN.y + 16);
-}
-
 function chromeTitle() {
   return xdo(["getwindowname", WIN.id]);
 }
 
+function isCheckoutTitle(title) {
+  return /Northline/i.test(title) && !/Flagsmith/i.test(title);
+}
+
+function isFlagsmithTitle(title) {
+  return /Flagsmith/i.test(title);
+}
+
+async function clickCheckoutTab() {
+  if (isCheckoutTitle(chromeTitle())) return;
+  xdo(["windowactivate", "--sync", WIN.id]);
+  const offsets = [240, 220, 260, 200];
+  for (const dx of offsets) {
+    await xMoveClick(WIN.x + dx, WIN.y + 16);
+    await sleep(220);
+    const title = chromeTitle();
+    if (isCheckoutTitle(title)) return;
+  }
+  throw new Error(`checkout tab click did not select Northline (title=${chromeTitle()})`);
+}
+
 async function clickFlagsmithTab() {
-  // The Flagsmith tab's hit target is the right half of the second tab.
-  // WIN.x+400 still lands on Northline; WIN.x+420 (desktop x=500) selects Flagsmith.
-  // document.visibilityState is visible for every tab under CDP, so use the window title.
+  if (isFlagsmithTitle(chromeTitle())) return;
   xdo(["windowactivate", "--sync", WIN.id]);
   const offsets = [420, 430, 440, 450, 410];
   for (const dx of offsets) {
     await xMoveClick(WIN.x + dx, WIN.y + 16);
-    await sleep(280);
-    if (/Flagsmith/i.test(chromeTitle())) return;
+    await sleep(220);
+    if (isFlagsmithTitle(chromeTitle())) return;
   }
   throw new Error(`Flagsmith tab click did not select Flagsmith (title=${chromeTitle()})`);
 }
 
 function clickReload() {
-  // Toolbar: Back, Forward, Reload. Reload is the third circular control
-  // (y=54 hits the tab strip; y=58 is the toolbar icon).
   return xMoveClick(WIN.x + 96, WIN.y + 58);
 }
 
@@ -239,8 +281,8 @@ async function reloadVisible(page, tab) {
   xdo(["windowactivate", "--sync", WIN.id]);
   if (tab === "flagsmith") await clickFlagsmithTab();
   else await clickCheckoutTab();
-  await page.bringToFront();
-  await sleep(220);
+  await sleep(180);
+  const beforeUrl = page.url();
   const origin = await page.evaluate(() => performance.timeOrigin);
   await clickReload();
   const moved = await page
@@ -253,48 +295,74 @@ async function reloadVisible(page, tab) {
     throw new Error("reload button click did not start navigation within 1.5s");
   }
   await page.waitForLoadState("domcontentloaded");
-  await sleep(350);
+  const afterUrl = page.url();
+  if (afterUrl !== beforeUrl) {
+    throw new Error(`reload changed url ${beforeUrl} -> ${afterUrl}`);
+  }
+  await sleep(250);
+}
+
+async function liveDevtools(page, hint) {
+  const context = page.context();
+  const candidates = [];
+  if (hint && !hint.isClosed()) candidates.push(hint);
+  for (const p of context.pages()) {
+    if (p.url().startsWith("devtools://") && !candidates.includes(p)) candidates.push(p);
+  }
+  for (const dt of candidates) {
+    const ok = await dt
+      .locator("#tab-console")
+      .waitFor({ state: "visible", timeout: 2500 })
+      .then(
+        () => true,
+        () => false,
+      );
+    if (ok) return dt;
+  }
+  throw new Error("no live DevTools Console tab");
 }
 
 async function clickDevToolsTab(dt, name) {
   const id = { Console: "#tab-console", Network: "#tab-network", Application: "#tab-resources" }[name];
   if (!id) throw new Error(`unknown DevTools tab ${name}`);
-  await xClickLocator(dt, dt.locator(id));
+  const tab = dt.locator(id);
+  await tab.waitFor({ state: "visible", timeout: 4000 });
+  const selected = await tab.getAttribute("aria-selected");
+  if (selected === "true") return;
+  await xClickLocator(dt, tab);
 }
 
 async function focusConsole(dt) {
   await clickDevToolsTab(dt, "Console");
-  await sleep(180);
+  await sleep(120);
   await xClickLocator(dt, dt.locator("#console-prompt"));
-  await sleep(180);
+  await sleep(120);
 }
 
-async function typeConsole(dt, code) {
-  await focusConsole(dt);
-  await dt.keyboard.type(code, { delay: 22 });
+async function typeConsole(dt, code, opts = {}) {
+  const t0 = Date.now();
+  if (opts.refocus !== false) await focusConsole(dt);
+  await dt.keyboard.type(code, { delay: 16 });
   await dt.keyboard.press("Enter");
-  await sleep(500);
+  await sleep(280);
+  console.log(`typed ${code.slice(0, 48)}… ${(Date.now() - t0) / 1000}s`);
 }
 
 async function clickClearConsole(dt) {
   await clickDevToolsTab(dt, "Console");
-  await sleep(150);
+  await sleep(120);
   const btn = dt.getByRole("button", { name: "Clear console" });
   await btn.waitFor({ state: "visible", timeout: 4000 });
   await xClickLocator(dt, btn);
-  await sleep(250);
+  await sleep(180);
 }
 
 async function ensureCheckoutDevtools(page, dtHint) {
-  await page.bringToFront();
-  let dt = dtHint;
-  if (!dt || dt.isClosed()) {
-    throw new Error("DevTools page missing — open it before recording");
-  }
-  return dt;
+  if (!isCheckoutTitle(chromeTitle())) await clickCheckoutTab();
+  return liveDevtools(page, dtHint);
 }
 
-async function waitFlagsmith(page, timeout = 20000) {
+async function waitFlagsmith(page, timeout = 8000) {
   await page.waitForFunction(
     () => {
       const v = document.body.getAttribute("data-variant");
@@ -304,46 +372,43 @@ async function waitFlagsmith(page, timeout = 20000) {
   );
 }
 
-async function waitEdgeValue(wanted, tries = 20) {
+async function waitEdgeValue(wanted, tries = 8) {
   for (let i = 0; i < tries; i += 1) {
     try {
-      const res = await fetch(`https://edge.api.flagsmith.com/api/v1/identities/?identifier=${encodeURIComponent(VID)}`, {
-        headers: { "X-Environment-Key": ENV_KEY },
-      });
+      const res = await fetch(
+        `https://edge.api.flagsmith.com/api/v1/identities/?identifier=${encodeURIComponent(VID)}`,
+        { headers: { "X-Environment-Key": ENV_KEY }, signal: AbortSignal.timeout(1500) },
+      );
       const data = await res.json();
       const flag = (data.flags || []).find((f) => f.feature?.name === "checkout_a11y");
       const value = flag?.variant || flag?.feature_state_value;
       console.log(`edge checkout_a11y=${value} want=${wanted}`);
       if (value === wanted) return;
-    } catch (err) {
+    } catch {
       console.warn("edge poll failed");
     }
-    await sleep(800);
+    await sleep(400);
   }
   throw new Error(`edge never reached ${wanted}`);
 }
 
-async function waitVariant(page, wanted, attempts = 6) {
-  for (let i = 0; i < attempts; i += 1) {
-    const ok = await page
-      .waitForFunction((v) => document.body.getAttribute("data-variant") === v, wanted, {
-        timeout: 2500,
-      })
-      .then(
-        () => true,
-        () => false,
-      );
-    if (ok) return;
-    await reloadVisible(page, "checkout");
+async function waitVariantShort(page, wanted) {
+  const ok = await page
+    .waitForFunction((v) => document.body.getAttribute("data-variant") === v, wanted, {
+      timeout: 5000,
+    })
+    .then(
+      () => true,
+      () => false,
+    );
+  if (!ok) {
+    const actual = await page.evaluate(() => document.body.getAttribute("data-variant"));
+    throw new Error(`never reached ${wanted} (now ${actual})`);
   }
-  const actual = await page.evaluate(() => document.body.getAttribute("data-variant"));
-  throw new Error(`never reached ${wanted} (now ${actual})`);
 }
 
-async function showCheckout(page) {
-  await page.bringToFront();
+async function showCheckout() {
   await clickCheckoutTab();
-  await sleep(250);
 }
 
 function flagsmithPage(page) {
@@ -357,35 +422,32 @@ async function showFlagsmith(page) {
   const fm = flagsmithPage(page);
   if (!fm) throw new Error("Flagsmith tab missing");
   await clickFlagsmithTab();
-  if (!/Flagsmith/i.test(chromeTitle())) {
+  if (!isFlagsmithTitle(chromeTitle())) {
     throw new Error(`Flagsmith tab is not selected (title=${chromeTitle()})`);
   }
-  await sleep(900);
   return fm;
 }
 
-async function openCheckoutX(page) {
-  await page.bringToFront();
+async function ensureCheckoutForm(page, dt) {
   await clickCheckoutTab();
-  const trigger = page.locator("#shop-trigger");
-  await trigger.waitFor({ state: "attached", timeout: 8000 });
-  const tag = await trigger.evaluate((el) => el.tagName);
-  if (tag === "BUTTON") {
-    await xClickLocator(page, trigger);
+  const visible = await page
+    .locator("#checkout")
+    .isVisible()
+    .catch(() => false);
+  if (visible) return;
+  if (dt) {
+    await typeConsole(
+      dt,
+      "c=document.getElementById('checkout');c.hidden=false;c.scrollIntoView({block:'start'})",
+    );
   } else {
-    const pos = await screenBox(page, trigger);
-    await xMoveTo(pos.x, pos.y);
-    await sleep(400);
+    await page.evaluate(() => {
+      const el = document.getElementById("checkout");
+      if (!el) throw new Error("checkout missing");
+      el.hidden = false;
+    });
   }
-  const link = page.locator("#checkout-link");
-  await link.waitFor({ state: "visible", timeout: 4000 });
-  await xClickLocator(page, link);
-  await page.locator("#checkout").waitFor({ state: "visible", timeout: 8000 });
-}
-
-async function injectAxe(page) {
-  const already = await page.evaluate(() => Boolean(window.axe));
-  if (!already) await page.addScriptTag({ path: axePath });
+  await page.locator("#checkout").waitFor({ state: "visible", timeout: 4000 });
 }
 
 function runOverride(cmd) {
@@ -397,61 +459,16 @@ function runOverride(cmd) {
   if (r.status !== 0) throw new Error(`override ${cmd} exit ${r.status}`);
 }
 
-function saveCardPromptVisible() {
-  const x = Math.max(0, Math.round(WIN.x + WIN.w - 380));
-  const y = Math.max(0, Math.round(WIN.y + 70));
-  const r = spawnSync(
-    "ffmpeg",
-    [
-      "-v",
-      "error",
-      "-f",
-      "x11grab",
-      "-video_size",
-      "360x200",
-      "-i",
-      `${DISPLAY}.0+${x},${y}`,
-      "-frames",
-      "1",
-      "-f",
-      "rawvideo",
-      "-pix_fmt",
-      "rgb24",
-      "-",
-    ],
-    { encoding: "buffer", env: { ...process.env, DISPLAY } },
-  );
-  const buf = r.stdout;
-  if (!buf || buf.length < 3000) return false;
-  let white = 0;
-  const pixels = Math.floor(buf.length / 3);
-  for (let i = 0; i + 2 < buf.length; i += 3) {
-    if (buf[i] > 248 && buf[i + 1] > 248 && buf[i + 2] > 248) white += 1;
-  }
-  return white / pixels > 0.25;
-}
-
-async function dismissSaveCard() {
-  if (!saveCardPromptVisible()) return;
-  const x = WIN.x + WIN.w - 120;
-  const y = WIN.y + 119;
-  await xMoveClick(x, y, 40);
-  await sleep(150);
-}
-
 async function resetFlagsmithIdentity(page) {
   const fm = await showFlagsmith(page);
-  await sleep(800);
-  await fm.keyboard.press("Escape").catch(() => {});
-  await sleep(200);
   const search = fm.getByPlaceholder("Search").first();
-  await search.waitFor({ state: "visible", timeout: 15000 });
+  await search.waitFor({ state: "visible", timeout: 6000 });
   await xClickLocator(fm, search);
   xdo(["key", "ctrl+a"]);
   await fm.keyboard.type("checkout_a11y", { delay: 35 });
-  await sleep(700);
+  await sleep(500);
   const reset = fm.getByRole("button", { name: /^Reset$/ }).first();
-  await reset.waitFor({ state: "visible", timeout: 15000 });
+  await reset.waitFor({ state: "visible", timeout: 6000 });
   await xClickLocator(fm, reset);
   const confirmField = fm.getByPlaceholder("feature_name").or(fm.getByPlaceholder("checkout_a11y"));
   const opened = await confirmField.waitFor({ state: "visible", timeout: 4000 }).then(
@@ -459,13 +476,13 @@ async function resetFlagsmithIdentity(page) {
     () => false,
   );
   if (!opened) throw new Error("Flagsmith Reset did not open the confirm dialog");
-  await sleep(700);
+  await sleep(400);
   await xClickLocator(fm, confirmField);
   const focused = await confirmField.evaluate((el) => document.activeElement === el);
   if (!focused) throw new Error("confirm field did not take focus");
   xdo(["key", "ctrl+a"]);
-  await fm.keyboard.type("checkout_a11y", { delay: 60 });
-  await sleep(700);
+  await fm.keyboard.type("checkout_a11y", { delay: 50 });
+  await sleep(400);
   const confirm = fm.getByRole("button", { name: /^Confirm$/ }).first();
   await confirm.waitFor({ state: "visible" });
   await fm.waitForFunction(
@@ -479,29 +496,28 @@ async function resetFlagsmithIdentity(page) {
   );
   await xClickLocator(fm, confirm);
   await confirm.waitFor({ state: "hidden", timeout: 8000 });
-  await sleep(600);
+  await fm.getByText(/environment defaults/i).first().waitFor({ timeout: 8000 }).catch(() => {});
 }
 
-async function dtBoxByText(dt, text, maxH = 36) {
-  return dt.evaluate(
-    ({ text, maxH }) => {
-      const hits = [];
-      const walk = (root) => {
-        const nodes = root.querySelectorAll("*");
-        for (const el of nodes) {
-          if (el.shadowRoot) walk(el.shadowRoot);
-          const t = (el.textContent || "").trim();
-          if (t !== text) continue;
-          const r = el.getBoundingClientRect();
-          if (r.width < 4 || r.height < 4 || r.height > maxH) continue;
-          hits.push({ x: r.x, y: r.y, w: r.width, h: r.height });
-        }
-      };
-      walk(document);
-      return hits[0] || null;
-    },
-    { text, maxH },
-  );
+async function holdFlagsmithView(ms) {
+  await sleep(ms);
+}
+
+async function runAxeAndAssert(page, dt, expected) {
+  await typeConsole(dt, AXE_LOAD);
+  const ids = await page
+    .waitForFunction(() => Array.isArray(window.__axeIds) && window.__axeIds.length >= 0, null, {
+      timeout: 8000,
+    })
+    .then(
+      () => page.evaluate(() => window.__axeIds),
+      () => null,
+    );
+  const want = [...expected].sort();
+  const got = Array.isArray(ids) ? [...ids].sort() : null;
+  if (!got || got.join() !== want.join()) {
+    throw new Error(`axe ids ${JSON.stringify(got)} want ${JSON.stringify(want)}`);
+  }
 }
 
 async function xClickDtBox(dt, box) {
@@ -553,14 +569,14 @@ async function findLiftVidCell(dt) {
 
 async function showLiftVidCookie(dt) {
   await clickDevToolsTab(dt, "Application");
-  await sleep(500);
+  await sleep(400);
   const cookies = dt.getByRole("treeitem", { name: "Cookies" });
   await cookies.waitFor({ state: "visible", timeout: 8000 });
   await cookies.scrollIntoViewIfNeeded();
   await xClickLocator(dt, cookies);
-  await sleep(250);
+  await sleep(200);
   await dt.keyboard.press("ArrowRight");
-  await sleep(450);
+  await sleep(350);
   const origin = dt.getByRole("treeitem", { name: BASE });
   const originVisible = await origin.waitFor({ state: "visible", timeout: 4000 }).then(
     () => true,
@@ -569,27 +585,45 @@ async function showLiftVidCookie(dt) {
   if (!originVisible) throw new Error("cookie origin row not found");
   await origin.scrollIntoViewIfNeeded();
   await xClickLocator(dt, origin);
-  await sleep(500);
+  await sleep(400);
   const filterBox = await cookieTableFilterBox(dt);
   if (!filterBox) throw new Error("cookie table Filter box not found");
   await xClickDtBox(dt, filterBox);
-  await sleep(150);
+  await sleep(120);
   xdo(["key", "ctrl+a"]);
   await dt.keyboard.type("lift_vid", { delay: 40 });
-  await sleep(700);
+  await sleep(500);
   let vid = await findLiftVidCell(dt);
   if (!vid) {
     await xClickLocator(dt, origin);
-    await sleep(400);
+    await sleep(300);
     await xClickDtBox(dt, filterBox);
     xdo(["key", "ctrl+a"]);
     await dt.keyboard.type("lift_vid", { delay: 40 });
-    await sleep(800);
+    await sleep(600);
     vid = await findLiftVidCell(dt);
   }
   if (!vid) throw new Error("lift_vid cookie row not found");
   await xClickDtBox(dt, vid);
-  await sleep(1000);
+  await sleep(700);
+}
+
+async function assertNotAllowMock(page) {
+  await page.goto(`${BASE}/checkout/`, { waitUntil: "domcontentloaded" });
+  await waitFlagsmith(page);
+  const live = await page.evaluate(() => document.body.getAttribute("data-variant"));
+  const probe = live === "treatment" ? "control" : "treatment";
+  await page.goto(`${BASE}/checkout/?lift_variant=${probe}`, { waitUntil: "domcontentloaded" });
+  await waitFlagsmith(page);
+  const after = await page.evaluate(() => ({
+    variant: document.body.getAttribute("data-variant"),
+    status: document.getElementById("flag-status")?.textContent || "",
+  }));
+  if (/URL override/i.test(after.status) || (after.variant === probe && after.variant !== live)) {
+    throw new Error(`server appears to be in --allow-mock (status=${after.status} variant=${after.variant})`);
+  }
+  await page.goto(`${BASE}/checkout/`, { waitUntil: "domcontentloaded" });
+  await waitFlagsmith(page);
 }
 
 const clips = {
@@ -606,32 +640,31 @@ const clips = {
       await page.waitForFunction(() => document.body.getAttribute("data-variant") === "control", {
         timeout: 15000,
       });
-      await injectAxe(page);
+      await ensureCheckoutForm(page);
       dt = await ensureCheckoutDevtools(page, dt);
       await clickDevToolsTab(dt, "Console");
+      await clickFlagsmithTab();
       return dt;
     },
     async run(page, dt) {
       await showFlagsmith(page);
-      await sleep(1600);
-      await showCheckout(page);
-      await sleep(700);
-      await openCheckoutX(page);
+      await holdFlagsmithView(2000);
+      await showCheckout();
       dt = await ensureCheckoutDevtools(page, dt);
-      await clickDevToolsTab(dt, "Console");
-      await typeConsole(dt, "(await axe.run()).violations.map(v=>v.id)");
-      await sleep(1400);
+      await typeConsole(dt, "document.getElementById('flag-status')?.scrollIntoView({block:'end'})");
+      await sleep(1100);
+      await ensureCheckoutForm(page, dt);
+      await typeConsole(dt, "document.getElementById('place-order')?.scrollIntoView({block:'center'})");
+      await sleep(400);
+      await runAxeAndAssert(page, dt, CONTROL_AXE);
       await resetFlagsmithIdentity(page);
-      await showCheckout(page);
+      await holdFlagsmithView(2000);
+      await showCheckout();
       await reloadVisible(page, "checkout");
-      await waitVariant(page, "treatment");
-      await openCheckoutX(page);
-      dt = await ensureCheckoutDevtools(page, dt);
-      await typeConsole(
-        dt,
-        "s=document.createElement('script');s.src='https://cdn.jsdelivr.net/npm/axe-core@4.10.2/axe.min.js';await new Promise(r=>{s.onload=r;document.head.append(s)});(await axe.run()).violations.map(v=>v.id)",
-      );
-      await sleep(1400);
+      await waitVariantShort(page, "treatment");
+      dt = await liveDevtools(page, dt);
+      await ensureCheckoutForm(page, dt);
+      await runAxeAndAssert(page, dt, TREATMENT_AXE);
     },
   },
 
@@ -644,11 +677,12 @@ const clips = {
       await page.waitForFunction(() => document.body.getAttribute("data-variant") === "treatment", {
         timeout: 15000,
       });
+      await ensureCheckoutForm(page);
     },
     async run(page, dt) {
-      await showCheckout(page);
-      await openCheckoutX(page);
+      await showCheckout();
       dt = await ensureCheckoutDevtools(page, dt);
+      await ensureCheckoutForm(page, dt);
       await typeConsole(
         dt,
         "window.clicks = 0; document.getElementById('place-order')?.addEventListener('click', () => { window.clicks += 1 })",
@@ -656,39 +690,27 @@ const clips = {
       await xClickLocator(page, page.locator("#email"));
       await page.keyboard.type("ada@northline.test", { delay: 40 });
       xdo(["key", "Tab"]);
-      await sleep(200);
+      await sleep(160);
       await page.keyboard.type("Ada Lovelace", { delay: 32 });
       xdo(["key", "Tab"]);
-      await sleep(160);
-      await page.keyboard.type("4242424242424242", { delay: 16 });
+      await sleep(120);
+      await page.keyboard.type("0000", { delay: 40 });
       xdo(["key", "Tab"]);
-      await sleep(160);
+      await sleep(120);
       await page.keyboard.type("12/28", { delay: 36 });
       xdo(["key", "Tab"]);
-      await sleep(160);
+      await sleep(120);
       await page.keyboard.type("123", { delay: 36 });
       xdo(["key", "Tab"]);
-      await sleep(200);
+      await sleep(160);
       xdo(["key", "space"]);
-      await sleep(200);
+      await sleep(160);
       xdo(["key", "Tab"]);
-      await sleep(350);
+      await sleep(250);
       xdo(["key", "Return"]);
-      await sleep(500);
-      await dismissSaveCard();
       await page.locator("#confirmation").waitFor({ state: "visible", timeout: 8000 });
       await typeConsole(dt, "clicks");
-      await sleep(1200);
-      await clickDevToolsTab(dt, "Network");
-      await sleep(350);
-      await reloadVisible(page, "checkout");
-      await waitFlagsmith(page);
-      await sleep(700);
-      const row = dt.getByText("identities/", { exact: false }).first();
-      const rowBox = await row.boundingBox().catch(() => null);
-      if (rowBox) await xClickLocator(dt, row);
-      else await xMoveTo(WIN.x + 240, WIN.y + WIN.h - 140);
-      await sleep(1400);
+      await sleep(1000);
     },
   },
 
@@ -698,7 +720,7 @@ const clips = {
       await waitFlagsmith(page);
     },
     async run(page, dt) {
-      await showCheckout(page);
+      await showCheckout();
       dt = await ensureCheckoutDevtools(page, dt);
       await clickClearConsole(dt);
       await typeConsole(dt, "s=document.createElement('style'); s.textContent='.dark{background-color:#111;color:#fff}'; document.head.append(s)");
@@ -732,10 +754,9 @@ const clips = {
       await waitFlagsmith(page);
     },
     async run(page, dt) {
-      await showCheckout(page);
+      await showCheckout();
       await reloadVisible(page, "checkout");
-      await waitFlagsmith(page);
-      dt = await ensureCheckoutDevtools(page, dt);
+      dt = await liveDevtools(page, dt);
       await clickClearConsole(dt);
       await typeConsole(
         dt,
@@ -746,7 +767,7 @@ const clips = {
         "(await import('/runtime/runtime.js')).applyPatchSpec({id:'cssom-edit',version:0,ops:[{op:'injectCSS',rules:[{selector:{classes:['demo-target']},declarations:[{property:'color',value:'#111'}]}]}]})",
       );
       await typeConsole(dt, "sheet=document.querySelector('[data-lift-css]'); sheet.disabled");
-      await sleep(400);
+      await sleep(300);
       await typeConsole(dt, "sheet.sheet.cssRules[0].style.color='#eee'");
       await sleep(4000);
       await typeConsole(dt, "sheet.disabled");
@@ -754,7 +775,7 @@ const clips = {
         dt,
         "s=LiftRuntime.getRuntimeStats(); JSON.stringify({undos:s.undos,attributions:s.attributions,ticksRan:s.ticksRan})",
       );
-      await sleep(1200);
+      await sleep(1000);
     },
   },
 
@@ -764,10 +785,9 @@ const clips = {
       await waitFlagsmith(page);
     },
     async run(page, dt) {
-      await showCheckout(page);
+      await showCheckout();
       await reloadVisible(page, "checkout");
-      await waitFlagsmith(page);
-      dt = await ensureCheckoutDevtools(page, dt);
+      dt = await liveDevtools(page, dt);
       await clickClearConsole(dt);
       await typeConsole(
         dt,
@@ -778,21 +798,21 @@ const clips = {
         "(await import('/runtime/runtime.js')).applyPatchSpec({id:'minw',version:0,ops:[{op:'injectCSS',rules:[{selector:{id:'hit'},declarations:[{property:'min-width',value:'44px'}]}]}]})",
       );
       await typeConsole(dt, "h.style.color='#eee'");
-      await sleep(220);
+      await sleep(200);
       await typeConsole(dt, "h.style.color='#111'");
-      await sleep(220);
+      await sleep(200);
       await typeConsole(dt, "h.style.color='#eee'");
-      await sleep(220);
+      await sleep(200);
       await typeConsole(dt, "h.style.color='#111'");
-      await sleep(300);
+      await sleep(250);
       const statsLine =
         "s=LiftRuntime.getRuntimeStats(); JSON.stringify({undos:s.undos,ticksRan:s.ticksRan,attributions:s.attributions})";
       await typeConsole(dt, statsLine);
-      await sleep(5000);
-      await typeConsole(dt, statsLine);
-      await sleep(5000);
-      await typeConsole(dt, statsLine);
-      await sleep(1200);
+      await sleep(4800);
+      await typeConsole(dt, statsLine, { refocus: false });
+      await sleep(4800);
+      await typeConsole(dt, statsLine, { refocus: false });
+      await sleep(900);
     },
   },
 
@@ -804,17 +824,17 @@ const clips = {
       await waitFlagsmith(page);
     },
     async run(page, dt) {
-      await showCheckout(page);
-      await sleep(800);
+      await showCheckout();
+      await sleep(500);
       dt = await ensureCheckoutDevtools(page, dt);
       await showLiftVidCookie(dt);
-      await sleep(1200);
+      await sleep(800);
       await reloadVisible(page, "checkout");
-      await waitFlagsmith(page);
-      await sleep(800);
+      await waitFlagsmith(page, 8000);
+      await sleep(500);
       dt = await ensureCheckoutDevtools(page, dt);
       await showLiftVidCookie(dt);
-      await sleep(1400);
+      await sleep(1000);
     },
   },
 };
@@ -831,6 +851,7 @@ const names = wanted.length
 mkdirSync(OUT, { recursive: true });
 const browser = await chromium.connectOverCDP(CDP);
 const context = browser.contexts()[0];
+context.setDefaultTimeout(4000);
 let page = context.pages().find((p) => p.url().includes("/checkout/") && !p.url().startsWith("devtools://"));
 if (!page) page = context.pages().find((p) => !p.url().startsWith("devtools://") && p.url().startsWith("http"));
 if (!page) page = await context.newPage();
@@ -844,8 +865,9 @@ let dt = context.pages().find((p) => p.url().startsWith("devtools://"));
   WIN = winGeom(id);
 }
 console.log("chrome window", WIN.x, WIN.y, WIN.w, WIN.h);
-await page.bringToFront();
 await clickCheckoutTab();
+console.log("checking server is not --allow-mock");
+await assertNotAllowMock(page);
 
 const results = [];
 for (const name of names) {

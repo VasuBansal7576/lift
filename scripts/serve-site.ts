@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { getSite, placeholderSiteConfig } from "../shared/catalog.ts";
 import { parseIncomingUrl } from "../shared/request-url.ts";
 import { resolveRuntimePath } from "../shared/runtime-static.ts";
+import { resolveVendorPath } from "../shared/vendor-static.ts";
 
 const rootDir = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const dashboard = process.argv.includes("--dashboard");
@@ -62,6 +63,18 @@ const server = createServer(async (req, res) => {
       try {
         const body = await readFile(runtimePath);
         res.writeHead(200, { "Content-Type": MIME[extname(runtimePath)] ?? "application/octet-stream" });
+        res.end(body);
+      } catch {
+        res.writeHead(404);
+        res.end("not found");
+      }
+      return;
+    }
+    const vendorPath = resolveVendorPath(url.pathname);
+    if (vendorPath) {
+      try {
+        const body = await readFile(vendorPath);
+        res.writeHead(200, { "Content-Type": MIME[extname(vendorPath)] ?? "application/octet-stream" });
         res.end(body);
       } catch {
         res.writeHead(404);

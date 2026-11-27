@@ -2431,7 +2431,7 @@ test("R13 smooth scrollTo is not snapped back by attribution", async ({ page }) 
   expect(y).toBeGreaterThan(1500);
 });
 
-test("R18 off-viewport lost-hit-target recheck attributes spec", async ({ page }) => {
+test("R18 overlay lost-hit-target recheck attributes spec", async ({ page }) => {
   await page.goto("/checkout/?lift_variant=control&lift_bot=1");
   const result = await page.evaluate(async () => {
     const href = new URL("/runtime/runtime.js", location.origin).href;
@@ -2512,6 +2512,69 @@ test("R18 off-viewport lost-hit-target recheck attributes spec", async ({ page }
     ),
     JSON.stringify(last),
   ).toBe(true);
+});
+
+test("R19 off-viewport overlay coverage uses stacksAbove", async ({ page }) => {
+  await page.goto("/checkout/?lift_variant=control&lift_bot=1");
+  const result = await page.evaluate(async () => {
+    const href = new URL("/runtime/runtime.js", location.origin).href;
+    const runtime = (await import(href)) as {
+      applyPatchSpec: (input: unknown) => { ok: boolean; error?: string };
+    };
+    document.querySelector(".sim-banner")?.remove();
+    document.querySelector("header")?.remove();
+    document.querySelector(".product")?.remove();
+    document.querySelector("footer")?.remove();
+    document.querySelector("#checkout")?.remove();
+    const overlay = document.createElement("a");
+    overlay.id = "ov-hit";
+    overlay.href = "#x";
+    overlay.textContent = "Go";
+    overlay.style.cssText =
+      "position:absolute;left:24px;top:0;width:96px;height:6px;z-index:9;color:#111;background:#fff";
+    const buy = document.createElement("button");
+    buy.id = "ov-buy";
+    buy.type = "button";
+    buy.textContent = "Buy";
+    buy.style.cssText =
+      "position:absolute;left:24px;top:16px;width:96px;height:28px;z-index:1;margin:0;padding:0;color:#111;background:#fff";
+    const spacer = document.createElement("div");
+    spacer.style.height = "2800px";
+    document.body.prepend(overlay, buy, spacer);
+    window.scrollTo(0, 48);
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    const applied = runtime.applyPatchSpec({
+      id: "ov-off",
+      version: 0,
+      ops: [
+        {
+          op: "injectCSS",
+          rules: [
+            {
+              selector: { id: "ov-hit" },
+              declarations: [{ property: "min-height", value: "48px" }],
+            },
+          ],
+        },
+      ],
+    });
+    const orect = overlay.getBoundingClientRect();
+    const brect = buy.getBoundingClientRect();
+    const interTop = Math.max(orect.top, brect.top);
+    const interBottom = Math.min(orect.bottom, brect.bottom);
+    const interY = (interTop + interBottom) / 2;
+    const sheet = document.querySelector("[data-lift-css]") as HTMLStyleElement | null;
+    return {
+      ok: applied.ok,
+      error: applied.error ?? "",
+      css: Boolean(sheet && !sheet.disabled),
+      interY,
+      vh: window.innerHeight,
+    };
+  });
+  expect(result.interY, JSON.stringify(result)).toBeLessThan(0);
+  expect(result, JSON.stringify(result)).toMatchObject({ ok: false, error: "covered control" });
+  expect(result.css).toBe(false);
 });
 
 test("R13 mouse wheel is not snapped back by attribution", async ({ page }) => {

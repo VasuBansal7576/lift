@@ -5,6 +5,7 @@ import { isInsideRoot } from "../../shared/fs-path.ts";
 import { getSite, placeholderSiteConfig } from "../../shared/catalog.ts";
 import { parseIncomingUrl } from "../../shared/request-url.ts";
 import { resolveRuntimePath } from "../../shared/runtime-static.ts";
+import { resolveVendorPath } from "../../shared/vendor-static.ts";
 import { ROOT } from "./config.ts";
 
 const MIME: Record<string, string> = {
@@ -64,6 +65,18 @@ export function serveSites(
         try {
           const raw = await readFile(runtimePath);
           res.writeHead(200, { "Content-Type": MIME[extname(runtimePath)] ?? "text/plain" });
+          res.end(raw);
+        } catch {
+          res.writeHead(404);
+          res.end("not found");
+        }
+        return;
+      }
+      const vendorPath = resolveVendorPath(url.pathname);
+      if (vendorPath) {
+        try {
+          const raw = await readFile(vendorPath);
+          res.writeHead(200, { "Content-Type": MIME[extname(vendorPath)] ?? "text/plain" });
           res.end(raw);
         } catch {
           res.writeHead(404);

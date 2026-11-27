@@ -217,6 +217,12 @@ export async function runOrchestrator(opts: OrchOptions): Promise<PersistedState
 
       log.setPhase("flagging");
       const flag = await runFlagAgent(opts, passed, generation, controlKey, log);
+      log.snapshot = {
+        generations,
+        flag,
+        dashboardExperimentUrl: flag.dashboardUrl,
+      };
+      log.writeLive();
       if (opts.apply && !flag.dryRun) {
         startedExperiments.push({ id: flag.experimentId, envKey: opts.environmentKey });
       }

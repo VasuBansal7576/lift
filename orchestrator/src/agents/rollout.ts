@@ -35,6 +35,14 @@ export function pickEnvDefaultFeatureState<T extends { identity?: unknown; featu
   return found;
 }
 
+export function optionIdOf(
+  row: { multivariate_feature_option: number | { id: number } },
+): number {
+  return typeof row.multivariate_feature_option === "number"
+    ? row.multivariate_feature_option
+    : row.multivariate_feature_option.id;
+}
+
 export function winnerAllocations(
   rows: Array<{
     id?: number;
@@ -44,16 +52,28 @@ export function winnerAllocations(
   winnerOptionId: number | undefined,
 ): Array<{ id?: number; multivariate_feature_option: number; percentage_allocation: number }> {
   return rows.map((row) => {
-    const optionId =
-      typeof row.multivariate_feature_option === "number"
-        ? row.multivariate_feature_option
-        : row.multivariate_feature_option.id;
+    const optionId = optionIdOf(row);
     const isWinner = winnerOptionId !== undefined && optionId === winnerOptionId;
     return {
       id: row.id,
       multivariate_feature_option: optionId,
       percentage_allocation: isWinner ? 100 : 0,
     };
+  });
+}
+
+/** True when the winner option is 100% and every other option is 0%. */
+export function allocationsAreWinner(
+  rows: Array<{
+    multivariate_feature_option: number | { id: number };
+    percentage_allocation: number;
+  }>,
+  winnerOptionId: number | undefined,
+): boolean {
+  if (winnerOptionId === undefined || rows.length === 0) return false;
+  return rows.every((row) => {
+    const want = optionIdOf(row) === winnerOptionId ? 100 : 0;
+    return Math.abs(row.percentage_allocation - want) < 0.51;
   });
 }
 
@@ -94,38 +114,50 @@ export async function runRollout(
       }>;
     }>(states),
   );
-  const mv = winnerAllocations(state.multivariate_feature_state_values ?? [], winnerOption?.optionId);
-  const patchBodies = [
-    {
-      enabled: true,
-      feature_state_value: { type: "unicode", value: recommendation.arm },
-      multivariate_feature_state_values: mv,
-    },
-    {
-      enabled: true,
-      feature_state_value: { type: "string", value: recommendation.arm },
-      multivariate_feature_state_values: mv,
-    },
-    {
-      enabled: true,
-      multivariate_feature_state_values: mv,
-    },
-  ];
-  let patched = false;
-  let lastPatchError: unknown;
-  for (const body of patchBodies) {
+  const winnerOptionId = winnerOption?.optionId;
+  let current = state.multivariate_feature_state_values ?? [];
+  if (!allocationsAreWinner(current, winnerOptionId)) {
+    const mv = winnerAllocations(current, winnerOptionId);
+    // Do not send feature_state_value: Flagsmith 2.295.2 complete() already
+    // rolls the winner, and a typed/string value 500s the env-default PATCH.
     try {
-      await http.patch(`/features/featurestates/${state.id}/`, body);
-      patched = true;
-      break;
+      await http.patch(`/features/featurestates/${state.id}/`, {
+        enabled: true,
+        multivariate_feature_state_values: mv,
+      });
     } catch (err) {
-      lastPatchError = err;
+      const { data: retried } = await http.get<unknown>(
+        `/environments/${opts.environmentKey}/featurestates/?feature=${flag.flagId}`,
+      );
+      const again = pickEnvDefaultFeatureState(
+        listResults<{
+          identity?: unknown;
+          feature_segment?: unknown;
+          multivariate_feature_state_values?: typeof current;
+        }>(retried),
+      );
+      current = again.multivariate_feature_state_values ?? [];
+      if (!allocationsAreWinner(current, winnerOptionId)) {
+        throw err instanceof Error ? err : new Error("Failed to set environment-default winner to 100%");
+      }
+      log.emit("rollout", "warn", "PATCH skipped after complete(): winner already at 100/0");
     }
+  } else {
+    log.emit("rollout", "info", "complete() already set winner to 100/0; skipping featurestate PATCH");
   }
-  if (!patched) {
-    throw lastPatchError instanceof Error
-      ? lastPatchError
-      : new Error("Failed to set environment-default winner to 100%");
+
+  const { data: verifiedRaw } = await http.get<unknown>(
+    `/environments/${opts.environmentKey}/featurestates/?feature=${flag.flagId}`,
+  );
+  const verified = pickEnvDefaultFeatureState(
+    listResults<{
+      identity?: unknown;
+      feature_segment?: unknown;
+      multivariate_feature_state_values?: typeof current;
+    }>(verifiedRaw),
+  );
+  if (!allocationsAreWinner(verified.multivariate_feature_state_values ?? [], winnerOptionId)) {
+    throw new Error(`Winner ${recommendation.arm} is not at 100% on the environment-default featurestate`);
   }
 
   if (opts.projectId) {

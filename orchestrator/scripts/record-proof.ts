@@ -4,12 +4,12 @@
  * Real Flagsmith URLs (public client env key in the path is acceptable).
  */
 import { spawn } from "node:child_process";
-import { appendFileSync, mkdirSync, copyFileSync, existsSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, copyFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { chromium } from "@playwright/test";
 import { parseArgv } from "../src/config.ts";
 import { runOrchestrator } from "../src/conductor.ts";
-import { REPO_ROOT } from "../src/paths.ts";
+import { LIVE_PATH, REPO_ROOT } from "../src/paths.ts";
 
 const OUT = resolve(REPO_ROOT, "recordings/t1-t2");
 const ARTIFACTS = resolve(REPO_ROOT, "artifacts/t1-t2");
@@ -71,7 +71,7 @@ function requireBootstrapCreds(): { email: string; password: string } {
 
 async function loginFlagsmith(page: import("@playwright/test").Page) {
   const { email, password } = requireBootstrapCreds();
-  await page.goto("http://127.0.0.1:8000/login", { waitUntil: "domcontentloaded" });
+  await page.goto("http://127.0.0.1:8000/login", { waitUntil: "domcontentloaded", timeout: 20_000 });
   const emailBox = page.getByLabel(/email/i);
   await emailBox.waitFor({ timeout: 10_000 });
   await emailBox.fill(email);
@@ -82,28 +82,38 @@ async function loginFlagsmith(page: import("@playwright/test").Page) {
 
 async function typeApproveOnCamera(experimentId: number): Promise<void> {
   const title = "lift-approve";
-  const cmd = `cd ${REPO_ROOT} && npx tsx orchestrator/src/cli.ts --approve ${experimentId} --apply --no-ui; echo DONE; sleep 12`;
+  const cmd = `cd ${REPO_ROOT} && npx tsx orchestrator/src/cli.ts --approve ${experimentId} --apply --no-ui; echo DONE; sleep 14`;
   spawn("xterm", ["-T", title, "-geometry", "80x18+20+640", "-fa", "Monospace", "-fs", "14", "-e", "bash", "-lc", cmd], {
     env: { ...process.env, DISPLAY: ":1" },
     stdio: "ignore",
   });
-  await new Promise((r) => setTimeout(r, 3500));
+  await new Promise((r) => setTimeout(r, 5000));
   spawn(
     "xdotool",
-    ["search", "--name", title, "windowactivate", "--sync", "type", "--delay", "90", `APPROVE ${experimentId}`],
+    ["search", "--name", title, "windowactivate", "--sync", "type", "--delay", "110", `APPROVE ${experimentId}`],
     { env: { ...process.env, DISPLAY: ":1" }, stdio: "ignore" },
   );
-  await new Promise((r) => setTimeout(r, 2500));
+  await new Promise((r) => setTimeout(r, 2800));
   spawn("xdotool", ["search", "--name", title, "windowactivate", "--sync", "key", "Return"], {
     env: { ...process.env, DISPLAY: ":1" },
     stdio: "ignore",
   });
-  await new Promise((r) => setTimeout(r, 12_000));
+  await new Promise((r) => setTimeout(r, 16_000));
+}
+
+function liveDashboardUrl(): string {
+  try {
+    const live = JSON.parse(readFileSync(LIVE_PATH, "utf8")) as { dashboardExperimentUrl?: string };
+    return live.dashboardExperimentUrl?.trim() || "";
+  } catch {
+    return "";
+  }
 }
 
 async function main() {
   mkdirSync(OUT, { recursive: true });
   writeFileSync("/tmp/lift-orch.log", "");
+  writeFileSync(LIVE_PATH, "{}\n");
   spawn(
     "xterm",
     ["-geometry", "92x28+0+40", "-fa", "Monospace", "-fs", "12", "-e", "bash", "-lc", "tail -n +1 -f /tmp/lift-orch.log"],
@@ -129,11 +139,12 @@ async function main() {
     viewport: { width: 960, height: 1100 },
   });
   const page = await context.newPage();
+  page.setDefaultTimeout(20_000);
   await loginFlagsmith(page);
-  await page.goto("http://127.0.0.1:4177/", { waitUntil: "domcontentloaded" }).catch(() => undefined);
+  await page.goto("http://127.0.0.1:8000/organisation/1/projects", { waitUntil: "domcontentloaded", timeout: 20_000 });
 
   async function showExperiment(dashboardUrl: string) {
-    await page.goto(dashboardUrl, { waitUntil: "domcontentloaded" });
+    await page.goto(dashboardUrl, { waitUntil: "domcontentloaded", timeout: 20_000 });
     await page.waitForTimeout(4000);
     if (page.url().includes("login")) {
       throw new Error("Flagsmith session expired; landed on sign-in");
@@ -141,8 +152,8 @@ async function main() {
   }
 
   async function showWinner(dashboardUrl: string, flagName: string) {
-    await page.goto(dashboardUrl, { waitUntil: "domcontentloaded" });
-    await page.waitForTimeout(4000);
+    await page.goto(dashboardUrl, { waitUntil: "domcontentloaded", timeout: 20_000 });
+    await page.waitForTimeout(5000);
     const featuresLink = page.getByRole("link", { name: /^Features$/ });
     if (await featuresLink.count()) {
       await featuresLink.first().click().catch(() => undefined);
@@ -150,10 +161,34 @@ async function main() {
       const row = page.getByText(flagName, { exact: false }).first();
       await row.scrollIntoViewIfNeeded().catch(() => undefined);
       await row.click({ force: true, timeout: 8_000 }).catch(() => undefined);
-      await page.waitForTimeout(4000);
+      await page.waitForTimeout(5000);
     }
     if (page.url().includes("login")) {
       throw new Error("Flagsmith session expired; landed on sign-in");
+    }
+  }
+
+  async function watchExperiment(stop: { done: boolean }) {
+    let last = "";
+    while (!stop.done) {
+      const url = liveDashboardUrl();
+      try {
+        if (url && url !== last) {
+          last = url;
+          await page.goto(url, { waitUntil: "domcontentloaded", timeout: 15_000 });
+          await page.waitForTimeout(2500);
+        } else if (url && !page.url().includes("login")) {
+          await page.reload({ waitUntil: "domcontentloaded", timeout: 15_000 }).catch(() => undefined);
+        }
+        if (page.url().includes("login")) {
+          throw new Error("Flagsmith session expired; landed on sign-in");
+        }
+      } catch (err) {
+        if (String(err).includes("sign-in")) throw err;
+      }
+      for (let i = 0; i < 16 && !stop.done; i += 1) {
+        await new Promise((r) => setTimeout(r, 500));
+      }
     }
   }
 
@@ -174,9 +209,17 @@ async function main() {
     "--ui-port",
     "4177",
   ]);
+  const t2Stop = { done: false };
+  let t2WatchErr: unknown;
+  const t2Watch = watchExperiment(t2Stop).catch((err) => {
+    t2WatchErr = err;
+  });
   const state = await runOrchestrator(opts);
+  t2Stop.done = true;
+  await t2Watch;
+  if (t2WatchErr) throw t2WatchErr;
 
-  await page.goto("http://127.0.0.1:4177/", { waitUntil: "domcontentloaded" });
+  await page.goto("http://127.0.0.1:4177/", { waitUntil: "domcontentloaded", timeout: 15_000 }).catch(() => undefined);
   await page.waitForTimeout(2500);
   if (state.flag?.dashboardUrl) {
     await showExperiment(state.flag.dashboardUrl);
@@ -185,6 +228,7 @@ async function main() {
   if (state.recommendation?.kind === "winner" && state.flag) {
     await typeApproveOnCamera(state.flag.experimentId);
     if (state.flag.dashboardUrl) {
+      await showExperiment(state.flag.dashboardUrl);
       await showWinner(state.flag.dashboardUrl, state.flag.flagName);
     }
   } else {
@@ -195,7 +239,7 @@ async function main() {
 
   const t1 = resolve(OUT, "t1-experiment.mp4");
   const ff1 = startFfmpeg(t1);
-  await page.goto("http://127.0.0.1:8000/organisation/1/projects", { waitUntil: "domcontentloaded" });
+  await page.goto("http://127.0.0.1:8000/organisation/1/projects", { waitUntil: "domcontentloaded", timeout: 20_000 });
   await page.waitForTimeout(1500);
   await page.getByText("Lift", { exact: true }).nth(1).click();
   await page.waitForTimeout(2000);
@@ -205,7 +249,7 @@ async function main() {
     const row = page.getByText(state.flag.flagName, { exact: false }).first();
     await row.scrollIntoViewIfNeeded().catch(() => undefined);
     await row.click({ force: true, timeout: 8_000 }).catch(async () => {
-      if (state.flag?.dashboardUrl) await page.goto(state.flag.dashboardUrl, { waitUntil: "domcontentloaded" });
+      if (state.flag?.dashboardUrl) await page.goto(state.flag.dashboardUrl, { waitUntil: "domcontentloaded", timeout: 20_000 });
     });
   }
   await page.waitForTimeout(6000);
@@ -230,8 +274,17 @@ async function main() {
     "--ui-port",
     "4178",
   ]);
+  writeFileSync(LIVE_PATH, "{}\n");
+  const l2Stop = { done: false };
+  let l2WatchErr: unknown;
+  const l2Watch = watchExperiment(l2Stop).catch((err) => {
+    l2WatchErr = err;
+  });
   const gen2 = await runOrchestrator(opts2);
-  await page.goto("http://127.0.0.1:4178/", { waitUntil: "domcontentloaded" });
+  l2Stop.done = true;
+  await l2Watch;
+  if (l2WatchErr) throw l2WatchErr;
+  await page.goto("http://127.0.0.1:4178/", { waitUntil: "domcontentloaded", timeout: 15_000 }).catch(() => undefined);
   await page.waitForTimeout(2500);
   if (gen2.flag?.dashboardUrl) {
     await showExperiment(gen2.flag.dashboardUrl);
@@ -239,6 +292,7 @@ async function main() {
   if (gen2.recommendation?.kind === "winner" && gen2.flag) {
     await typeApproveOnCamera(gen2.flag.experimentId);
     if (gen2.flag.dashboardUrl) {
+      await showExperiment(gen2.flag.dashboardUrl);
       await showWinner(gen2.flag.dashboardUrl, gen2.flag.flagName);
     }
   }

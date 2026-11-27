@@ -14,6 +14,7 @@ import {
   TrafficAbortError,
   appliedVariantMatches,
   cookieMatchesIdentity,
+  dropoutKeepRate,
 } from "../traffic-guard.ts";
 import type { FlagSetup, GateResult, OrchOptions, TrafficVisit } from "../types.ts";
 
@@ -128,7 +129,7 @@ export async function runTrafficAgent(
             reason: `persona failed: ${err instanceof Error ? err.message : String(err)}`.slice(0, 160),
           };
         }
-        const baseline = applyBaselineDropout(attempt.converted, dropoutRand, 0.75);
+        const baseline = applyBaselineDropout(attempt.converted, dropoutRand, dropoutKeepRate(variant));
         const converted = baseline.converted;
 
         if (converted) {

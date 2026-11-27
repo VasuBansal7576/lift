@@ -1,3 +1,5 @@
+import { existsSync, writeFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   BLOCKED_SURFACE,
@@ -8,7 +10,8 @@ import {
   simulateArmRate,
 } from "../../orchestrator/src/traffic-guard.ts";
 import { resolveOrchSpecPath } from "../../shared/orch-site.ts";
-import { REPO_ROOT } from "../../orchestrator/src/paths.ts";
+import { REPO_ROOT, specsDir } from "../../orchestrator/src/paths.ts";
+import { writePassedSpecs } from "../../orchestrator/src/specs.ts";
 
 describe("traffic identity + marker", () => {
   it("asserts lift_vid cookie persistence", () => {
@@ -51,5 +54,12 @@ describe("traffic identity + marker", () => {
     expect(resolveOrchSpecPath("/orch-specs/../secret.json", REPO_ROOT)).toBeNull();
     expect(resolveOrchSpecPath("/orch-specs/BAD.json", REPO_ROOT)).toBeNull();
     expect(resolveOrchSpecPath("/runtime/runtime.js", REPO_ROOT)).toBeNull();
+  });
+
+  it("removes leftover control.json so gen-1 control is the unpatched page", () => {
+    const controlPath = resolve(specsDir(), "control.json");
+    writeFileSync(controlPath, `${JSON.stringify({ id: "full-v1", version: 0, ops: [] })}\n`);
+    writePassedSpecs([], null);
+    expect(existsSync(controlPath)).toBe(false);
   });
 });

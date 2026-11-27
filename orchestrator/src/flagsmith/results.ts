@@ -59,7 +59,8 @@ export async function waitForResults(
   if (waitMs > 0) await sleep(Math.min(initialWait, waitMs));
   while (Date.now() < deadline) {
     const now = Date.now();
-    const refresh = lastRefresh === 0 || now - lastRefresh >= 45 * 1000;
+    // Flagsmith /results/refresh/ 429s if requested more often than ~90s.
+    const refresh = lastRefresh === 0 || now - lastRefresh >= 100 * 1000;
     latest = await fetchExperimentResults(opts, experimentId, refresh);
     if (refresh) lastRefresh = now;
     const identities = resultsIdentityCount(latest);

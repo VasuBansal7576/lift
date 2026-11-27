@@ -120,6 +120,7 @@ describe("L3 Flagsmith bootstrap", () => {
     expect(() => writeDemoConfig("env-key", "https://api.flagsmith.com/api/v1/")).toThrow(
       /loopback-only/,
     );
+    expect(() => assertLoopback("https://api.flagsmith.com/api/v1/", true)).not.toThrow();
   });
 });
 

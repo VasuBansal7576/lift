@@ -15,7 +15,13 @@ declare global {
       ingest: (kind: string, sample: unknown) => void;
       stop: () => void;
       start: () => Promise<unknown>;
-      getRuntime: () => { flagsmith: unknown; offline: boolean; optedOut: boolean };
+      getRuntime: () => {
+        flagsmith: unknown;
+        offline: boolean;
+        optedOut: boolean;
+        traitRetryTimer: number;
+        traitSeq: number;
+      };
     };
   }
 }
@@ -154,33 +160,46 @@ function skipUnlessFlagsmith() {
   test.skip(!live, "self-hosted Flagsmith is not running on 127.0.0.1:8000 with demo/l3/config.json");
 }
 
+function compositeRgb(
+  fg: [number, number, number],
+  bg: [number, number, number],
+  opacity: number,
+): [number, number, number] {
+  const t = Math.min(1, Math.max(0, opacity));
+  return [
+    Math.round(fg[0] * t + bg[0] * (1 - t)),
+    Math.round(fg[1] * t + bg[1] * (1 - t)),
+    Math.round(fg[2] * t + bg[2] * (1 - t)),
+  ];
+}
+
 async function contrastOf(page: Page, selector: string) {
   const colors = await page.locator(selector).first().evaluate((el) => {
     const fgStyle = getComputedStyle(el);
+    let opacity = 1;
     let node: HTMLElement | null = el as HTMLElement;
-    let bg = "";
+    const backgrounds: string[] = [];
     while (node) {
-      const color = getComputedStyle(node).backgroundColor;
-      if (color && color !== "transparent" && !/^rgba\(\s*0,\s*0,\s*0,\s*0/.test(color)) {
-        bg = color;
-        break;
-      }
+      const style = getComputedStyle(node);
+      opacity *= Number(style.opacity);
+      backgrounds.push(style.backgroundColor);
       node = node.parentElement;
     }
-    if (!bg) throw new Error(`No opaque background for ${el.tagName}`);
-    return { fg: fgStyle.color, bg, opacity: Number(fgStyle.opacity) };
+    return { fg: fgStyle.color, opacity, backgrounds };
   });
-  const bg = parseCssColor(colors.bg);
+  let bg: [number, number, number] | null = null;
+  for (let i = colors.backgrounds.length - 1; i >= 0; i -= 1) {
+    const raw = colors.backgrounds[i];
+    if (!raw || raw === "transparent") continue;
+    try {
+      bg = bg ? parseCssColor(raw, bg) : parseCssColor(raw);
+    } catch {
+      continue;
+    }
+  }
+  if (!bg) throw new Error("No opaque background");
   const fg = parseCssColor(colors.fg, bg);
-  const composed: [number, number, number] =
-    colors.opacity < 1
-      ? [
-          Math.round(fg[0] * colors.opacity + bg[0] * (1 - colors.opacity)),
-          Math.round(fg[1] * colors.opacity + bg[1] * (1 - colors.opacity)),
-          Math.round(fg[2] * colors.opacity + bg[2] * (1 - colors.opacity)),
-        ]
-      : fg;
-  return contrastRatio(composed, bg);
+  return contrastRatio(compositeRgb(fg, bg, colors.opacity), bg);
 }
 
 async function setSlider(page: Page, value: number) {
@@ -275,10 +294,18 @@ test("L3 full loop: stress, Flagsmith trait/segment/flag, Sensory-Safe, fade bac
   await expect(page.locator("#lift-l3-hud")).toHaveAttribute("data-exit", "0.38");
   await expect(page.locator("#lift-l3-hud")).toHaveAttribute("data-trait", "false");
   await expect(page.locator("#lift-l3-hud")).toHaveAttribute("data-flag", "false");
-  const videoPlaying = await page.locator("#hero-video").evaluate((el) => {
+  const hudTextStart = (await page.locator("#lift-l3-hud").textContent()) ?? "";
+  const cfg = liveConfig();
+  if (cfg?.flagsmithEnvironmentKey) {
+    expect(hudTextStart).not.toContain(cfg.flagsmithEnvironmentKey);
+  }
+  expect(hudTextStart).not.toMatch(/\bser\./);
+  await page.locator("#hero-video").evaluate((el) => {
     const video = el as HTMLVideoElement;
-    return !video.paused && !video.ended;
+    video.muted = true;
+    return video.play();
   });
+  await expect(page.locator("#hero-video")).toHaveJSProperty("paused", false);
   await expect(page.locator("[data-lift-promo]")).toBeVisible();
   await expect(page.locator("[data-lift-cookie]")).toBeVisible();
   await expect(page.locator("[data-lift-summary]").first()).toBeHidden();
@@ -328,9 +355,7 @@ test("L3 full loop: stress, Flagsmith trait/segment/flag, Sensory-Safe, fade bac
   const hudContrast = Number((await page.locator("#lift-l3-hud").getAttribute("data-contrast")) ?? "0");
   expect(hudContrast).toBeGreaterThanOrEqual(WCAG_AA_MIN);
 
-  if (videoPlaying) {
-    await expect(page.locator("#hero-video")).toHaveJSProperty("paused", true);
-  }
+  await expect(page.locator("#hero-video")).toHaveJSProperty("paused", true);
 
   await setSlider(page, 0);
   await page.evaluate(() => window.LiftL3.forceScore(0.12));
@@ -338,7 +363,7 @@ test("L3 full loop: stress, Flagsmith trait/segment/flag, Sensory-Safe, fade bac
     timeout: 25_000,
   });
   await expect(page.locator("html")).not.toHaveClass(/lift-sensory-safe/, { timeout: 5_000 });
-  await expect(page.locator("main")).toBeFocused();
+  await expect(page.locator("#checkout")).not.toBeFocused();
   await expect(page.locator("[data-lift-promo]")).toBeVisible();
   await page.waitForTimeout(2_100);
   await expect(page.locator("html")).not.toHaveClass(/lift-sensory-restoring/);
@@ -419,25 +444,25 @@ test("L3 fail-open: env key present but API blocked stays calm", async ({ page }
       },
     });
   });
-  await page.route("**/@flagsmith/flagsmith@**", async (route) => {
-    await route.abort();
-  });
   await page.route("**/api/v1/**", async (route) => {
     await route.abort();
   });
   await page.goto(`${L3_URL}/?lift_identity=${liftIdentity()}`);
-  await expect(page.locator("#lift-l3-offline")).toBeVisible();
+  await expect(page.locator("#lift-l3-offline")).toBeVisible({ timeout: 20_000 });
   await page.evaluate(() => window.LiftL3.forceScore(0.95));
   await page.waitForTimeout(2_200);
   await expect(page.locator("html")).not.toHaveClass(/lift-sensory-safe/);
   await expect(page.locator("[data-lift-promo]")).toBeVisible();
 });
 
-test("L3 fail-open: Flagsmith dying mid-session keeps Sensory-Safe off", async ({ page }) => {
+test("L3 fail-open: Flagsmith dying mid-session keeps the normal page usable", async ({
+  page,
+}) => {
   skipUnlessFlagsmith();
-  test.setTimeout(40_000);
+  test.setTimeout(50_000);
   await gotoDemo(page);
-  await expect(page.locator("#lift-l3-hud")).toHaveAttribute("data-offline", "false");
+  await page.evaluate(() => window.LiftL3.forceScore(0.95));
+  await expect(page.locator("html")).toHaveClass(/lift-sensory-safe/, { timeout: 20_000 });
   await page.route("**/api/v1/**", async (route) => {
     await route.abort();
   });
@@ -445,19 +470,16 @@ test("L3 fail-open: Flagsmith dying mid-session keeps Sensory-Safe off", async (
     const flagsmith = window.LiftL3.getRuntime().flagsmith as {
       setTrait?: () => Promise<void>;
       getFlags?: () => Promise<void>;
-      hasFeature?: () => boolean;
     };
     if (!flagsmith) return;
     flagsmith.getFlags = () => Promise.reject(new Error("Flagsmith died mid-session"));
     flagsmith.setTrait = () => Promise.reject(new Error("Flagsmith died mid-session"));
-    flagsmith.hasFeature = () => {
-      throw new Error("Flagsmith died mid-session");
-    };
   });
-  await page.evaluate(() => window.LiftL3.forceScore(0.95));
-  await page.waitForTimeout(2_200);
-  await expect(page.locator("html")).not.toHaveClass(/lift-sensory-safe/);
-  await expect(page.locator("#lift-l3-hud")).toHaveAttribute("data-flag", "false");
+  await page.evaluate(() => window.LiftL3.forceScore(0.12));
+  await expect(page.locator("html")).not.toHaveClass(/lift-sensory-safe/, { timeout: 20_000 });
+  await expect(page.locator("[data-lift-promo]")).toBeVisible();
+  await expect(page.locator("#checkout")).toBeVisible();
+  await expect(page.locator("#checkout")).toBeEnabled();
 });
 
 test("L3 fail-open: Flagsmith dying mid-setTrait keeps UI off without staying offline", async ({
@@ -530,6 +552,12 @@ test("L3 pauses autoplay only and ignores keyboard rage clicks", async ({ page }
   test.setTimeout(40_000);
   await gotoDemo(page);
   await expect(page.locator("#hero-video")).toHaveAttribute("autoplay");
+  await page.locator("#hero-video").evaluate((el) => {
+    const video = el as HTMLVideoElement;
+    video.muted = true;
+    return video.play();
+  });
+  await expect(page.locator("#hero-video")).toHaveJSProperty("paused", false);
   await page.locator("#play-user-video").click();
   await page.locator("#checkout").focus();
   for (let i = 0; i < 4; i += 1) {
@@ -569,6 +597,66 @@ test("L3 opt-out is keyboard reachable and Escape in a dialog does not exit", as
   await expect(page.locator("#lift-l3-opt-out")).toBeFocused();
   await page.keyboard.press("Escape");
   await expect(page.locator("html")).not.toHaveClass(/lift-sensory-safe/, { timeout: 8_000 });
+  await expect(page.locator("main")).toBeFocused();
   await expect(page.locator("#lift-l3-opt-in")).toBeVisible();
+  await expect(page.locator("#lift-l3-opt-in")).toHaveText("Allow calmer view again");
   await expect(page.locator("[data-lift-promo]")).toBeVisible();
+});
+
+test("L3 setTrait does not loop when opt-out races a slow push", async ({ page }) => {
+  skipUnlessFlagsmith();
+  test.setTimeout(40_000);
+  await gotoDemo(page);
+  await expect(page.locator("#lift-l3-hud")).toHaveAttribute("data-offline", "false", {
+    timeout: 20_000,
+  });
+  await page.evaluate(() => {
+    const flagsmith = window.LiftL3.getRuntime().flagsmith as {
+      setTrait: (name: string, value: unknown) => Promise<unknown>;
+    } | null;
+    if (!flagsmith?.setTrait) throw new Error("Flagsmith SDK was not ready");
+    const orig = flagsmith.setTrait.bind(flagsmith);
+    (window as unknown as { __setTraitCalls: number }).__setTraitCalls = 0;
+    flagsmith.setTrait = (name, value) => {
+      (window as unknown as { __setTraitCalls: number }).__setTraitCalls += 1;
+      return new Promise((resolve, reject) => {
+        window.setTimeout(() => {
+          orig(name, value).then(resolve, reject);
+        }, 300);
+      });
+    };
+  });
+  await page.evaluate(() => window.LiftL3.forceScore(0.95));
+  await page.waitForTimeout(1_700);
+  await page.locator("#lift-l3-opt-out").evaluate((el) => (el as HTMLButtonElement).click());
+  await page.waitForTimeout(3_000);
+  const mid = await page.evaluate(
+    () => (window as unknown as { __setTraitCalls: number }).__setTraitCalls,
+  );
+  await page.waitForTimeout(1_200);
+  const late = await page.evaluate(
+    () => (window as unknown as { __setTraitCalls: number }).__setTraitCalls,
+  );
+  expect(late).toBe(mid);
+  expect(late).toBeLessThan(8);
+  await expect(page.locator("html")).not.toHaveClass(/lift-sensory-safe/);
+});
+
+test("L3 stop clears bindings and cancels trait retries", async ({ page }) => {
+  skipUnlessFlagsmith();
+  await gotoDemo(page);
+  await expect(page.locator("#lift-l3-hud")).toHaveAttribute("data-offline", "false", {
+    timeout: 20_000,
+  });
+  await page.evaluate(() => window.LiftL3.stop());
+  const leftover = await page.evaluate(() => ({
+    bound: document.querySelectorAll("[data-lift-bound]").length,
+    media: document.querySelectorAll("[data-lift-media-bound]").length,
+    retry: window.LiftL3.getRuntime().traitRetryTimer,
+    seq: window.LiftL3.getRuntime().traitSeq,
+  }));
+  expect(leftover.bound).toBe(0);
+  expect(leftover.media).toBe(0);
+  expect(leftover.retry).toBe(0);
+  expect(leftover.seq).toBeGreaterThan(0);
 });

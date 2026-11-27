@@ -624,11 +624,15 @@ async function applyOverrideClassic(
   return true;
 }
 
-export function writeDemoConfig(environmentKey: string, apiUrl: string): void {
+export function writeDemoConfig(
+  environmentKey: string,
+  apiUrl: string,
+  allowRemote = false,
+): void {
   const dir = resolve(ROOT, "demo/l3");
   mkdirSync(dir, { recursive: true });
   const sdkApi = apiUrl.replace(/\/?$/, "/");
-  assertLoopback(sdkApi, false);
+  assertLoopback(sdkApi, allowRemote);
   writeFileSync(
     resolve(dir, "config.json"),
     `${JSON.stringify(
@@ -736,7 +740,7 @@ export async function bootstrapL3(
     );
   }
 
-  if (environmentKey) writeDemoConfig(environmentKey, apiUrl);
+  if (environmentKey) writeDemoConfig(environmentKey, apiUrl, args.allowRemote);
   let environmentUuid = "";
   try {
     const { data: envList } = await adminRequest<unknown>(

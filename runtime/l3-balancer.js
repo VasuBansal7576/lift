@@ -425,7 +425,11 @@ export function parseCookie(header, name) {
     const eq = trimmed.indexOf("=");
     if (eq < 0) continue;
     if (trimmed.slice(0, eq) !== name) continue;
-    return decodeURIComponent(trimmed.slice(eq + 1));
+    try {
+      return decodeURIComponent(trimmed.slice(eq + 1));
+    } catch {
+      return "";
+    }
   }
   return "";
 }
@@ -510,6 +514,8 @@ const runtime = {
   traitSeq: 0,
   traitRetries: 0,
   traitRetryTimer: 0,
+  traitInFlight: false,
+  traitPending: false,
   gestureUntil: 0,
   forceScore: null,
   lastScore: 0,
@@ -633,6 +639,10 @@ function bindMediaGuards() {
     on(el, "pointerdown", markGesture);
     on(el, "keydown", markGesture);
     on(el, "play", () => {
+      if (el.dataset.liftResuming === "1") {
+        delete el.dataset.liftResuming;
+        return;
+      }
       if (el.dataset.liftGesture === "1" || Date.now() < runtime.gestureUntil) {
         el.dataset.liftUserPlayback = "1";
       }
@@ -654,6 +664,7 @@ function pauseMedia() {
 function resumeMedia() {
   document.querySelectorAll("video, audio").forEach((el) => {
     if (el.dataset.liftWasPlaying === "1") {
+      el.dataset.liftResuming = "1";
       const play = el.play();
       if (play && typeof play.catch === "function") play.catch(() => {});
     }
@@ -698,6 +709,14 @@ function setOptedOut(value) {
     runtime.hysteresis.overstimulated = false;
     void pushTrait(false);
     applySensorySafe(false, runtime.flagConfig);
+  } else {
+    const snapshot = runtime.flagsmith ? readFlagsmithState(runtime.flagsmith) : null;
+    if (snapshot?.trait || snapshot?.flagOn || runtime.trait || runtime.flagOn) {
+      runtime.hysteresis.overstimulated = true;
+      runtime.hysteresis.cooldownUntil = Date.now() + timingConfig().cooldownMs;
+      applySensorySafe(true, runtime.flagConfig);
+      void applyFromFlagsmith();
+    }
   }
   syncOptButtons();
   renderHud();
@@ -718,9 +737,10 @@ function ensureOptOutButton() {
     inn = document.createElement("button");
     inn.id = "lift-l3-opt-in";
     inn.type = "button";
-    inn.textContent = "Turn calmer view back on";
+    inn.textContent = "Allow calmer view again";
     host.appendChild(inn);
   }
+  inn.textContent = "Allow calmer view again";
   if (out.dataset.liftBound !== "1") {
     out.dataset.liftBound = "1";
     on(out, "click", () => setOptedOut(true));
@@ -785,7 +805,13 @@ export function applySensorySafe(on, config = DEFAULT_FLAG_CONFIG) {
     revealSummaries(false);
     setBannerHidden(false);
     applySoftColors(false, config);
-    if (wasOn) focusMain();
+    if (wasOn) {
+      const active = document.activeElement;
+      const outBtn = document.getElementById("lift-l3-opt-out");
+      if (active && outBtn && (active === outBtn || outBtn.contains(active))) {
+        focusMain();
+      }
+    }
     if (wasOn && fadeMs > 0) {
       runtime.fadeTimer = window.setTimeout(() => {
         root.classList.remove("lift-sensory-restoring");
@@ -871,10 +897,11 @@ async function applyFromFlagsmith() {
 
 function scheduleTraitRetry() {
   window.clearTimeout(runtime.traitRetryTimer);
-  const delay = Math.min(400 * 2 ** runtime.traitRetries, 4_000);
+  const delay = Math.min(400 * 2 ** runtime.traitRetries, 30_000);
   runtime.traitRetries += 1;
   runtime.traitRetryTimer = window.setTimeout(() => {
-    void pushTrait(runtime.desiredTrait);
+    runtime.traitRetryTimer = 0;
+    void pushTrait(latestDesiredTrait());
   }, delay);
 }
 
@@ -885,7 +912,12 @@ function latestDesiredTrait() {
 
 async function pushTrait(value) {
   runtime.desiredTrait = Boolean(value);
-  const seq = (runtime.traitSeq += 1);
+  window.clearTimeout(runtime.traitRetryTimer);
+  runtime.traitRetryTimer = 0;
+  if (runtime.traitInFlight) {
+    runtime.traitPending = true;
+    return;
+  }
   if (runtime.offline || !runtime.flagsmith) {
     runtime.trait = false;
     applySensorySafe(false, runtime.flagConfig);
@@ -897,25 +929,29 @@ async function pushTrait(value) {
     failOpen("setTrait missing");
     return;
   }
+  const seq = (runtime.traitSeq += 1);
+  const sent = latestDesiredTrait();
+  runtime.traitInFlight = true;
+  runtime.traitPending = false;
   try {
-    await withTimeout(flagsmith.setTrait(L3_TRAIT_NAME, value));
+    await withTimeout(flagsmith.setTrait(L3_TRAIT_NAME, sent));
     if (typeof flagsmith.getFlags === "function") {
       await withTimeout(flagsmith.getFlags());
     }
   } catch {
+    runtime.traitInFlight = false;
     if (seq !== runtime.traitSeq) return;
     applySensorySafe(false, runtime.flagConfig);
     scheduleTraitRetry();
     renderHud();
     return;
   }
-  if (seq !== runtime.traitSeq) {
-    void pushTrait(latestDesiredTrait());
-    return;
-  }
+  runtime.traitInFlight = false;
+  if (seq !== runtime.traitSeq) return;
   runtime.traitRetries = 0;
   const latest = latestDesiredTrait();
-  if (latest !== value) {
+  if (runtime.traitPending || latest !== sent) {
+    runtime.traitPending = false;
     void pushTrait(latest);
     return;
   }
@@ -1141,7 +1177,9 @@ async function initFlagsmith(config) {
   const snapshot = readFlagsmithState(flagsmith);
   runtime.trait = snapshot.trait;
   runtime.flagConfig = snapshot.flagConfig;
-  if (snapshot.trait) {
+  if (runtime.optedOut && snapshot.trait) {
+    void pushTrait(false);
+  } else if (snapshot.trait) {
     runtime.desiredTrait = true;
     runtime.hysteresis.overstimulated = true;
     runtime.hysteresis.cooldownUntil = Date.now() + timingConfig().cooldownMs;
@@ -1184,14 +1222,24 @@ export function stop() {
   window.clearInterval(runtime.timer);
   window.clearTimeout(runtime.fadeTimer);
   window.clearTimeout(runtime.traitRetryTimer);
+  runtime.traitSeq += 1;
+  runtime.traitInFlight = false;
+  runtime.traitPending = false;
   if (runtime.moveRaf) window.cancelAnimationFrame(runtime.moveRaf);
   if (runtime.scrollRaf) window.cancelAnimationFrame(runtime.scrollRaf);
   runtime.timer = 0;
   runtime.fadeTimer = 0;
+  runtime.traitRetryTimer = 0;
   runtime.moveRaf = 0;
   runtime.scrollRaf = 0;
   for (const off of runtime.unsubscribers) off();
   runtime.unsubscribers = [];
+  document.querySelectorAll("[data-lift-bound]").forEach((el) => {
+    delete el.dataset.liftBound;
+  });
+  document.querySelectorAll("[data-lift-media-bound]").forEach((el) => {
+    delete el.dataset.liftMediaBound;
+  });
   if (runtime.cursorEl?.parentNode) runtime.cursorEl.parentNode.removeChild(runtime.cursorEl);
   runtime.cursorEl = null;
   runtime.started = false;

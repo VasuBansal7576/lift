@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isSafeIdentity, parseCookie } from "../../runtime/l3-balancer.js";
+import { isSafeIdentity, parseCookie, stickyIdentity } from "../../runtime/l3-balancer.js";
 import { L3_COOKIE } from "../../shared/l3-constants.ts";
 import { newLiftIdentity, resolveStickyIdentity, serializeCookie } from "../../shared/l3-identity.ts";
 
@@ -13,6 +13,17 @@ describe("lift_vid cookie helpers", () => {
     expect(parseCookie(header, L3_COOKIE)).toBe(QUERY);
     expect(parseCookie(`a=1; lift_vid=${QUERY}; b=2`, L3_COOKIE)).toBe(QUERY);
     expect(parseCookie("", L3_COOKIE)).toBe("");
+    expect(parseCookie("lift_vid=%E0%A4%A", L3_COOKIE)).toBe("");
+  });
+
+  it("mints a fresh identity when lift_vid is malformed", () => {
+    const doc = {
+      defaultView: { location: { search: "" } },
+      cookie: "lift_vid=%E0%A4%A",
+    };
+    const id = stickyIdentity(doc as unknown as Document);
+    expect(isSafeIdentity(id)).toBe(true);
+    expect(id).not.toBe("%E0%A4%A");
   });
 });
 

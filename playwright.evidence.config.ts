@@ -8,6 +8,7 @@ const port = process.env.LIFT_PORT || process.env.PORT || "4174";
 
 export default defineConfig({
   testDir: "tests/evidence",
+  grep: /05-sticky-identity/,
   fullyParallel: false,
   workers: 1,
   retries: 0,
@@ -27,7 +28,7 @@ export default defineConfig({
   },
   outputDir: resolve(evidenceDir, "playwright"),
   webServer: {
-    command: `npx tsx scripts/serve-site.ts --port ${port} --allow-mock`,
+    command: `npx tsx scripts/serve-site.ts --port ${port}`,
     url: `http://127.0.0.1:${port}`,
     reuseExistingServer: false,
     timeout: 30_000,

@@ -67,7 +67,14 @@ let cssomGen = 0;
 let mutationSeq = 0;
 let lastFailNode = null;
 let sampleRoundRobin = 0;
-const runtimeStats = { undos: 0, attributions: 0, ticksRan: 0, ticksSkipped: 0, tickMsMax: 0 };
+const runtimeStats = {
+  undos: 0,
+  attributions: 0,
+  ticksRan: 0,
+  ticksSkipped: 0,
+  tickMsMax: 0,
+  lastAttributions: [],
+};
 
 function installClickWatch() {
   if (clickWatchUnpatches.length) return;
@@ -2249,6 +2256,7 @@ export function resetRuntimeGuards() {
   runtimeStats.ticksRan = 0;
   runtimeStats.ticksSkipped = 0;
   runtimeStats.tickMsMax = 0;
+  runtimeStats.lastAttributions = [];
   for (const stop of stops) {
     try {
       stop();
@@ -2270,6 +2278,7 @@ export function getRuntimeStats() {
     ticksRan: runtimeStats.ticksRan,
     ticksSkipped: runtimeStats.ticksSkipped,
     tickMsMax: runtimeStats.tickMsMax,
+    lastAttributions: runtimeStats.lastAttributions.slice(),
   };
 }
 
@@ -2541,6 +2550,13 @@ function attributeGuardViolation(root, spec, snapshots, records, undos, err) {
   } catch {
     persists = true;
   }
+  const verdict = persists ? "page" : "spec";
+  runtimeStats.lastAttributions.push({
+    id: (node && node.id) || "",
+    predicate: err,
+    verdict,
+  });
+  if (runtimeStats.lastAttributions.length > 8) runtimeStats.lastAttributions.shift();
   if (persists) {
     cachePageVerdict(node, err);
     return "page";

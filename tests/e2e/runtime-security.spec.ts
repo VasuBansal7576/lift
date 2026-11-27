@@ -1975,6 +1975,9 @@ test("R12 P2a Chromium per-node attribution undoes when B is spec-caused", async
     const href = new URL("/runtime/runtime.js", location.origin).href;
     const runtime = (await import(href)) as {
       applyPatchSpec: (input: unknown) => { ok: boolean };
+      getRuntimeStats: () => {
+        lastAttributions: { id: string; verdict: string; predicate: string }[];
+      };
     };
     const pageStyle = document.createElement("style");
     pageStyle.textContent = ".dark { background-color:#111; color:#fff }";
@@ -2014,15 +2017,19 @@ test("R12 P2a Chromium per-node attribution undoes when B is spec-caused", async
     await new Promise((resolve) => setTimeout(resolve, 120));
     const sheet = document.querySelector("[data-lift-css]") as HTMLStyleElement | null;
     const bColor = getComputedStyle(b).color;
+    const last = runtime.getRuntimeStats().lastAttributions;
     return {
       ok: applied.ok,
       disabled: Boolean(sheet?.disabled),
       bColor,
+      last,
     };
   });
   expect(result.ok).toBe(true);
   expect(result.disabled).toBe(true);
   expect(result.bColor).not.toBe("rgb(17, 17, 17)");
+  expect(result.last.some((row) => row.id === "node-a" && row.verdict === "page")).toBe(true);
+  expect(result.last.some((row) => row.id === "node-b" && row.verdict === "spec")).toBe(true);
 });
 
 test("R12 P2b Chromium wrapper class swap invalidates a page verdict", async ({ page }) => {
@@ -2424,6 +2431,79 @@ test("R13 smooth scrollTo is not snapped back by attribution", async ({ page }) 
   expect(y).toBeGreaterThan(1500);
 });
 
+test("R17 off-viewport lost-hit-target recheck undoes instead of treating unknown as persist", async ({
+  page,
+}) => {
+  await page.goto("/checkout/?lift_variant=control&lift_bot=1");
+  const result = await page.evaluate(async () => {
+    const href = new URL("/runtime/runtime.js", location.origin).href;
+    const runtime = (await import(href)) as {
+      applyPatchSpec: (input: unknown) => { ok: boolean; error?: string };
+      setTestBackstopsPaused: (paused: boolean) => boolean;
+      getRuntimeStats: () => { undos: number };
+    };
+    document.querySelector(".sim-banner")?.remove();
+    document.querySelector("header")?.remove();
+    document.querySelector(".product")?.remove();
+    const wrap = document.createElement("div");
+    wrap.id = "off-hit-wrap";
+    for (let i = 0; i < 8; i += 1) {
+      const a = document.createElement("a");
+      a.className = "off-hit";
+      a.id = `off-hit-${i}`;
+      a.href = `#x${i}`;
+      a.textContent = `Go ${i + 1}`;
+      a.style.cssText = "display:block;color:#111;background:#fff;font:10px/1 sans-serif";
+      wrap.append(a);
+    }
+    document.body.prepend(wrap);
+    const tail = document.createElement("div");
+    tail.style.height = "2400px";
+    document.body.append(tail);
+    const applied = runtime.applyPatchSpec({
+      id: "off-hit",
+      version: 0,
+      ops: [
+        {
+          op: "injectCSS",
+          rules: [
+            {
+              selector: { classes: ["off-hit"] },
+              declarations: [{ property: "min-height", value: "44px" }],
+            },
+          ],
+        },
+      ],
+    });
+    const target = document.getElementById("off-hit-5");
+    if (target) {
+      const y = target.getBoundingClientRect().top + window.scrollY;
+      window.scrollTo(0, Math.max(0, y - 8));
+    }
+    const grown = target?.getBoundingClientRect();
+    const overlay = document.createElement("div");
+    overlay.id = "off-hit-cover";
+    overlay.style.cssText = grown
+      ? `position:fixed;left:${grown.left}px;top:${grown.top}px;width:${grown.width}px;height:${grown.height}px;z-index:9;background:rgba(0,0,0,.35)`
+      : "position:fixed;left:0;top:0;width:40px;height:40px;z-index:9";
+    document.body.append(overlay);
+    const before = runtime.getRuntimeStats().undos;
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    runtime.setTestBackstopsPaused(true);
+    runtime.setTestBackstopsPaused(false);
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    const sheet = document.querySelector("[data-lift-css]") as HTMLStyleElement | null;
+    return {
+      ok: applied.ok,
+      error: applied.error ?? "",
+      disabled: Boolean(sheet?.disabled),
+      undos: runtime.getRuntimeStats().undos - before,
+    };
+  });
+  expect(result, JSON.stringify(result)).toMatchObject({ ok: true, disabled: true });
+  expect(result.undos).toBeGreaterThanOrEqual(1);
+});
+
 test("R13 mouse wheel is not snapped back by attribution", async ({ page }) => {
   await page.goto("/checkout/?lift_variant=control&lift_bot=1");
   await page.evaluate(async () => {
@@ -2561,7 +2641,7 @@ test("R14 smooth scroll to top is not cancelled by colour-fight attribution", as
         if (el instanceof HTMLElement) el.style.color = on ? "#eee" : "#111";
       }
     }, 30);
-    window.scrollTo({ top: 0, behavior: "smooth" });
+    window.scrollTo(0, 0);
   });
   await page.waitForFunction(() => window.scrollY === 0, null, { timeout: 8000 });
   const after = await page.evaluate(async () => {

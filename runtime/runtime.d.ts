@@ -32,4 +32,10 @@ export function getRuntimeStats(): {
   attributions: number;
   ticksRan: number;
   ticksSkipped: number;
+  tickMsMax: number;
+  lastAttributions: {
+    id: string;
+    predicate: string;
+    verdict: "page" | "spec";
+  }[];
 };

@@ -1,0 +1,74 @@
+{
+  "id": "checkout-treatment-v0",
+  "version": 0,
+  "ops": [
+    {
+      "op": "injectCSS",
+      "id": "checkout-treatment-css",
+      "css": ".hover-nav:focus-within .hover-menu { display: block; } .contrast-fail { color: #111 !important; background: #fff !important; }"
+    },
+    {
+      "op": "replaceTag",
+      "selector": "#shop-trigger",
+      "tag": "button",
+      "attributes": {
+        "type": "button",
+        "aria-expanded": "false",
+        "aria-controls": "shop-menu"
+      }
+    },
+    {
+      "op": "setAttribute",
+      "selector": "#cart-icon",
+      "name": "aria-label",
+      "value": "View cart and check out"
+    },
+    {
+      "op": "setText",
+      "selector": "#cart-icon",
+      "text": "👜"
+    },
+    {
+      "op": "wrapLabel",
+      "selector": "#email",
+      "text": "Email"
+    },
+    {
+      "op": "wrapLabel",
+      "selector": "#card-name",
+      "text": "Name on card"
+    },
+    {
+      "op": "wrapLabel",
+      "selector": "#card-number",
+      "text": "Card number"
+    },
+    {
+      "op": "wrapLabel",
+      "selector": "#card-exp",
+      "text": "Expiry"
+    },
+    {
+      "op": "wrapLabel",
+      "selector": "#card-cvc",
+      "text": "CVC"
+    },
+    {
+      "op": "replaceTag",
+      "selector": "#terms-copy",
+      "tag": "label",
+      "attributes": { "for": "terms" }
+    },
+    {
+      "op": "replaceTag",
+      "selector": "#place-order",
+      "tag": "button",
+      "attributes": { "type": "button", "class": "place-order" }
+    },
+    {
+      "op": "setText",
+      "selector": "#place-order",
+      "text": "Place order"
+    }
+  ]
+}

@@ -3,6 +3,7 @@ import { extname, resolve } from "node:path";
 import { readFile } from "node:fs/promises";
 import { isInsideRoot } from "../../shared/fs-path.ts";
 import { getSite, placeholderSiteConfig } from "../../shared/catalog.ts";
+import { resolveRuntimePath } from "../../shared/runtime-static.ts";
 import { ROOT } from "./config.ts";
 
 const MIME: Record<string, string> = {
@@ -40,6 +41,18 @@ export function serveSites(
   const allowMock = opts?.allowMock ?? true;
   const server = createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", `http://127.0.0.1:${port}`);
+    const runtimePath = resolveRuntimePath(url.pathname, ROOT);
+    if (runtimePath) {
+      try {
+        const raw = await readFile(runtimePath);
+        res.writeHead(200, { "Content-Type": MIME[extname(runtimePath)] ?? "text/plain" });
+        res.end(raw);
+      } catch {
+        res.writeHead(404);
+        res.end("not found");
+      }
+      return;
+    }
     if (url.pathname === "/") {
       res.writeHead(302, { Location: `/checkout/${url.search}` });
       res.end();

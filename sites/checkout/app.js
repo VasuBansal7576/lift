@@ -1,3 +1,5 @@
+import { browserIdentityEnv, resolveVisitorId } from "../shared/identity.js";
+
 const FLAG_NAME = "checkout_a11y";
 const SDK_URL = "https://cdn.jsdelivr.net/npm/@flagsmith/flagsmith@12.4.0/+esm";
 
@@ -199,9 +201,7 @@ async function initFromFlagsmith(config) {
   if (!config?.flagsmithEnvironmentKey) {
     throw new Error("Missing FLAGSMITH_ENVIRONMENT_KEY");
   }
-  const identity =
-    params().get("lift_identity") ||
-    crypto.randomUUID();
+  const identity = resolveVisitorId(browserIdentityEnv());
   const { default: flagsmith } = await import(SDK_URL);
   await flagsmith.init({
     environmentID: config.flagsmithEnvironmentKey,

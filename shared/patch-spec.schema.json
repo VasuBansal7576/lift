@@ -1,0 +1,119 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://lift.dev/schemas/patch-spec.v0.json",
+  "title": "Lift patch spec v0",
+  "description": "Declarative, allowlisted DOM patches. Invalid specs are rejected; the runtime fails open.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "version", "ops"],
+  "properties": {
+    "id": { "type": "string", "minLength": 1 },
+    "version": { "const": 0 },
+    "ops": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/op" }
+    }
+  },
+  "$defs": {
+    "selector": { "type": "string", "minLength": 1 },
+    "css": {
+      "type": "string",
+      "minLength": 1,
+      "not": { "pattern": "</\\s*style" }
+    },
+    "safeAttrName": {
+      "type": "string",
+      "minLength": 1,
+      "not": { "pattern": "^[oO][nN]" }
+    },
+    "op": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["op", "selector", "name", "value"],
+          "properties": {
+            "op": { "const": "setAttribute" },
+            "selector": { "$ref": "#/$defs/selector" },
+            "name": { "$ref": "#/$defs/safeAttrName" },
+            "value": { "type": "string" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["op", "selector", "text"],
+          "properties": {
+            "op": { "const": "setText" },
+            "selector": { "$ref": "#/$defs/selector" },
+            "text": { "type": "string" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["op", "css"],
+          "properties": {
+            "op": { "const": "injectCSS" },
+            "css": { "$ref": "#/$defs/css" },
+            "id": { "type": "string", "minLength": 1 }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["op", "selector", "text"],
+          "properties": {
+            "op": { "const": "wrapLabel" },
+            "selector": { "$ref": "#/$defs/selector" },
+            "text": { "type": "string", "minLength": 1 }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["op", "selector"],
+          "properties": {
+            "op": { "const": "makeFocusable" },
+            "selector": { "$ref": "#/$defs/selector" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["op", "selector"],
+          "properties": {
+            "op": { "const": "bindEnterToClick" },
+            "selector": { "$ref": "#/$defs/selector" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["op", "selector", "tag"],
+          "properties": {
+            "op": { "const": "replaceTag" },
+            "selector": { "$ref": "#/$defs/selector" },
+            "tag": { "enum": ["button", "label", "span", "a", "p", "strong", "em"] },
+            "attributes": {
+              "type": "object",
+              "additionalProperties": { "type": "string" }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["op", "selector", "position", "html"],
+          "properties": {
+            "op": { "const": "insertHTML" },
+            "selector": { "$ref": "#/$defs/selector" },
+            "position": { "enum": ["before", "after", "prepend", "append"] },
+            "html": { "type": "string", "minLength": 1 },
+            "mountId": { "type": "string", "minLength": 1 }
+          }
+        }
+      ]
+    }
+  }
+}

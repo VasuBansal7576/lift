@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { extname, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { getSite, placeholderSiteConfig } from "../shared/catalog.ts";
+import { resolveRuntimePath } from "../shared/runtime-static.ts";
 
 const rootDir = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const dashboard = process.argv.includes("--dashboard");
@@ -41,6 +42,18 @@ function placeholderFor(relative: string): Record<string, unknown> {
 
 const server = createServer(async (req, res) => {
   const url = new URL(req.url ?? "/", `http://127.0.0.1:${port}`);
+  const runtimePath = resolveRuntimePath(url.pathname, rootDir);
+  if (runtimePath) {
+    try {
+      const body = await readFile(runtimePath);
+      res.writeHead(200, { "Content-Type": MIME[extname(runtimePath)] ?? "application/octet-stream" });
+      res.end(body);
+    } catch {
+      res.writeHead(404);
+      res.end("not found");
+    }
+    return;
+  }
   if (!dashboard && url.pathname === "/") {
     res.writeHead(302, { Location: `/checkout/${url.search}` });
     res.end();

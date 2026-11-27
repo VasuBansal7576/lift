@@ -293,6 +293,36 @@ function pausedPhase(phase?: string): boolean {
   );
 }
 
+async function pointerClickByName(page: Page, name: string): Promise<void> {
+  const box = await page.evaluate((n) => {
+    const nodes = Array.from(document.querySelectorAll("a, tr, td, li, div, span, button"));
+    for (const el of nodes) {
+      if (!(el instanceof HTMLElement)) continue;
+      if (!(el.textContent || "").includes(n)) continue;
+      const r = el.getBoundingClientRect();
+      if (r.width >= 8 && r.height >= 8 && r.bottom > 0 && r.top < window.innerHeight) {
+        return { x: r.x, y: r.y, width: r.width, height: r.height };
+      }
+    }
+    return null;
+  }, name);
+  if (!box) throw new Error(`no on-screen box for ${name}`);
+  const win = await page.evaluate(() => ({
+    screenX: window.screenX,
+    screenY: window.screenY,
+    outerWidth: window.outerWidth,
+    outerHeight: window.outerHeight,
+    innerWidth: window.innerWidth,
+    innerHeight: window.innerHeight,
+  }));
+  const { x, y } = viewportToScreen(box, win);
+  activateChromium();
+  xdo(["mousemove", "--sync", String(x), String(y)]);
+  await sleep(180);
+  xdo(["click", "1"]);
+  await sleep(220);
+}
+
 async function openExperimentOnCamera(page: Page, flagName: string, dashboardUrl: string): Promise<void> {
   const experiments = page.getByRole("link", { name: /^Experiments$/ });
   if (await experiments.count()) {
@@ -302,10 +332,7 @@ async function openExperimentOnCamera(page: Page, flagName: string, dashboardUrl
     await typeUrlInOmnibox(page, dashboardUrl);
   }
   assertNotLogin(page, "openExperiment");
-  const row = page.getByText(flagName, { exact: false }).first();
-  await row.waitFor({ state: "visible", timeout: 15_000 });
-  await row.scrollIntoViewIfNeeded();
-  await pointerClick(page, row);
+  await pointerClickByName(page, flagName);
   await page.waitForTimeout(1000);
   await page.getByRole("heading").first().waitFor({ state: "visible", timeout: 10_000 });
   assertNotLogin(page, `experiment ${flagName}`);
@@ -320,13 +347,9 @@ async function showRolledOutFeature(page: Page, flagName: string, dashboardUrl: 
   await sleep(150);
   xdo(["type", "--delay", "28", flagName]);
   await sleep(800);
-  const visibleName = page.getByText(flagName, { exact: true }).filter({ visible: true }).first();
-  const row = page.locator("tr, li, [role='row'], [role='listitem'], a").filter({ hasText: flagName }).filter({ visible: true }).first();
-  if (await visibleName.count()) {
-    await pointerClick(page, visibleName);
-  } else if (await row.count()) {
-    await pointerClick(page, row);
-  } else {
+  try {
+    await pointerClickByName(page, flagName);
+  } catch {
     await typeUrlInOmnibox(page, dashboardUrl);
   }
   await page.getByRole("heading").first().waitFor({ state: "visible", timeout: 10_000 });
@@ -484,9 +507,7 @@ async function main() {
     await experiments.first().waitFor({ state: "visible", timeout: 12_000 });
     await pointerClick(page, experiments.first());
     await page.waitForTimeout(800);
-    const row = page.getByText(t2Flag, { exact: false }).first();
-    await row.waitFor({ state: "visible", timeout: 12_000 });
-    await pointerClick(page, row);
+    await pointerClickByName(page, t2Flag);
     await page.getByRole("heading").first().waitFor({ state: "visible", timeout: 10_000 });
     await hold(3200);
     const analysis = page.getByText(/^Analysis$/i).first();

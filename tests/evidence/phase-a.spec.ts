@@ -226,9 +226,25 @@ async function paintContrastReadout(
         if (m) return Number(m[1]);
         return /rgba/i.test(value) ? 0 : 1;
       };
+      const parseCssColor = (value: string): number[] | null => {
+        const comma = String(value).match(/rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/i);
+        if (comma) return [Number(comma[1]), Number(comma[2]), Number(comma[3])];
+        const space = String(value).match(/rgba?\(\s*(\d+)\s+(\d+)\s+(\d+)/i);
+        if (space) return [Number(space[1]), Number(space[2]), Number(space[3])];
+        const hex = String(value).trim();
+        const canvas = document.createElement("canvas");
+        canvas.width = canvas.height = 1;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) return null;
+        ctx.fillStyle = "#000";
+        ctx.fillStyle = hex;
+        const canonical = String(ctx.fillStyle);
+        const parsed = canonical.match(/rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/i);
+        return parsed ? [Number(parsed[1]), Number(parsed[2]), Number(parsed[3])] : null;
+      };
       const lin = (c: number) => {
         const n = c / 255;
-        return n <= 0.03928 ? n / 12.92 : ((n + 0.055) / 1.055) ** 2.4;
+        return n <= 0.04045 ? n / 12.92 : ((n + 0.055) / 1.055) ** 2.4;
       };
       const lum = (rgb: number[]) => 0.2126 * lin(rgb[0]) + 0.7152 * lin(rgb[1]) + 0.0722 * lin(rgb[2]);
       const ratio = (fg: number[], bg: number[]) => {
@@ -242,9 +258,9 @@ async function paintContrastReadout(
         let node: HTMLElement | null = el;
         while (node) {
           const raw = getComputedStyle(node).backgroundColor;
-          const parsed = parseRgb(raw);
+          const parsed = parseCssColor(raw) || parseRgb(raw);
           const alpha = alphaOf(raw);
-          if (parsed && Number.isFinite(alpha) && alpha >= 0.99) return parsed;
+          if (parsed && (Number.isNaN(alpha) || alpha >= 0.99)) return parsed;
           node = node.parentElement;
         }
         return [255, 255, 255];
@@ -265,7 +281,7 @@ async function paintContrastReadout(
         el.style.outlineOffset = "";
       }
       const color = getComputedStyle(el).color;
-      const fg = parseRgb(color) || [255, 255, 255];
+      const fg = parseCssColor(color) || parseRgb(color) || [255, 255, 255];
       const bg = effectiveBg(el);
       const bgCss = `rgb(${bg[0]}, ${bg[1]}, ${bg[2]})`;
       const n = ratio(fg, bg);
@@ -1308,6 +1324,42 @@ test("04-capture-click-no-double", async ({ page }) => {
   await pause(page, 2000);
 });
 
+async function paintAccessibleNamePanel(page: Page, selector: string, caption: string) {
+  const computed = await page.evaluate((sel) => {
+    const el = document.querySelector(sel);
+    if (!(el instanceof HTMLElement)) return { name: "", vis: "" };
+    const by = el.getAttribute("aria-labelledby");
+    let name = "";
+    if (by) {
+      name = by
+        .trim()
+        .split(/\s+/)
+        .map((id) => (document.getElementById(id)?.textContent || "").trim())
+        .filter(Boolean)
+        .join(" ");
+    }
+    if (!name) name = (el.getAttribute("aria-label") || "").trim();
+    if (!name) name = (el.textContent || "").trim();
+    return { name, vis: (el.textContent || "").trim() };
+  }, selector);
+  await page.evaluate(
+    ({ cap, name, vis }) => {
+      let panel = document.getElementById("lift-name-panel");
+      if (!panel) {
+        panel = document.createElement("div");
+        panel.id = "lift-name-panel";
+        panel.setAttribute("data-evidence", "1");
+        panel.style.cssText =
+          "position:fixed;bottom:96px;left:16px;right:16px;z-index:2147483647;padding:14px 16px;font:700 20px/1.4 ui-monospace,monospace;background:#111;color:#fff;border:4px solid #38bdf8";
+        document.body.append(panel);
+      }
+      panel.textContent = `${cap}\ncomputed accessible name: "${name}"\nvisible text: "${vis}"`;
+    },
+    { cap: caption, name: computed.name, vis: computed.vis },
+  );
+  await pause(page, 1500);
+}
+
 test("04-label-in-name-attributed", async ({ page }) => {
   await page.goto("/checkout/?lift_variant=control&lift_bot=1");
   await openCheckoutWithHover(page);
@@ -1342,6 +1394,11 @@ test("04-label-in-name-attributed", async ({ page }) => {
       computed: pay.getAttribute("aria-label") || pay.textContent || "",
     };
   });
+  await paintAccessibleNamePanel(
+    page,
+    "#named-pay",
+    `BEFORE undo — aria-label="${before.labelled}" visible="${before.text}"`,
+  );
   await showBanner(
     page,
     `BEFORE undo — computed name="${before.computed}" visible="${before.text}" (label-in-name broken)`,
@@ -1358,6 +1415,11 @@ test("04-label-in-name-attributed", async ({ page }) => {
     };
   });
   expect(after.labelled).toBe(false);
+  await paintAccessibleNamePanel(
+    page,
+    "#named-pay",
+    `AFTER undo — aria-label removed, visible="${after.text}"`,
+  );
   await showBanner(
     page,
     `AFTER undo — computed name="${after.computed}" visible="${after.text}" — aria-label op removed`,
@@ -1428,6 +1490,103 @@ test("04-overflow-matches-contrast", async ({ page }) => {
   );
   await clearBadState(page);
   await pause(page, 800);
+});
+
+test("04-page-contrast-no-loop", async ({ page }) => {
+  await page.goto("/checkout/?lift_variant=control&lift_bot=1");
+  await openCheckoutWithHover(page);
+  await showBanner(page, "R11 — page #eee on white must not loop undo/redo");
+  const applied = await page.evaluate(async () => {
+    const href = new URL("/runtime/runtime.js", location.origin).href;
+    const runtime = (await import(href)) as {
+      applyPatchSpec: (input: unknown) => { ok: boolean };
+      getRuntimeStats: () => { undos: number; attributions: number };
+    };
+    const checkout = document.getElementById("checkout") || document.body;
+    const hit = document.createElement("a");
+    hit.id = "loop-hit";
+    hit.href = "#x";
+    hit.textContent = "Go";
+    hit.style.cssText = "display:inline-block;color:#111;background:#fff;font:700 18px/1.3 system-ui";
+    checkout.append(hit);
+    const counter = document.createElement("div");
+    counter.id = "undo-cycles";
+    counter.style.cssText =
+      "font:800 28px/1.2 ui-monospace,monospace;margin:12px 0;padding:10px;background:#111;color:#fff";
+    counter.textContent = "undo cycles: 0";
+    checkout.append(counter);
+    const applied = runtime.applyPatchSpec({
+      id: "minw-loop",
+      version: 0,
+      ops: [
+        {
+          op: "injectCSS",
+          rules: [
+            {
+              selector: { id: "loop-hit" },
+              declarations: [{ property: "min-width", value: "44px" }],
+            },
+          ],
+        },
+      ],
+    });
+    const before = runtime.getRuntimeStats();
+    hit.style.color = "#eee";
+    const started = Date.now();
+    while (Date.now() - started < 5000) {
+      const stats = runtime.getRuntimeStats();
+      counter.textContent = `undo cycles: ${stats.undos - before.undos}`;
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+    const after = runtime.getRuntimeStats();
+    return {
+      ok: applied.ok,
+      css: Boolean(document.querySelector("[data-lift-css]")),
+      undos: after.undos - before.undos,
+      attributions: after.attributions - before.attributions,
+    };
+  });
+  expect(applied.ok).toBe(true);
+  expect(applied.css).toBe(true);
+  expect(applied.undos).toBe(0);
+  await showBanner(page, "undo cycles: 0 for 5s — min-width fix kept");
+  await pause(page, 1500);
+});
+
+test("04-attribution-keeps-focus", async ({ page }) => {
+  await page.goto("/checkout/?lift_variant=control&lift_bot=1");
+  await openCheckoutWithHover(page);
+  await showBanner(page, "R11 — promoted control keeps focus while the page changes");
+  const applied = await page.evaluate(async () => {
+    const href = new URL("/runtime/runtime.js", location.origin).href;
+    const runtime = (await import(href)) as {
+      applyPatchSpec: (input: unknown) => { ok: boolean };
+    };
+    const checkout = document.getElementById("checkout") || document.body;
+    const host = document.createElement("div");
+    host.id = "focus-keep";
+    host.style.cssText =
+      "display:inline-block;margin:12px 0;padding:12px 18px;background:#111;color:#fff;cursor:pointer;font:700 20px/1.3 system-ui;outline:3px solid #38bdf8;outline-offset:4px";
+    host.textContent = "Pay now";
+    checkout.append(host);
+    return runtime.applyPatchSpec({
+      id: "focus-keep",
+      version: 0,
+      ops: [{ op: "promoteToControl", selector: "#focus-keep", as: "button" }],
+    });
+  });
+  expect(applied.ok).toBe(true);
+  await page.locator("#focus-keep").focus();
+  await expect(page.locator("#focus-keep")).toBeFocused();
+  await showBanner(page, "focused — page will change color, focus ring must stay");
+  await page.evaluate(() => {
+    const host = document.getElementById("focus-keep");
+    if (host instanceof HTMLElement) host.style.backgroundColor = "#222";
+  });
+  await page.waitForTimeout(200);
+  await expect(page.locator("#focus-keep")).toBeFocused();
+  await showBanner(page, "STILL FOCUSED — attribution did not blur the promoted control");
+  await pause(page, 2000);
 });
 
 test("05-sticky-identity", async ({ page }) => {

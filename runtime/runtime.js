@@ -52,8 +52,20 @@ export function validatePatchSpec(input) {
 }
 
 const clickListenerHosts = new WeakSet();
-const clickedDuringKey = new WeakMap();
+const hostClickedAt = new WeakMap();
+const pendingHostClicks = new WeakSet();
+const liftStyleNodes = new WeakSet();
+const parkedCss = new WeakMap();
+const pageVerdicts = new WeakMap();
+let keySeq = 0;
 let currentKeyEvent = null;
+let keyWatchCleanup = null;
+let cssomGen = 0;
+let mutationSeq = 0;
+let lastFailNode = null;
+let sampleRoundRobin = 0;
+const runtimeStats = { undos: 0, attributions: 0, ticksRan: 0, ticksSkipped: 0 };
+
 (function watchClickListeners() {
   const patch = (proto) => {
     if (!proto || typeof proto.addEventListener !== "function") return;
@@ -71,23 +83,86 @@ let currentKeyEvent = null;
   if (typeof Element !== "undefined") patch(Element.prototype);
   if (typeof HTMLElement !== "undefined") patch(HTMLElement.prototype);
 })();
-(function watchKeyActivationClicks() {
+
+function markHostClicked(el) {
+  if (!el || el.nodeType !== 1) return;
+  hostClickedAt.set(el, keySeq);
+  pendingHostClicks.add(el);
+}
+
+function hostClickedThisKey(el) {
+  return Boolean(el && (pendingHostClicks.has(el) || hostClickedAt.get(el) === keySeq));
+}
+
+function isLiftStyleTarget(target) {
+  if (!target || target.nodeType !== 1) return false;
+  if (liftStyleNodes.has(target)) return true;
+  return typeof target.getAttribute === "function" && target.getAttribute("data-lift-css") === "1";
+}
+
+function ensureKeyWatch() {
+  if (keyWatchCleanup) return;
   const onKey = (event) => {
-    if (!clickedDuringKey.has(event)) clickedDuringKey.set(event, false);
+    if (event.type === "keydown" && !event.repeat) keySeq += 1;
     currentKeyEvent = event;
-  };
-  const onClick = () => {
-    if (currentKeyEvent) clickedDuringKey.set(currentKeyEvent, true);
+    const target = event.target;
+    queueMicrotask(() => {
+      currentKeyEvent = null;
+      if (event.type === "keyup" || event.key === "Enter") {
+        if (target && target.nodeType === 1) {
+          hostClickedAt.delete(target);
+          pendingHostClicks.delete(target);
+        }
+      }
+    });
   };
   const add = (target) => {
     if (!target || typeof target.addEventListener !== "function") return;
     target.addEventListener("keydown", onKey, true);
     target.addEventListener("keyup", onKey, true);
-    target.addEventListener("click", onClick, true);
   };
   if (typeof window !== "undefined") add(window);
   if (typeof document !== "undefined") add(document);
-})();
+  keyWatchCleanup = () => {
+    const remove = (target) => {
+      if (!target || typeof target.removeEventListener !== "function") return;
+      target.removeEventListener("keydown", onKey, true);
+      target.removeEventListener("keyup", onKey, true);
+    };
+    if (typeof window !== "undefined") remove(window);
+    if (typeof document !== "undefined") remove(document);
+    keyWatchCleanup = null;
+    currentKeyEvent = null;
+  };
+}
+
+function releaseKeyWatch() {
+  if (keyWatchCleanup) keyWatchCleanup();
+}
+
+function installHostClickGate(el) {
+  if (!(el instanceof HTMLElement) || typeof HTMLElement === "undefined") return () => {};
+  const protoClick = HTMLElement.prototype.click;
+  if (typeof protoClick !== "function") return () => {};
+  const wrapped = function liftHostClick() {
+    markHostClicked(el);
+    return protoClick.call(this);
+  };
+  try {
+    Object.defineProperty(el, "click", {
+      configurable: true,
+      enumerable: false,
+      writable: true,
+      value: wrapped,
+    });
+  } catch {
+    return () => {};
+  }
+  return () => {
+    const desc = Object.getOwnPropertyDescriptor(el, "click");
+    if (desc && desc.value === wrapped) delete el.click;
+  };
+}
 
 function docOf(root) {
   return root.nodeType === 9 ? root : root.ownerDocument;
@@ -356,6 +431,7 @@ function isHitTargetOnlyDecls(decls) {
 function ancestorGrewPast(el, beforeRects, px) {
   const anc = outOfFlowAncestor(el);
   if (!anc) return false;
+  if (anc === el) return false;
   const before = beforeRects && beforeRects.get(anc);
   if (!before) return true;
   const after = cachedRect(anc);
@@ -431,8 +507,10 @@ function sampleMatchesForGuard(matches, records) {
     seen.add(el);
     out.push(el);
   }
-  for (const el of list) {
-    if (out.length >= GUARD_CONTRAST_SAMPLE) break;
+  const start = list.length ? sampleRoundRobin % list.length : 0;
+  sampleRoundRobin = list.length ? (start + GUARD_CONTRAST_SAMPLE) % list.length : 0;
+  for (let i = 0; i < list.length && out.length < GUARD_CONTRAST_SAMPLE; i += 1) {
+    const el = list[(start + i) % list.length];
     if (seen.has(el)) continue;
     seen.add(el);
     out.push(el);
@@ -501,9 +579,11 @@ function cssMatchesViolateHostsOrContrast(root, op, mode, beforeRects, records) 
     const checkList = guard ? sampleMatchesForGuard(matches, records) : [...matches];
     for (const el of checkList) {
       if (elementIsPageContainer(el) || elementForbiddenAsTextOrTagHost(el)) {
+        lastFailNode = el;
         return "target is not allowlisted";
       }
       if (grows && hostHasFixedHeightAndHiddenOverflow(el)) {
+        lastFailNode = el;
         return "size change is not allowlisted";
       }
       if (grows && hostOrAncestorIsOutOfFlow(el)) {
@@ -512,31 +592,57 @@ function cssMatchesViolateHostsOrContrast(root, op, mode, beforeRects, records) 
           isInlineControl(el) &&
           (guard || !beforeRects || !ancestorGrewPast(el, beforeRects, 8)) &&
           hostStaysInsideAncestor(el);
-        if (!allowHit) return "size change is not allowlisted";
+        if (!allowHit) {
+          lastFailNode = el;
+          return "size change is not allowlisted";
+        }
       }
       if (setsUnderline && decorationIncludesLineThrough(el)) {
+        lastFailNode = el;
         return "text-decoration is not allowlisted";
       }
-      if (outlineBudgetExceeded(decls)) return "outline is not allowlisted";
-      if (changesPaint && backgroundUnknown(el)) return "background is not allowlisted";
+      if (outlineBudgetExceeded(decls)) {
+        lastFailNode = el;
+        return "outline is not allowlisted";
+      }
+      if (changesPaint && backgroundUnknown(el)) {
+        lastFailNode = el;
+        return "background is not allowlisted";
+      }
       const nodes = [el, ...el.querySelectorAll("*")];
       if (nodes.length > TEXT_DESCENDANT_CAP) {
         if (guard) continue;
+        lastFailNode = el;
         return "too many descendants";
       }
       for (const node of nodes) {
         if (node !== el && !isTextBearing(node) && !isFormControl(node)) continue;
         const err = checkNodeContrast(node);
-        if (err) return err;
+        if (err) {
+          lastFailNode = node;
+          return err;
+        }
       }
       const bg = effectiveBackgroundRgb(el);
       if (outlineColor) {
-        if (!bg) return "background is not allowlisted";
-        if (contrastRatio(outlineColor, bg) < 3) return "contrast is not allowlisted";
+        if (!bg) {
+          lastFailNode = el;
+          return "background is not allowlisted";
+        }
+        if (contrastRatio(outlineColor, bg) < 3) {
+          lastFailNode = el;
+          return "contrast is not allowlisted";
+        }
       }
       if (!isState && borderColor) {
-        if (!bg) return "background is not allowlisted";
-        if (contrastRatio(borderColor, bg) < 3) return "contrast is not allowlisted";
+        if (!bg) {
+          lastFailNode = el;
+          return "background is not allowlisted";
+        }
+        if (contrastRatio(borderColor, bg) < 3) {
+          lastFailNode = el;
+          return "contrast is not allowlisted";
+        }
       }
     }
   }
@@ -561,20 +667,27 @@ function snapshotOutOfFlowRects(root, op) {
   return map;
 }
 
-function deactivateSheet(style) {
+function setSheetDisabled(style, disabled) {
   if (!style) return;
-  style.disabled = true;
-  style.setAttribute("media", "not all");
-  if (style.parentNode) style.parentNode.removeChild(style);
-}
-
-function activateSheet(style, parent, media) {
-  if (!style) return;
-  style.disabled = false;
-  if (media == null) style.removeAttribute("media");
-  else style.setAttribute("media", media);
-  const host = parent || style.ownerDocument?.head || style.ownerDocument?.documentElement;
-  if (host && !style.isConnected) host.appendChild(style);
+  style.disabled = Boolean(disabled);
+  try {
+    if (style.sheet) style.sheet.disabled = Boolean(disabled);
+  } catch {
+    /* ignore */
+  }
+  if (disabled) {
+    style.setAttribute("media", "not all");
+    style.removeAttribute("data-lift-css");
+    if (!parkedCss.has(style)) parkedCss.set(style, style.textContent ?? "");
+    if (style.textContent) style.textContent = "";
+  } else {
+    style.removeAttribute("media");
+    style.setAttribute("data-lift-css", "1");
+    if (parkedCss.has(style)) {
+      style.textContent = parkedCss.get(style);
+      parkedCss.delete(style);
+    }
+  }
 }
 
 function applyInjectCss(root, op, index) {
@@ -593,16 +706,17 @@ function applyInjectCss(root, op, index) {
       }
       return noop();
     }
-    const prevMedia = existing.getAttribute("media");
-    const parent = existing.parentNode;
     existing.textContent = op.css;
+    existing.disabled = false;
+    existing.setAttribute("data-lift-css", "1");
+    liftStyleNodes.add(existing);
     undo = () => {
       existing.textContent = prev;
-      activateSheet(existing, parent, prevMedia);
+      setSheetDisabled(existing, false);
     };
     redo = () => {
       existing.textContent = op.css;
-      activateSheet(existing, parent, null);
+      setSheetDisabled(existing, false);
     };
   } else {
     const style = doc.createElement("style");
@@ -611,11 +725,12 @@ function applyInjectCss(root, op, index) {
     style.textContent = op.css;
     const parent = doc.head ?? doc.documentElement;
     parent.appendChild(style);
+    liftStyleNodes.add(style);
     undo = () => {
-      deactivateSheet(style);
+      setSheetDisabled(style, true);
     };
     redo = () => {
-      activateSheet(style, parent, null);
+      setSheetDisabled(style, false);
     };
   }
   if (!backstopsPaused) {
@@ -819,14 +934,11 @@ function isActivationKey(event, space) {
   return null;
 }
 
-function keyAlreadyClicked(event) {
-  return Boolean(event && clickedDuringKey.get(event));
-}
-
 function installActivationBridge(el, opts) {
   const space = Boolean(opts && opts.space);
   let spaceArmed = false;
-  let spaceKeydown = null;
+  let spaceClickSeq = 0;
+  const stopClickGate = installHostClickGate(el);
   const onKeyDown = (event) => {
     if (event.target !== el) return;
     const kind = isActivationKey(event, space);
@@ -834,13 +946,17 @@ function installActivationBridge(el, opts) {
     if (event.repeat) return;
     if (kind === "space") {
       spaceArmed = true;
-      spaceKeydown = event;
+      spaceClickSeq = keySeq;
       event.preventDefault();
       return;
     }
-    if (event.defaultPrevented || keyAlreadyClicked(event)) return;
+    if (event.defaultPrevented || hostClickedThisKey(el)) {
+      pendingHostClicks.delete(el);
+      return;
+    }
     event.preventDefault();
     el.click();
+    pendingHostClicks.delete(el);
     event.stopPropagation();
   };
   const onKeyUp = (event) => {
@@ -850,18 +966,23 @@ function installActivationBridge(el, opts) {
     if (!spaceArmed) return;
     spaceArmed = false;
     if (event.repeat) return;
-    if (event.defaultPrevented || keyAlreadyClicked(event) || keyAlreadyClicked(spaceKeydown)) {
-      spaceKeydown = null;
+    if (
+      event.defaultPrevented ||
+      hostClickedThisKey(el) ||
+      hostClickedAt.get(el) === spaceClickSeq
+    ) {
+      pendingHostClicks.delete(el);
       return;
     }
-    spaceKeydown = null;
     event.preventDefault();
     el.click();
+    pendingHostClicks.delete(el);
     event.stopPropagation();
   };
   el.addEventListener("keydown", onKeyDown);
   el.addEventListener("keyup", onKeyUp);
   return () => {
+    stopClickGate();
     el.removeEventListener("keydown", onKeyDown);
     el.removeEventListener("keyup", onKeyUp);
   };
@@ -1111,6 +1232,7 @@ function runRedo(item) {
 }
 
 function undoAll(undos) {
+  runtimeStats.undos += 1;
   for (let i = undos.length - 1; i >= 0; i -= 1) {
     try {
       runUndo(undos[i]);
@@ -1142,9 +1264,6 @@ function removeSpecSheets(root, spec) {
 
 function hardUndoAll(root, spec, undos) {
   undoAll(undos);
-  for (const el of specStyleElements(root, spec)) {
-    if (el.disabled || el.getAttribute("media") === "not all") el.remove();
-  }
 }
 
 function specStyleElements(root, spec) {
@@ -1616,6 +1735,7 @@ function overlayCoverageViolation(root, spec, snapshots, extraFocusables, mode) 
     for (const overlay of after) {
       if (beforeSet.has(overlay)) continue;
       if (mode === "guard" && renderedAtApply && !renderedAtApply.has(overlay)) continue;
+      lastFailNode = item.el;
       return "covered control";
     }
   }
@@ -1728,40 +1848,47 @@ function roleMustBeStable(role) {
   return false;
 }
 
+function failGuard(err, node) {
+  lastFailNode = node || null;
+  return err;
+}
+
 function monotonicityViolation(root, snapshots) {
   for (const before of snapshots) {
     const live = liveSuccessor(before.el) || (before.el.isConnected ? before.el : null);
     if (!live) {
       if (before.focusable || (before.role && INTERACTIVE_ROLES.has(before.role))) {
-        return "lost interactive element";
+        return failGuard("lost interactive element", before.el);
       }
       continue;
     }
     const after = snapshotA11y(live);
-    if (before.focusable && !after.focusable) return "lost focusability";
-    if (before.visible && !after.visible) return "lost visibility";
+    if (before.focusable && !after.focusable) return failGuard("lost focusability", live);
+    if (before.visible && !after.visible) return failGuard("lost visibility", live);
     if (before.role && after.role !== before.role && roleMustBeStable(before.role)) {
-      return "changed role";
+      return failGuard("changed role", live);
     }
-    if (before.name && !after.name) return "lost name";
+    if (before.name && !after.name) return failGuard("lost name", live);
     if (
       (before.focusable || after.focusable || isInteractiveElement(live)) &&
       after.visibleText &&
       !nameContainsVisible(after.name, after.visibleText)
     ) {
-      return "lost visible name";
+      return failGuard("lost visible name", live);
     }
-    if (!before.ariaHidden && after.ariaHidden) return "became aria-hidden";
-    if (!before.ariaDisabled && after.ariaDisabled) return "became aria-disabled";
+    if (!before.ariaHidden && after.ariaHidden) return failGuard("became aria-hidden", live);
+    if (!before.ariaDisabled && after.ariaDisabled) return failGuard("became aria-disabled", live);
     if (before.buttonType && after.buttonType !== before.buttonType) {
-      return "button type changed";
+      return failGuard("button type changed", live);
     }
-    if (before.formOwner && after.formOwner !== before.formOwner) return "lost form owner";
+    if (before.formOwner && after.formOwner !== before.formOwner) {
+      return failGuard("lost form owner", live);
+    }
     if (before.hitOk && inViewport(live)) {
       const hit = hitTargetAtCenter(live);
-      if (!hitIsSelfOrDescendant(live, hit)) return "lost hit target";
+      if (!hitIsSelfOrDescendant(live, hit)) return failGuard("lost hit target", live);
     }
-    if (!before.clipped && after.clipped) return "clipped by overflow";
+    if (!before.clipped && after.clipped) return failGuard("clipped by overflow", live);
   }
   return null;
 }
@@ -1816,8 +1943,43 @@ function stopGuardForSpec(id) {
   return undos;
 }
 
-function kickAllGuards() {
-  for (const kick of [...guardKickers]) kick();
+function kickAllGuards(reason) {
+  for (const kick of [...guardKickers]) kick(reason);
+}
+
+function pageFingerprint(doc) {
+  const view = doc && doc.defaultView;
+  let sheetCount = 0;
+  let sheetLen = 0;
+  try {
+    sheetCount = doc.styleSheets ? doc.styleSheets.length : 0;
+    for (const sheet of doc.styleSheets || []) {
+      try {
+        sheetLen += sheet.cssRules ? sheet.cssRules.length : 0;
+      } catch {
+        sheetLen += 1;
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+  const vw = view ? view.innerWidth : 0;
+  const vh = view ? view.innerHeight : 0;
+  return `${mutationSeq}|${sheetCount}|${sheetLen}|${vw}x${vh}|${cssomGen}`;
+}
+
+function overlayGeometryKey(root, spec) {
+  if (!specGrowsBox(spec)) return "none";
+  const overlays = collectOverlayElements(root, spec);
+  const parts = [];
+  for (const el of overlays) {
+    const r = el.getBoundingClientRect();
+    parts.push(
+      `${Math.round(r.left)},${Math.round(r.top)},${Math.round(r.width)},${Math.round(r.height)}`,
+    );
+  }
+  const view = docOf(root).defaultView;
+  return `${view ? view.innerWidth : 0}x${view ? view.innerHeight : 0}:${parts.join(";")}`;
 }
 
 function ensureCssomWatch() {
@@ -1826,14 +1988,18 @@ function ensureCssomWatch() {
   const view = typeof window !== "undefined" ? window : null;
   const doc = typeof document !== "undefined" ? document : null;
   if (!view || !doc) return;
-  const onResize = () => kickAllGuards();
-  const onVis = () => kickAllGuards();
-  const onLoad = () => kickAllGuards();
+  const onResize = () => kickAllGuards("resize");
+  const onVis = () => kickAllGuards("visibility");
+  const onLoad = (event) => {
+    if (isLiftStyleTarget(event && event.target)) return;
+    cssomGen += 1;
+    kickAllGuards("cssom");
+  };
   view.addEventListener("resize", onResize);
   doc.addEventListener("visibilitychange", onVis);
   doc.addEventListener("load", onLoad, true);
   doc.addEventListener("error", onLoad, true);
-  const interval = view.setInterval(kickAllGuards, 1500);
+  const interval = view.setInterval(() => kickAllGuards("interval"), 1500);
   let unpatchSheet = () => {};
   try {
     const proto = CSSStyleSheet.prototype;
@@ -1841,7 +2007,8 @@ function ensureCssomWatch() {
     if (typeof orig === "function" && !proto.insertRule.__liftPatched) {
       const wrapped = function insertRuleLifted(...args) {
         const result = orig.apply(this, args);
-        kickAllGuards();
+        cssomGen += 1;
+        kickAllGuards("cssom");
         return result;
       };
       wrapped.__liftPatched = true;
@@ -1877,7 +2044,17 @@ export function resetRuntimeGuards() {
   guardKickers.length = 0;
   backstopsPaused = false;
   cssomWatchCount = 0;
+  cssomGen = 0;
+  mutationSeq = 0;
+  sampleRoundRobin = 0;
+  lastFailNode = null;
+  keySeq = 0;
+  runtimeStats.undos = 0;
+  runtimeStats.attributions = 0;
+  runtimeStats.ticksRan = 0;
+  runtimeStats.ticksSkipped = 0;
   if (cssomCleanup) cssomCleanup();
+  releaseKeyWatch();
   for (const stop of stops) {
     try {
       stop();
@@ -1886,6 +2063,15 @@ export function resetRuntimeGuards() {
     }
   }
   if (typeof window !== "undefined") window.__LIFT_FAIL_OPEN__ = [];
+}
+
+export function getRuntimeStats() {
+  return {
+    undos: runtimeStats.undos,
+    attributions: runtimeStats.attributions,
+    ticksRan: runtimeStats.ticksRan,
+    ticksSkipped: runtimeStats.ticksSkipped,
+  };
 }
 
 function recordFailOpen(reason, specId) {
@@ -1934,13 +2120,16 @@ function recordsTouchSnapshots(records, snapshots) {
   });
 }
 
-function runGuardCheck(root, spec, snapshots, records) {
+function runGuardCheck(root, spec, snapshots, records, opts) {
+  const skipCoverage = Boolean(opts && opts.skipCoverage);
   return withRectCache(() => {
     const contrastErr = specContrastError(root, spec, "guard", records);
     if (contrastErr) return contrastErr;
-    const extra = addedFocusablesFromRecords(records);
-    const coverErr = overlayCoverageViolation(root, spec, snapshots, extra, "guard");
-    if (coverErr) return coverErr;
+    if (!skipCoverage) {
+      const extra = addedFocusablesFromRecords(records);
+      const coverErr = overlayCoverageViolation(root, spec, snapshots, extra, "guard");
+      if (coverErr) return coverErr;
+    }
     const subset = recordsTouchSnapshots(records, snapshots);
     return monotonicityViolation(root, subset);
   });
@@ -1965,9 +2154,10 @@ function isContrastPredicate(err) {
   );
 }
 
-function recheckGuardPredicate(root, spec, snapshots, records, err) {
+function recheckGuardPredicate(root, spec, snapshots, records, err, skipCoverage) {
   return withRectCache(() => {
     if (err === "covered control") {
+      if (skipCoverage) return null;
       const extra = addedFocusablesFromRecords(records);
       return overlayCoverageViolation(root, spec, snapshots, extra, "guard");
     }
@@ -1992,28 +2182,120 @@ function rebaselineSnapshots(root, spec, snapshots) {
   attachOverlayHits(root, spec, snapshots);
 }
 
+function nameWithoutOurAttributes(el, spec) {
+  if (!el) return "";
+  const ourLabel = spec.ops.some(
+    (op) =>
+      op.op === "setAttribute" &&
+      (String(op.name).toLowerCase() === "aria-label" ||
+        String(op.name).toLowerCase() === "aria-labelledby"),
+  );
+  if (ourLabel) return visibleText(el);
+  return accessibleName(el);
+}
+
+function originalTextWouldViolate(root, el, spec, snapshots, err) {
+  for (const op of spec.ops || []) {
+    if (op.op !== "insertHTML") continue;
+    const mount = findMount(root, mountKeyFor(op));
+    if (mount && el && (mount === el || (mount.contains && mount.contains(el)))) return false;
+  }
+  const setTextOp = (spec.ops || []).some((op) => op.op === "setText");
+  const snap = (snapshots || []).find((s) => s.el === el || liveSuccessor(s.el) === el);
+  if (setTextOp && snap) {
+    const origVis = snap.visibleText || "";
+    const origName = snap.name || origVis;
+    if (err === "lost visible name") return Boolean(origVis && !nameContainsVisible(origName, origVis));
+    if (err === "lost name") return !origName;
+  }
+  if (err === "lost visible name") {
+    const vis = visibleText(el);
+    const without = nameWithoutOurAttributes(el, spec);
+    return Boolean(vis && !nameContainsVisible(without, vis));
+  }
+  if (err === "lost name") {
+    const without = nameWithoutOurAttributes(el, spec);
+    return !without;
+  }
+  return true;
+}
+
+function withSheetsDisabled(root, spec, fn) {
+  const sheets = specStyleElements(root, spec);
+  const prev = sheets.map((style) => style.disabled);
+  for (const style of sheets) setSheetDisabled(style, true);
+  const doc = docOf(root);
+  try {
+    if (doc && doc.body) void doc.body.offsetHeight;
+    return fn();
+  } finally {
+    sheets.forEach((style, i) => setSheetDisabled(style, prev[i]));
+    if (doc && doc.body) void doc.body.offsetHeight;
+  }
+}
+
+function cachePageVerdict(node, predicate) {
+  if (!node || !predicate) return;
+  let map = pageVerdicts.get(node);
+  if (!map) {
+    map = new Map();
+    pageVerdicts.set(node, map);
+  }
+  map.set(predicate, cssomGen);
+}
+
+function hasFreshPageVerdict(node, predicate) {
+  if (!node || !predicate) return false;
+  return pageVerdicts.get(node)?.get(predicate) === cssomGen;
+}
+
+function recordsTouchNode(records, node) {
+  if (!node || !records || records.length === 0) return false;
+  for (const rec of records) {
+    const nodes = [];
+    if (rec.target && rec.target.nodeType === 1) nodes.push(rec.target);
+    for (const added of rec.addedNodes || []) {
+      if (added && added.nodeType === 1) nodes.push(added);
+    }
+    for (const start of nodes) {
+      let cur = start;
+      while (cur && cur.nodeType === 1) {
+        if (cur === node) return true;
+        cur = cur.parentElement;
+      }
+    }
+  }
+  return false;
+}
+
 function attributeGuardViolation(root, spec, snapshots, records, undos, err) {
   if (isCapacityGuardError(err)) {
     rebaselineSnapshots(root, spec, snapshots);
     return "page";
   }
-  undoAll(undos);
-  let persists = false;
+  const node = lastFailNode;
+  if (hasFreshPageVerdict(node, err) && !recordsTouchNode(records, node)) {
+    return "page";
+  }
+  runtimeStats.attributions += 1;
+  let persists = true;
   try {
-    const doc = docOf(root);
-    if (doc && doc.body) void doc.body.offsetHeight;
-    persists = Boolean(recheckGuardPredicate(root, spec, snapshots, records, err));
+    if (err === "lost visible name" || err === "lost name") {
+      persists = originalTextWouldViolate(root, node, spec, snapshots, err);
+    } else if (isContrastPredicate(err) || err === "covered control") {
+      persists = Boolean(withSheetsDisabled(root, spec, () => recheckGuardPredicate(root, spec, snapshots, records, err)));
+    } else {
+      persists = true;
+    }
   } catch {
     persists = true;
   }
   if (persists) {
-    redoAll(undos);
-    const doc = docOf(root);
-    if (doc && doc.body) void doc.body.offsetHeight;
+    cachePageVerdict(node, err);
     rebaselineSnapshots(root, spec, snapshots);
     return "page";
   }
-  removeSpecSheets(root, spec);
+  undoAll(undos);
   return "spec";
 }
 
@@ -2028,13 +2310,17 @@ function installMutationGuard(root, spec, snapshots, undos) {
   let burstStart = 0;
   let stopped = false;
   let queued = [];
+  let queuedReason = "mutation";
+  let lastFp = pageFingerprint(doc);
+  let lastGeom = overlayGeometryKey(root, spec);
   const media =
     doc.defaultView && typeof doc.defaultView.matchMedia === "function"
       ? doc.defaultView.matchMedia("(prefers-color-scheme: dark)")
       : null;
 
-  const run = (records) => {
+  const run = (records, reason) => {
     if (stopped) return;
+    runtimeStats.ticksRan += 1;
     observer.disconnect();
     if (media && media.removeEventListener) {
       try {
@@ -2043,7 +2329,11 @@ function installMutationGuard(root, spec, snapshots, undos) {
         /* ignore */
       }
     }
-    const err = runGuardCheck(root, spec, snapshots, records);
+    const geom = overlayGeometryKey(root, spec);
+    const skipCoverage = reason === "interval" && geom === lastGeom;
+    lastGeom = geom;
+    lastFp = pageFingerprint(doc);
+    const err = runGuardCheck(root, spec, snapshots, records, { skipCoverage });
     if (err) {
       const cause = attributeGuardViolation(root, spec, snapshots, records, undos, err);
       if (cause === "page") {
@@ -2057,9 +2347,10 @@ function installMutationGuard(root, spec, snapshots, undos) {
     startObserving();
   };
 
-  const schedule = (records) => {
+  const schedule = (records, reason) => {
     if (stopped) return;
     queued = queued.concat(records || []);
+    if (reason) queuedReason = reason;
     if (backstopsPaused) return;
     const now = Date.now();
     if (!burstStart) burstStart = now;
@@ -2070,8 +2361,10 @@ function installMutationGuard(root, spec, snapshots, undos) {
       timer = null;
       burstStart = 0;
       const batch = queued;
+      const why = queuedReason;
       queued = [];
-      run(batch);
+      queuedReason = "mutation";
+      run(batch, why);
     }, delay);
   };
   const flushQueued = () => {
@@ -2081,18 +2374,34 @@ function installMutationGuard(root, spec, snapshots, undos) {
     burstStart = 0;
     if (queued.length === 0) return;
     const batch = queued;
+    const why = queuedReason;
     queued = [];
-    run(batch);
+    queuedReason = "mutation";
+    run(batch, why);
   };
-  const kick = () => {
+  const kick = (reason) => {
     if (stopped || backstopsPaused) return;
-    schedule([]);
+    if (reason === "interval" || reason === "resize" || reason === "visibility") {
+      const fp = pageFingerprint(doc);
+      if (fp === lastFp) {
+        runtimeStats.ticksSkipped += 1;
+        return;
+      }
+      lastFp = fp;
+    }
+    schedule([], reason || "interval");
   };
   guardFlushers.push(flushQueued);
   guardKickers.push(kick);
 
-  const observer = new MutationObserver((records) => schedule(records));
-  const onMedia = () => schedule([]);
+  const observer = new MutationObserver((records) => {
+    mutationSeq += 1;
+    schedule(records, "mutation");
+  });
+  const onMedia = () => {
+    cssomGen += 1;
+    schedule([], "media");
+  };
 
   const startObserving = () => {
     if (stopped) return;
@@ -2128,8 +2437,10 @@ function installMutationGuard(root, spec, snapshots, undos) {
       }
     }
     removeGuard(stop);
+    if (activeGuards.length === 0) releaseKeyWatch();
   };
 
+  ensureKeyWatch();
   ensureCssomWatch();
   startObserving();
   return stop;
@@ -2183,7 +2494,7 @@ export function setTestBackstopsPaused(paused) {
   if (!backstopsPaused) {
     flushPendingBackstops();
     for (const flush of [...guardFlushers]) flush();
-    kickAllGuards();
+    kickAllGuards("flush");
   }
   return true;
 }
@@ -2196,6 +2507,7 @@ export function applyPatchSpec(input, root) {
     if (!parsed.ok) return { ok: false, error: parsed.error, ops: opsStatus };
     const scope = root ?? (typeof document === "undefined" ? null : document);
     if (!scope) return { ok: false, error: "no document", ops: opsStatus };
+    ensureKeyWatch();
     const collected = collectWatchElements(scope, parsed.spec);
     if (collected.error) return { ok: false, error: collected.error, ops: opsStatus };
     const snapshots = attachOverlayHits(
@@ -2252,6 +2564,7 @@ if (typeof window !== "undefined") {
     applyPatchSpec,
     validatePatchSpec,
     setTestBackstopsPaused,
+    getRuntimeStats,
   };
   Object.defineProperty(window.LiftRuntime, "resetRuntimeGuards", {
     enumerable: true,

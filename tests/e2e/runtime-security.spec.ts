@@ -847,7 +847,7 @@ async function measureGuardTick(
 test("R10 I2 Chromium size-growing coverage ticks at 10k/50, 10k/400, 30k/3000", async ({
   page,
 }) => {
-  test.setTimeout(90_000);
+  test.setTimeout(150_000);
   await page.goto("/checkout/?lift_variant=control&lift_bot=1");
   const tiny = await measureGuardTick(page, 10_000, 50);
   console.log(
@@ -864,6 +864,91 @@ test("R10 I2 Chromium size-growing coverage ticks at 10k/50, 10k/400, 30k/3000",
     `perf-30k/3000 applyMs=${large.applyMs.toFixed(2)} guardMs=${large.guardMs.toFixed(2)} baselineMs=${large.baselineMs.toFixed(2)}`,
   );
   expect(large.ok).toBe(true);
+
+  const idle = await page.evaluate(async () => {
+    const href = new URL("/runtime/runtime.js", location.origin).href;
+    const runtime = (await import(href)) as {
+      applyPatchSpec: (input: unknown) => { ok: boolean };
+      getRuntimeStats: () => { ticksRan: number; ticksSkipped: number };
+      resetRuntimeGuards?: () => void;
+    };
+    const host = document.createElement("div");
+    host.innerHTML = `<a class="probe" href="#p" style="color:#111;background:#fff">Go</a>`;
+    document.body.append(host);
+    runtime.applyPatchSpec({
+      id: "idle-perf",
+      version: 0,
+      ops: [
+        {
+          op: "injectCSS",
+          rules: [
+            {
+              selector: { classes: ["probe"] },
+              declarations: [
+                { property: "min-height", value: "44px" },
+                { property: "min-width", value: "44px" },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    const start = runtime.getRuntimeStats();
+    await new Promise((resolve) => setTimeout(resolve, 10_000));
+    const end = runtime.getRuntimeStats();
+    return {
+      ran: end.ticksRan - start.ticksRan,
+      skipped: end.ticksSkipped - start.ticksSkipped,
+    };
+  });
+  console.log(`perf-idle-10s ticksRan=${idle.ran} ticksSkipped=${idle.skipped}`);
+
+  const ticker = await page.evaluate(async () => {
+    const href = new URL("/runtime/runtime.js", location.origin).href;
+    const runtime = (await import(href)) as {
+      applyPatchSpec: (input: unknown) => { ok: boolean };
+      getRuntimeStats: () => { ticksRan: number; ticksSkipped: number };
+    };
+    const host = document.createElement("div");
+    host.id = "ticker-host";
+    host.innerHTML = `<a class="probe2" href="#p" style="color:#111;background:#fff">Go</a>`;
+    document.body.append(host);
+    runtime.applyPatchSpec({
+      id: "ticker-perf",
+      version: 0,
+      ops: [
+        {
+          op: "injectCSS",
+          rules: [
+            {
+              selector: { classes: ["probe2"] },
+              declarations: [
+                { property: "min-height", value: "44px" },
+                { property: "min-width", value: "44px" },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    const start = runtime.getRuntimeStats();
+    let n = 0;
+    const id = setInterval(() => {
+      n += 1;
+      host.setAttribute("data-tick", String(n));
+    }, 16);
+    await new Promise((resolve) => setTimeout(resolve, 10_000));
+    clearInterval(id);
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    const end = runtime.getRuntimeStats();
+    return {
+      ran: end.ticksRan - start.ticksRan,
+      skipped: end.ticksSkipped - start.ticksSkipped,
+    };
+  });
+  console.log(`perf-ticker-10s ticksRan=${ticker.ran} ticksSkipped=${ticker.skipped}`);
 });
 
 test("R8 E1 Chromium re-apply keeps undos across a theme flip", async ({ page }) => {
@@ -1712,6 +1797,128 @@ test("R9 W4 Chromium color fix survives a dropdown overlay", async ({ page }) =>
   });
   expect(result.ok).toBe(true);
   expect(result.css).toBe(true);
+});
+
+test("R11 Chromium page #eee on white does not undo a min-width spec", async ({ page }) => {
+  await page.goto("/checkout/?lift_variant=control&lift_bot=1");
+  const result = await page.evaluate(async () => {
+    const href = new URL("/runtime/runtime.js", location.origin).href;
+    const runtime = (await import(href)) as {
+      applyPatchSpec: (input: unknown) => { ok: boolean };
+      getRuntimeStats: () => { undos: number; attributions: number };
+    };
+    const hit = document.createElement("a");
+    hit.id = "hit";
+    hit.href = "#x";
+    hit.textContent = "Go";
+    hit.style.cssText = "color:#111;background:#fff";
+    document.body.append(hit);
+    runtime.applyPatchSpec({
+      id: "minw",
+      version: 0,
+      ops: [
+        {
+          op: "injectCSS",
+          rules: [
+            {
+              selector: { id: "hit" },
+              declarations: [{ property: "min-width", value: "44px" }],
+            },
+          ],
+        },
+      ],
+    });
+    const before = runtime.getRuntimeStats();
+    hit.style.color = "#eee";
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    const after = runtime.getRuntimeStats();
+    return {
+      css: Boolean(document.querySelector("[data-lift-css]")),
+      undos: after.undos - before.undos,
+      attributions: after.attributions - before.attributions,
+    };
+  });
+  expect(result.css).toBe(true);
+  expect(result.undos).toBe(0);
+  expect(result.attributions).toBeLessThanOrEqual(1);
+});
+
+test("R11 Chromium window capture before promote activates once on Enter and Space", async ({
+  page,
+}) => {
+  await page.goto("/checkout/?lift_variant=control");
+  const result = await page.evaluate(async () => {
+    const host = document.createElement("div");
+    host.id = "pre-win";
+    host.style.cursor = "pointer";
+    host.textContent = "Pay";
+    document.body.append(host);
+    let clicks = 0;
+    window.addEventListener(
+      "keydown",
+      (event) => {
+        if (event.target === host) host.click();
+      },
+      true,
+    );
+    host.addEventListener("click", () => {
+      clicks += 1;
+    });
+    const href = new URL("/runtime/runtime.js", location.origin).href;
+    const runtime = (await import(href)) as {
+      applyPatchSpec: (input: unknown) => { ok: boolean };
+    };
+    runtime.applyPatchSpec({
+      id: "pre-win",
+      version: 0,
+      ops: [{ op: "promoteToControl", selector: "#pre-win", as: "button" }],
+    });
+    host.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+    host.dispatchEvent(new KeyboardEvent("keyup", { key: "Enter", bubbles: true, cancelable: true }));
+    const enter = clicks;
+    clicks = 0;
+    host.dispatchEvent(new KeyboardEvent("keydown", { key: " ", bubbles: true, cancelable: true }));
+    host.dispatchEvent(new KeyboardEvent("keyup", { key: " ", bubbles: true, cancelable: true }));
+    return { enter, space: clicks };
+  });
+  expect(result.enter).toBe(1);
+  expect(result.space).toBe(1);
+});
+
+test("R11 Chromium allows 44×44 on a sticky host itself", async ({ page }) => {
+  await page.goto("/checkout/?lift_variant=control");
+  const result = await page.evaluate(async () => {
+    const href = new URL("/runtime/runtime.js", location.origin).href;
+    const runtime = (await import(href)) as {
+      applyPatchSpec: (input: unknown) => { ok: boolean; error?: string };
+    };
+    const hit = document.createElement("a");
+    hit.id = "sticky-host";
+    hit.href = "#x";
+    hit.textContent = "Go";
+    hit.style.cssText =
+      "position:sticky;top:0;display:inline-block;color:#111;background:#fff";
+    document.body.prepend(hit);
+    return runtime.applyPatchSpec({
+      id: "sticky-host-44",
+      version: 0,
+      ops: [
+        {
+          op: "injectCSS",
+          rules: [
+            {
+              selector: { id: "sticky-host" },
+              declarations: [
+                { property: "min-height", value: "44px" },
+                { property: "min-width", value: "44px" },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+  });
+  expect(result.ok, result.error).toBe(true);
 });
 
 test("GET // returns 400 and the site still serves", async ({ request }) => {

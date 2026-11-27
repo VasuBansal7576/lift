@@ -19,6 +19,9 @@ const NAMES = [
   "04-replace-button-to-span",
   "04-late-content",
   "04-descendant-contrast",
+  "04-submit-button-kept",
+  "04-focus-within-color",
+  "04-covered-control",
   "05-sticky-identity",
 ];
 

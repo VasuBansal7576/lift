@@ -18,7 +18,10 @@ export const PATCH_OPS = [
   "toggleDisclosure",
 ];
 export const INSERT_HTML_POSITIONS = ["before", "after", "prepend", "append"];
-export const ALLOWED_REPLACE_TAGS = ["button", "label", "span", "a", "p", "strong", "em"];
+export const ALLOWED_REPLACE_TAGS = ["button", "a"];
+export const REPLACE_SOURCE_TAGS = new Set(["div", "span"]);
+export const WATCH_NODE_CAP = 2000;
+export const GUARD_MAX_WAIT_MS = 250;
 export const MOUNT_ID_RE = /^[a-z0-9_-]+$/i;
 export const INSERT_TAGS = new Set([
   "span",
@@ -109,6 +112,59 @@ export const LANDMARK_ROLES = new Set([
   "search",
   "article",
 ]);
+export const STRUCTURAL_ROLES = new Set([
+  "heading",
+  "list",
+  "listitem",
+  "table",
+  "row",
+  "cell",
+  "gridcell",
+  "columnheader",
+  "rowheader",
+  "rowgroup",
+  "figure",
+  "img",
+  "caption",
+  "article",
+]);
+const FORBIDDEN_REPLACE_SOURCE_TAGS = new Set([
+  "button",
+  "a",
+  "h1",
+  "h2",
+  "h3",
+  "h4",
+  "h5",
+  "h6",
+  "li",
+  "ul",
+  "ol",
+  "dl",
+  "dt",
+  "dd",
+  "table",
+  "thead",
+  "tbody",
+  "tfoot",
+  "tr",
+  "td",
+  "th",
+  "caption",
+  "col",
+  "colgroup",
+  "label",
+  "input",
+  "select",
+  "textarea",
+  "form",
+  "fieldset",
+  "legend",
+  "summary",
+  "option",
+  "optgroup",
+]);
+const FORM_CONTROL_TAGS = new Set(["input", "select", "textarea", "button"]);
 
 const VOID_OR_CONTROL = new Set([
   "area",
@@ -371,6 +427,23 @@ export function isInteractiveElement(el) {
   if (tag !== "a" && INTERACTIVE_TAGS.has(tag)) return true;
   if (el.hasAttribute("tabindex")) return true;
   return false;
+}
+
+export function isFormControl(el) {
+  if (!el || el.nodeType !== 1) return false;
+  return FORM_CONTROL_TAGS.has(localTagName(el));
+}
+
+export function replaceTagHostAllowed(el) {
+  if (!el || el.nodeType !== 1) return false;
+  const tag = localTagName(el);
+  if (!REPLACE_SOURCE_TAGS.has(tag)) return false;
+  if (FORBIDDEN_REPLACE_SOURCE_TAGS.has(tag)) return false;
+  const roles = roleTokens(el.getAttribute("role") || "");
+  if (roles.some((role) => LANDMARK_ROLES.has(role) || STRUCTURAL_ROLES.has(role))) {
+    return false;
+  }
+  return true;
 }
 
 export function elementOrAncestorInteractive(el) {

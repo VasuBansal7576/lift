@@ -36,8 +36,8 @@ const CHECKOUT_HTML = `
       <input id="card-cvc" data-unlabeled>
     </p>
     <p class="terms contrast-fail">
+      <span class="visible-hint" id="terms-copy">I agree to the terms of sale and understand this order is final.</span>
       <input id="terms" type="checkbox">
-      <span id="terms-copy">I agree to the terms of sale and understand this order is final.</span>
     </p>
     <div id="place-order" class="div-pay" data-barrier="div_button" style="color: red">💳</div>
   </form>
@@ -91,9 +91,8 @@ describe("applyPatchSpec ops", () => {
     expect(document.getElementById("email")?.getAttribute("data-labelled")).toBe("1");
     expect(document.getElementById("email-hint")).toBeNull();
 
-    const terms = document.getElementById("terms-copy");
-    expect(terms?.tagName).toBe("LABEL");
-    expect(terms?.getAttribute("for")).toBe("terms");
+    expect(document.getElementById("terms-copy")).toBeNull();
+    expect(document.querySelector('label[for="terms"]')?.textContent).toContain("I agree to the terms");
 
     const pay = document.getElementById("place-order");
     expect(pay?.tagName).toBe("BUTTON");
@@ -448,7 +447,7 @@ describe("applyPatchSpec ops", () => {
       applyPatchSpec({
         id: "wrap-input",
         version: 0,
-        ops: [{ op: "replaceTag", selector: "#wrap", tag: "span" }],
+        ops: [{ op: "replaceTag", selector: "#wrap", tag: "button" }],
       }).ok,
     ).toBe(false);
     expect(document.getElementById("wrap")?.tagName).toBe("DIV");
@@ -482,8 +481,7 @@ describe("applyPatchSpec ops", () => {
         id: "enter-once",
         version: 0,
         ops: [
-          { op: "replaceTag", selector: "#pay", tag: "span" },
-          { op: "makeFocusable", selector: "#pay" },
+          { op: "replaceTag", selector: "#pay", tag: "button" },
           { op: "bindEnterToClick", selector: "#pay" },
         ],
       }).ok,
@@ -696,7 +694,7 @@ describe("applyPatchSpec ops", () => {
       applyPatchSpec({
         id: "rt-a",
         version: 0,
-        ops: [{ op: "replaceTag", selector: "#wrap", tag: "span" }],
+        ops: [{ op: "replaceTag", selector: "#wrap", tag: "button" }],
       }).ok,
     ).toBe(false);
     document.body.innerHTML = `<div id="wrap"><span contenteditable="true">x</span></div>`;
@@ -704,30 +702,18 @@ describe("applyPatchSpec ops", () => {
       applyPatchSpec({
         id: "rt-ce",
         version: 0,
-        ops: [{ op: "replaceTag", selector: "#wrap", tag: "span" }],
+        ops: [{ op: "replaceTag", selector: "#wrap", tag: "button" }],
       }).ok,
     ).toBe(false);
   });
 
-  it("resolves label for= to a text-like control and refuses submit/button", () => {
-    document.body.innerHTML = `
-      <span id="lab">L</span>
-      <input id="email" type="email">
-      <input id="go" type="submit">
-    `;
+  it("refuses replaceTag to label", () => {
+    document.body.innerHTML = `<span id="lab">L</span><input id="email" type="email">`;
     expect(
       applyPatchSpec({
-        id: "for-ok",
+        id: "for-label",
         version: 0,
         ops: [{ op: "replaceTag", selector: "#lab", tag: "label", attributes: { for: "email" } }],
-      }).ok,
-    ).toBe(true);
-    document.body.innerHTML = `<span id="lab">L</span><input id="go" type="submit">`;
-    expect(
-      applyPatchSpec({
-        id: "for-submit",
-        version: 0,
-        ops: [{ op: "replaceTag", selector: "#lab", tag: "label", attributes: { for: "go" } }],
       }).ok,
     ).toBe(false);
   });

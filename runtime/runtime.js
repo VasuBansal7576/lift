@@ -18,17 +18,22 @@ import {
   elementHasVoidOrControlDescendant,
   elementIsPageContainer,
   elementOrAncestorInteractive,
+  GUARD_MAX_WAIT_MS,
   hashKey,
   INTERACTIVE_ROLES,
+  isFormControl,
   isInteractiveElement,
   isLabelableTextControl,
-  isNativeInteractiveHost,
   isSafeInsertHtml,
+  LANDMARK_ROLES,
   localTagName,
   mountKeyFor,
   parsePatchSpec,
+  replaceTagHostAllowed,
   roleAllowedOnElement,
   sanitizeInsertHtml,
+  STRUCTURAL_ROLES,
+  WATCH_NODE_CAP,
 } from "./patch-rules.js";
 
 export {
@@ -91,6 +96,7 @@ function idsResolveToNamedElements(root, value) {
   for (const id of ids) {
     const el = resolveForTarget(root, id);
     if (!el || !(el.textContent || "").trim()) return false;
+    if (!isRenderedVisible(el) || isAriaHiddenChain(el)) return false;
   }
   return true;
 }
@@ -120,6 +126,12 @@ function applySetAttribute(root, op, index) {
   }
   if (attrName === "role" && !roleAllowedOnElement(el, op.value)) {
     return { status: "miss", error: `ops[${index}] target is not allowlisted` };
+  }
+  if (
+    (attrName === "aria-label" || attrName === "aria-labelledby") &&
+    !labelInNameHolds(el, proposedAccessibleName(root, el, attrName, op.value))
+  ) {
+    return { status: "miss", error: `ops[${index}] name does not contain visible text` };
   }
   if (el.getAttribute(op.name) === op.value) return noop();
   const had = el.hasAttribute(op.name);
@@ -173,8 +185,18 @@ function parseComputedRgb(css) {
   return rgb ? { rgb, alpha: 1 } : null;
 }
 
+let backstopsPaused = false;
+const pendingBackstops = [];
+const guardFlushers = [];
 const TEXT_DESCENDANT_CAP = 500;
-const PAINT_STATES = new Set(["hover", "focus", "focus-visible", "active"]);
+const SIZE_GROWING_PROPS = new Set([
+  "font-size",
+  "padding",
+  "line-height",
+  "margin",
+  "letter-spacing",
+  "word-spacing",
+]);
 
 function backgroundUnknown(el) {
   let node = el;
@@ -246,8 +268,30 @@ function colorValueFromRule(rule, property) {
   return decl ? cssColorToRgb(decl.value) : null;
 }
 
-function cssMatchesViolateHostsOrContrast(root, op) {
+function hostOrAncestorIsFixedOrSticky(el) {
+  let node = el;
+  while (node && node.nodeType === 1) {
+    const pos = String(getComputedStyle(node).position || "").toLowerCase();
+    if (pos === "fixed" || pos === "sticky") return true;
+    node = node.parentElement;
+  }
+  return false;
+}
+
+function hostHasFixedHeightAndHiddenOverflow(el) {
+  const style = getComputedStyle(el);
+  const overflow = String(style.overflow || "").toLowerCase();
+  const clips = overflow === "hidden" || overflow === "clip";
+  if (!clips) return false;
+  const height = String(style.height || "");
+  if (!height || height === "auto" || height === "0px") return false;
+  const px = Number.parseFloat(height);
+  return Number.isFinite(px) && px > 0;
+}
+
+function cssMatchesViolateHostsOrContrast(root, op, mode) {
   const scope = "querySelectorAll" in root ? root : docOf(root);
+  const guard = mode === "guard";
   for (const rule of op.rules || []) {
     let matches;
     try {
@@ -255,24 +299,28 @@ function cssMatchesViolateHostsOrContrast(root, op) {
     } catch {
       return "invalid selector";
     }
-    if (matches.length === 0) return "selector matched nothing";
+    if (matches.length === 0) return guard ? null : "selector matched nothing";
     if (matches.length > CSS_MATCH_LIMIT) return "too many matches";
     const decls = rule.declarations || [];
     const changesPaint = decls.some(
       (d) => d.property === "color" || d.property === "background-color",
     );
+    const grows = decls.some((d) => SIZE_GROWING_PROPS.has(d.property));
     const outlineColor = colorValueFromRule(rule, "outline-color");
     const borderColor = colorValueFromRule(rule, "border-color");
-    const isState = Boolean(rule.selector && PAINT_STATES.has(rule.selector.state));
+    const isState = Boolean(rule.selector && rule.selector.state);
     for (const el of matches) {
       if (elementIsPageContainer(el) || elementForbiddenAsTextOrTagHost(el)) {
         return "target is not allowlisted";
+      }
+      if (grows && (hostOrAncestorIsFixedOrSticky(el) || hostHasFixedHeightAndHiddenOverflow(el))) {
+        return "size change is not allowlisted";
       }
       if (changesPaint && backgroundUnknown(el)) return "background is not allowlisted";
       const nodes = [el, ...el.querySelectorAll("*")];
       if (nodes.length > TEXT_DESCENDANT_CAP) return "too many descendants";
       for (const node of nodes) {
-        if (node !== el && !isTextBearing(node)) continue;
+        if (node !== el && !isTextBearing(node) && !isFormControl(node)) continue;
         const err = checkNodeContrast(node);
         if (err) return err;
       }
@@ -298,8 +346,10 @@ function applyInjectCss(root, op, index) {
   if (existing && localTagName(existing) === "style") {
     const prev = existing.textContent ?? "";
     if (prev === op.css) {
-      const hostErr = cssMatchesViolateHostsOrContrast(root, op);
-      if (hostErr) return { status: "miss", error: `ops[${index}] ${hostErr}` };
+      if (!backstopsPaused) {
+        const hostErr = cssMatchesViolateHostsOrContrast(root, op, "apply");
+        if (hostErr) return { status: "miss", error: `ops[${index}] ${hostErr}` };
+      }
       return noop();
     }
     existing.textContent = op.css;
@@ -317,10 +367,12 @@ function applyInjectCss(root, op, index) {
       style.remove();
     };
   }
-  const hostErr = cssMatchesViolateHostsOrContrast(root, op);
-  if (hostErr) {
-    undo();
-    return { status: "miss", error: `ops[${index}] ${hostErr}` };
+  if (!backstopsPaused) {
+    const hostErr = cssMatchesViolateHostsOrContrast(root, op, "apply");
+    if (hostErr) {
+      undo();
+      return { status: "miss", error: `ops[${index}] ${hostErr}` };
+    }
   }
   return applied(undo);
 }
@@ -518,18 +570,6 @@ function forTargetAllowed(root, op) {
   return isLabelableTextControl(resolveForTarget(root, forValue));
 }
 
-function ensureButtonType(el) {
-  if (localTagName(el) !== "button") return null;
-  const had = el.hasAttribute("type");
-  const prev = el.getAttribute("type");
-  if (prev === "button") return null;
-  el.setAttribute("type", "button");
-  return () => {
-    if (!had) el.removeAttribute("type");
-    else el.setAttribute("type", prev ?? "");
-  };
-}
-
 function overlayAttributes(el, attrs) {
   const undoAttrs = [];
   for (const [name, value] of Object.entries(attrs)) {
@@ -554,16 +594,7 @@ function applyReplaceTag(root, op, index) {
   const key = replaceTagKey(op);
   const existing = findReplaced(root, key);
   if (existing) {
-    if (!forTargetAllowed(root, op)) {
-      return { status: "miss", error: `ops[${index}] target is not allowlisted` };
-    }
-    const overlay = overlayAttributes(existing, op.attributes || {});
-    const undoType = ensureButtonType(existing);
-    if (overlay.status === "noop" && !undoType) return overlay;
-    return applied(() => {
-      if (overlay.status === "applied") overlay.undo();
-      if (undoType) undoType();
-    });
+    return overlayAttributes(existing, op.attributes || {});
   }
   const found = queryOne(root, op.selector);
   if (found.error) return miss(index, op.selector, found.error);
@@ -572,46 +603,24 @@ function applyReplaceTag(root, op, index) {
   if (elementForbiddenAsTextOrTagHost(el) || elementIsPageContainer(el)) {
     return { status: "miss", error: `ops[${index}] target is not allowlisted` };
   }
-  if (isNativeInteractiveHost(el) && op.tag !== "button" && op.tag !== "a") {
+  if (!replaceTagHostAllowed(el)) {
+    return { status: "miss", error: `ops[${index}] target is not allowlisted` };
+  }
+  if (op.tag !== "button" && op.tag !== "a") {
+    return { status: "miss", error: `ops[${index}] tag is not allowlisted` };
+  }
+  if (
+    (op.tag === "button" || op.tag === "a") &&
+    el.parentElement &&
+    elementOrAncestorInteractive(el.parentElement)
+  ) {
     return { status: "miss", error: `ops[${index}] target is not allowlisted` };
   }
   if (elementHasVoidOrControlDescendant(el) || elementHasInteractiveDescendant(el)) {
     return { status: "miss", error: `ops[${index}] target is not allowlisted` };
   }
   if (el.getAttribute("data-lift-replaced") === key) {
-    if (!forTargetAllowed(root, op)) {
-      return { status: "miss", error: `ops[${index}] target is not allowlisted` };
-    }
-    const overlay = overlayAttributes(el, op.attributes || {});
-    const undoType = ensureButtonType(el);
-    if (overlay.status === "noop" && !undoType) return overlay;
-    return applied(() => {
-      if (overlay.status === "applied") overlay.undo();
-      if (undoType) undoType();
-    });
-  }
-  if (el.tagName.toLowerCase() === op.tag.toLowerCase()) {
-    if (!forTargetAllowed(root, op)) {
-      return { status: "miss", error: `ops[${index}] target is not allowlisted` };
-    }
-    const hadMarker = el.hasAttribute("data-lift-replaced");
-    const prevMarker = el.getAttribute("data-lift-replaced");
-    el.setAttribute("data-lift-replaced", key);
-    const overlay = overlayAttributes(el, op.attributes || {});
-    const undoType = ensureButtonType(el);
-    return applied(() => {
-      if (overlay.status === "applied") overlay.undo();
-      if (undoType) undoType();
-      if (!hadMarker) el.removeAttribute("data-lift-replaced");
-      else el.setAttribute("data-lift-replaced", prevMarker ?? "");
-    });
-  }
-  const forValue = op.attributes && op.attributes.for;
-  if (op.tag === "label" && forValue) {
-    const forTarget = resolveForTarget(root, forValue);
-    if (!isLabelableTextControl(forTarget)) {
-      return { status: "miss", error: `ops[${index}] target is not allowlisted` };
-    }
+    return overlayAttributes(el, op.attributes || {});
   }
   const doc = docOf(root);
   const next = doc.createElement(op.tag);
@@ -787,12 +796,29 @@ function isFocusableSnap(el) {
   return el.tabIndex >= 0;
 }
 
+function documentHasLayout(doc) {
+  const body = doc && doc.body;
+  if (!body || typeof body.getBoundingClientRect !== "function") return false;
+  for (const child of body.children) {
+    if (typeof child.getBoundingClientRect !== "function") continue;
+    const box = child.getBoundingClientRect();
+    if (box.width > 0 && box.height > 0) return true;
+  }
+  return false;
+}
+
 function isRenderedVisible(el) {
   if (!(el instanceof Element)) return false;
+  if ("hidden" in el && el.hidden) return false;
+  if (el.hasAttribute && el.hasAttribute("hidden")) return false;
   const style = getComputedStyle(el);
   if (style.visibility === "hidden" || style.display === "none") return false;
-  const opacity = Number(style.opacity);
-  if (Number.isFinite(opacity) && opacity <= 0) return false;
+  const opacityRaw = String(style.opacity || "").trim();
+  if (opacityRaw !== "") {
+    const opacity = Number(opacityRaw);
+    if (Number.isFinite(opacity) && opacity <= 0) return false;
+  }
+  if (!documentHasLayout(el.ownerDocument)) return true;
   const rects = typeof el.getClientRects === "function" ? el.getClientRects() : [];
   if (!rects || rects.length === 0) return false;
   const box = el.getBoundingClientRect();
@@ -864,6 +890,108 @@ function accessibleName(el) {
   return (el.getAttribute("title") || "").trim();
 }
 
+function normalizeName(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function visibleText(el) {
+  if (!el) return "";
+  const clone = el.cloneNode(true);
+  if (clone.querySelectorAll) {
+    for (const hidden of clone.querySelectorAll("[aria-hidden='true']")) hidden.remove();
+  }
+  return normalizeName(clone.textContent);
+}
+
+function nameContainsVisible(name, visible) {
+  const vis = normalizeName(visible);
+  if (!vis) return true;
+  return normalizeName(name).includes(vis);
+}
+
+function labelInNameHolds(el, name) {
+  return nameContainsVisible(name, visibleText(el));
+}
+
+function proposedAccessibleName(root, el, attrName, value) {
+  if (attrName === "aria-label") return value;
+  if (attrName === "aria-labelledby") {
+    const ids = String(value)
+      .trim()
+      .split(/\s+/)
+      .filter(Boolean);
+    return ids
+      .map((id) => (resolveForTarget(root, id)?.textContent || "").trim())
+      .filter(Boolean)
+      .join(" ");
+  }
+  return accessibleName(el);
+}
+
+function formOwnerOf(el) {
+  if (!el) return null;
+  if ("form" in el && el.form) return el.form;
+  return typeof el.closest === "function" ? el.closest("form") : null;
+}
+
+function hitTargetAtCenter(el) {
+  const doc = el.ownerDocument;
+  const view = doc && doc.defaultView;
+  if (!view || typeof view.document.elementFromPoint !== "function") return null;
+  const box = el.getBoundingClientRect();
+  if (box.width <= 0 || box.height <= 0) return null;
+  const x = box.left + box.width / 2;
+  const y = box.top + box.height / 2;
+  const vw = view.innerWidth || 0;
+  const vh = view.innerHeight || 0;
+  if (x < 0 || y < 0 || x > vw || y > vh) return null;
+  try {
+    return view.document.elementFromPoint(x, y);
+  } catch {
+    return null;
+  }
+}
+
+function hitIsSelfOrDescendant(el, hit) {
+  if (!hit || !el) return false;
+  return hit === el || (typeof el.contains === "function" && el.contains(hit));
+}
+
+function inViewport(el) {
+  const box = el.getBoundingClientRect();
+  if (box.width <= 0 || box.height <= 0) return false;
+  const view = el.ownerDocument && el.ownerDocument.defaultView;
+  const vw = view ? view.innerWidth : 0;
+  const vh = view ? view.innerHeight : 0;
+  if (!vw && !vh) return box.top >= 0 && box.left >= 0;
+  return box.bottom > 0 && box.right > 0 && box.top < vh && box.left < vw;
+}
+
+function isOverflowClipped(el) {
+  const box = el.getBoundingClientRect();
+  let node = el.parentElement;
+  while (node && node.nodeType === 1) {
+    const style = getComputedStyle(node);
+    const overflow = String(style.overflow || "").toLowerCase();
+    if (overflow === "hidden" || overflow === "clip" || overflow === "auto" || overflow === "scroll") {
+      const parent = node.getBoundingClientRect();
+      if (
+        box.top < parent.top - 1 ||
+        box.left < parent.left - 1 ||
+        box.bottom > parent.bottom + 1 ||
+        box.right > parent.right + 1
+      ) {
+        return true;
+      }
+    }
+    node = node.parentElement;
+  }
+  return false;
+}
+
 function isAriaHiddenChain(el) {
   let node = el;
   while (node && node.nodeType === 1) {
@@ -875,15 +1003,21 @@ function isAriaHiddenChain(el) {
 
 function snapshotA11y(el) {
   const tag = localTagName(el);
+  const focusable = isFocusableSnap(el);
+  const hit = focusable && inViewport(el) ? hitTargetAtCenter(el) : null;
   return {
     el,
-    focusable: isFocusableSnap(el),
+    focusable,
     visible: isRenderedVisible(el),
     role: computedRole(el),
     name: accessibleName(el),
+    visibleText: visibleText(el),
     ariaHidden: isAriaHiddenChain(el),
     ariaDisabled: (el.getAttribute("aria-disabled") || "").trim().toLowerCase() === "true",
     buttonType: tag === "button" ? (el.getAttribute("type") || "submit").toLowerCase() : null,
+    formOwner: formOwnerOf(el),
+    hitOk: Boolean(hit && hitIsSelfOrDescendant(el, hit)),
+    clipped: isOverflowClipped(el),
   };
 }
 
@@ -895,76 +1029,166 @@ function opMatchSelectors(op) {
   return op.selector ? [op.selector] : [];
 }
 
+function shouldWatch(el) {
+  if (!el || el.nodeType !== 1) return false;
+  return isInteractiveElement(el) || isFocusableSnap(el);
+}
+
+function addWatched(set, el) {
+  if (shouldWatch(el)) set.add(el);
+}
+
+function viewportFocusables(root) {
+  const doc = docOf(root);
+  const scope = "querySelectorAll" in root ? root : doc;
+  const out = [];
+  let nodes;
+  try {
+    nodes = scope.querySelectorAll(
+      'a[href],button,input,select,textarea,[tabindex]:not([tabindex="-1"])',
+    );
+  } catch {
+    return out;
+  }
+  for (const el of nodes) {
+    if (inViewport(el)) out.push(el);
+    if (out.length >= 200) break;
+  }
+  return out;
+}
+
 function collectWatchElements(root, spec) {
   const scope = "querySelectorAll" in root ? root : docOf(root);
   const watched = new Set();
-  const addInteractiveTree = (host) => {
-    if (!host || host.nodeType !== 1) return;
-    if (isInteractiveElement(host) || accessibleName(host)) watched.add(host);
-    if (typeof host.querySelectorAll !== "function") return;
-    for (const child of host.querySelectorAll("*")) {
-      if (isInteractiveElement(child) || accessibleName(child)) watched.add(child);
-    }
-  };
+  const matches = [];
   for (const op of spec.ops) {
     for (const selector of opMatchSelectors(op)) {
-      let matches;
+      let found;
       try {
-        matches = scope.querySelectorAll(selector);
+        found = scope.querySelectorAll(selector);
       } catch {
         continue;
       }
-      for (const el of matches) {
-        addInteractiveTree(el);
+      if (found.length > WATCH_NODE_CAP) {
+        return { error: "too many watched nodes" };
+      }
+      for (const el of found) {
+        matches.push(el);
+        watched.add(el);
+        if (watched.size > WATCH_NODE_CAP) return { error: "too many watched nodes" };
+        if (typeof el.querySelectorAll === "function") {
+          for (const child of el.querySelectorAll("*")) {
+            addWatched(watched, child);
+            if (watched.size > WATCH_NODE_CAP) {
+              return { error: "too many watched nodes" };
+            }
+          }
+        }
         let anc = el.parentElement;
         while (anc) {
-          addInteractiveTree(anc);
+          for (const child of anc.children || []) {
+            if (isInteractiveElement(child) || isFocusableSnap(child)) watched.add(child);
+          }
+          if (watched.size > WATCH_NODE_CAP) {
+            return { error: "too many watched nodes" };
+          }
           anc = anc.parentElement;
         }
       }
     }
   }
-  return [...watched];
+  for (const el of viewportFocusables(scope)) addWatched(watched, el);
+  if (watched.size > WATCH_NODE_CAP) return { error: "too many watched nodes" };
+  return { elements: [...watched], matches };
+}
+
+function roleMustBeStable(role) {
+  if (!role) return false;
+  if (INTERACTIVE_ROLES.has(role) || LANDMARK_ROLES.has(role) || STRUCTURAL_ROLES.has(role)) {
+    return true;
+  }
+  if (/^h[1-6]$/.test(role)) return true;
+  if (role === "li" || role === "ul" || role === "ol" || role === "dl" || role === "dt" || role === "dd") {
+    return true;
+  }
+  if (role === "label" || role === "table" || role === "tr" || role === "td" || role === "th") return true;
+  return false;
 }
 
 function monotonicityViolation(root, snapshots) {
   for (const before of snapshots) {
     const live = liveSuccessor(before.el) || (before.el.isConnected ? before.el : null);
-    if (!live) return "lost interactive element";
+    if (!live) {
+      if (before.focusable || (before.role && INTERACTIVE_ROLES.has(before.role))) {
+        return "lost interactive element";
+      }
+      continue;
+    }
     const after = snapshotA11y(live);
     if (before.focusable && !after.focusable) return "lost focusability";
     if (before.visible && !after.visible) return "lost visibility";
-    if (INTERACTIVE_ROLES.has(before.role) && after.role !== before.role) {
-      return "changed interactive role";
+    if (before.role && after.role !== before.role && roleMustBeStable(before.role)) {
+      return "changed role";
     }
     if (before.name && !after.name) return "lost name";
+    if (
+      (before.focusable || after.focusable || isInteractiveElement(live)) &&
+      after.visibleText &&
+      !nameContainsVisible(after.name, after.visibleText)
+    ) {
+      return "lost visible name";
+    }
     if (!before.ariaHidden && after.ariaHidden) return "became aria-hidden";
     if (!before.ariaDisabled && after.ariaDisabled) return "became aria-disabled";
-    if (
-      before.buttonType &&
-      after.buttonType &&
-      after.buttonType !== before.buttonType &&
-      (after.buttonType === "submit" || after.buttonType === "reset")
-    ) {
-      return "button type changed to submit or reset";
+    if (before.buttonType && after.buttonType !== before.buttonType) {
+      return "button type changed";
     }
+    if (before.formOwner && after.formOwner !== before.formOwner) return "lost form owner";
+    if (before.hitOk) {
+      const hit = hitTargetAtCenter(live);
+      if (!hitIsSelfOrDescendant(live, hit)) return "lost hit target";
+    }
+    if (!before.clipped && after.clipped) return "clipped by overflow";
   }
   return null;
 }
 
-function specContrastError(root, spec) {
+function specContrastError(root, spec, mode) {
   for (const op of spec.ops) {
     if (op.op !== "injectCSS") continue;
-    const err = cssMatchesViolateHostsOrContrast(root, op);
+    const err = cssMatchesViolateHostsOrContrast(root, op, mode);
     if (err) return err;
   }
   return null;
 }
 
 const activeGuards = [];
+const guardsBySpecId = new Map();
+
+function removeGuard(stop) {
+  const i = activeGuards.indexOf(stop);
+  if (i >= 0) activeGuards.splice(i, 1);
+  for (const [id, fn] of guardsBySpecId) {
+    if (fn === stop) guardsBySpecId.delete(id);
+  }
+}
+
+function stopGuardForSpec(id) {
+  const stop = guardsBySpecId.get(id);
+  if (!stop) return;
+  try {
+    stop();
+  } catch {
+    /* already stopped */
+  }
+}
 
 export function resetRuntimeGuards() {
   const stops = activeGuards.splice(0);
+  guardsBySpecId.clear();
+  pendingBackstops.length = 0;
+  guardFlushers.length = 0;
+  backstopsPaused = false;
   for (const stop of stops) {
     try {
       stop();
@@ -983,54 +1207,188 @@ function recordFailOpen(reason, specId) {
   window.dispatchEvent(new CustomEvent("lift:fail-open", { detail }));
 }
 
+function testHooksAllowed() {
+  if (typeof location === "undefined") return false;
+  try {
+    const host = String(location.hostname || "").toLowerCase();
+    if (host !== "127.0.0.1" && host !== "localhost" && host !== "::1") return false;
+    return new URLSearchParams(location.search).get("lift_bot") === "1";
+  } catch {
+    return false;
+  }
+}
+
+function recordsTouchSnapshots(records, snapshots) {
+  if (!records || records.length === 0) return snapshots;
+  const touched = new Set();
+  for (const rec of records) {
+    if (rec.target && rec.target.nodeType === 1) touched.add(rec.target);
+    if (rec.addedNodes) {
+      for (const node of rec.addedNodes) {
+        if (node.nodeType === 1) touched.add(node);
+      }
+    }
+  }
+  if (touched.size === 0) return snapshots;
+  return snapshots.filter((snap) => {
+    const live = liveSuccessor(snap.el) || (snap.el.isConnected ? snap.el : null);
+    if (!live) return true;
+    for (const node of touched) {
+      if (node === live || (live.contains && live.contains(node)) || (node.contains && node.contains(live))) {
+        return true;
+      }
+    }
+    return false;
+  });
+}
+
+function runGuardCheck(root, spec, snapshots, records) {
+  const contrastErr = specContrastError(root, spec, "guard");
+  if (contrastErr) return contrastErr;
+  const subset = recordsTouchSnapshots(records, snapshots);
+  return monotonicityViolation(root, subset);
+}
+
+function observeOptions() {
+  return { childList: true, subtree: true, attributes: true };
+}
+
 function installMutationGuard(root, spec, snapshots, undos) {
   const doc = docOf(root);
   if (!doc || typeof MutationObserver !== "function") return () => {};
   let timer = null;
+  let burstStart = 0;
   let stopped = false;
-  const observer = new MutationObserver(() => {
+  let queued = [];
+  const media =
+    doc.defaultView && typeof doc.defaultView.matchMedia === "function"
+      ? doc.defaultView.matchMedia("(prefers-color-scheme: dark)")
+      : null;
+
+  const run = (records) => {
     if (stopped) return;
+    observer.disconnect();
+    if (media && media.removeEventListener) {
+      try {
+        media.removeEventListener("change", onMedia);
+      } catch {
+        /* ignore */
+      }
+    }
+    const err = runGuardCheck(root, spec, snapshots, records);
+    if (err) {
+      stopped = true;
+      undoAll(undos);
+      recordFailOpen(err, spec.id);
+      removeGuard(stop);
+      return;
+    }
+    startObserving();
+  };
+
+  const schedule = (records) => {
+    if (stopped) return;
+    queued = queued.concat(records || []);
+    if (backstopsPaused) return;
+    const now = Date.now();
+    if (!burstStart) burstStart = now;
     if (timer) clearTimeout(timer);
+    const elapsed = now - burstStart;
+    const delay = Math.max(0, Math.min(32, GUARD_MAX_WAIT_MS - elapsed));
     timer = setTimeout(() => {
       timer = null;
-      if (stopped) return;
-      observer.disconnect();
-      const err = specContrastError(root, spec) || monotonicityViolation(root, snapshots);
-      if (err) {
-        stopped = true;
-        undoAll(undos);
-        recordFailOpen(err, spec.id);
-        return;
-      }
-      const node = doc.documentElement || root;
+      burstStart = 0;
+      const batch = queued;
+      queued = [];
+      run(batch);
+    }, delay);
+  };
+  const flushQueued = () => {
+    if (stopped || backstopsPaused) return;
+    if (timer) clearTimeout(timer);
+    timer = null;
+    burstStart = 0;
+    if (queued.length === 0) return;
+    const batch = queued;
+    queued = [];
+    run(batch);
+  };
+  guardFlushers.push(flushQueued);
+
+  const observer = new MutationObserver((records) => schedule(records));
+  const onMedia = () => schedule([]);
+
+  const startObserving = () => {
+    if (stopped) return;
+    const node = doc.documentElement || root;
+    try {
+      observer.observe(node, observeOptions());
+    } catch {
+      /* closed document */
+    }
+    if (media && media.addEventListener) {
       try {
-        observer.observe(node, {
-          childList: true,
-          subtree: true,
-          attributes: true,
-          attributeFilter: ["class"],
-        });
+        media.addEventListener("change", onMedia);
       } catch {
-        /* closed document */
+        /* ignore */
       }
-    }, 32);
-  });
-  const node = doc.documentElement || root;
-  try {
-    observer.observe(node, {
-      childList: true,
-      subtree: true,
-      attributes: true,
-      attributeFilter: ["class"],
-    });
-  } catch {
-    return () => {};
-  }
-  return () => {
+    }
+  };
+
+  const stop = () => {
     stopped = true;
     if (timer) clearTimeout(timer);
     observer.disconnect();
+    const fi = guardFlushers.indexOf(flushQueued);
+    if (fi >= 0) guardFlushers.splice(fi, 1);
+    if (media && media.removeEventListener) {
+      try {
+        media.removeEventListener("change", onMedia);
+      } catch {
+        /* ignore */
+      }
+    }
+    removeGuard(stop);
   };
+
+  startObserving();
+  return stop;
+}
+
+function finishApply(scope, spec, snapshots, undos, opsStatus) {
+  const contrastErr = specContrastError(scope, spec, "apply");
+  if (contrastErr) {
+    undoAll(undos);
+    return { ok: false, error: contrastErr, ops: opsStatus };
+  }
+  const monoErr = monotonicityViolation(scope, snapshots);
+  if (monoErr) {
+    undoAll(undos);
+    return { ok: false, error: monoErr, ops: opsStatus };
+  }
+  stopGuardForSpec(spec.id);
+  const stopGuard = installMutationGuard(scope, spec, snapshots, [...undos]);
+  activeGuards.push(stopGuard);
+  guardsBySpecId.set(spec.id, stopGuard);
+  return { ok: true, ops: opsStatus };
+}
+
+function flushPendingBackstops() {
+  const pending = pendingBackstops.splice(0);
+  for (const item of pending) {
+    const result = finishApply(item.scope, item.spec, item.snapshots, item.undos, item.opsStatus);
+    if (!result.ok) recordFailOpen(result.error, item.spec.id);
+  }
+}
+
+export function setTestBackstopsPaused(paused) {
+  if (!testHooksAllowed()) return false;
+  backstopsPaused = Boolean(paused);
+  if (!backstopsPaused) {
+    flushPendingBackstops();
+    for (const flush of [...guardFlushers]) flush();
+  }
+  return true;
 }
 
 /** Apply a validated spec. On throw or a required-selector miss, undo so the page is untouched. */
@@ -1041,7 +1399,9 @@ export function applyPatchSpec(input, root) {
     if (!parsed.ok) return { ok: false, error: parsed.error, ops: opsStatus };
     const scope = root ?? (typeof document === "undefined" ? null : document);
     if (!scope) return { ok: false, error: "no document", ops: opsStatus };
-    const snapshots = collectWatchElements(scope, parsed.spec).map(snapshotA11y);
+    const collected = collectWatchElements(scope, parsed.spec);
+    if (collected.error) return { ok: false, error: collected.error, ops: opsStatus };
+    const snapshots = collected.elements.map(snapshotA11y);
     const undos = [];
     try {
       for (let i = 0; i < parsed.spec.ops.length; i++) {
@@ -1058,20 +1418,17 @@ export function applyPatchSpec(input, root) {
           opsStatus.push({ op: op.op, status: "noop" });
         }
       }
-      const contrastErr = specContrastError(scope, parsed.spec);
-      if (contrastErr) {
-        undoAll(undos);
-        return { ok: false, error: contrastErr, ops: opsStatus };
+      if (backstopsPaused && testHooksAllowed()) {
+        pendingBackstops.push({
+          scope,
+          spec: parsed.spec,
+          snapshots,
+          undos,
+          opsStatus,
+        });
+        return { ok: true, ops: opsStatus, paused: true };
       }
-      const monoErr = monotonicityViolation(scope, snapshots);
-      if (monoErr) {
-        undoAll(undos);
-        return { ok: false, error: monoErr, ops: opsStatus };
-      }
-      const stopGuard = installMutationGuard(scope, parsed.spec, snapshots, [...undos]);
-      activeGuards.push(stopGuard);
-      undos.push(stopGuard);
-      return { ok: true, ops: opsStatus };
+      return finishApply(scope, parsed.spec, snapshots, undos, opsStatus);
     } catch (err) {
       undoAll(undos);
       return {
@@ -1090,5 +1447,10 @@ export function applyPatchSpec(input, root) {
 }
 
 if (typeof window !== "undefined") {
-  window.LiftRuntime = { applyPatchSpec, validatePatchSpec, resetRuntimeGuards };
+  window.LiftRuntime = {
+    applyPatchSpec,
+    validatePatchSpec,
+    resetRuntimeGuards,
+    setTestBackstopsPaused,
+  };
 }

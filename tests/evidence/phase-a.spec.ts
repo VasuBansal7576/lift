@@ -198,6 +198,47 @@ async function applyAttack(
   }, spec);
 }
 
+async function setBackstopsPaused(page: Page, paused: boolean) {
+  const ok = await page.evaluate(async (value) => {
+    const href = new URL("/runtime/runtime.js", location.origin).href;
+    const runtime = (await import(href)) as {
+      setTestBackstopsPaused: (paused: boolean) => boolean;
+    };
+    return runtime.setTestBackstopsPaused(value);
+  }, paused);
+  expect(ok, "loopback lift_bot=1 pause hook").toBe(true);
+}
+
+async function markBadState(page: Page, selector: string, caption: string) {
+  await page.evaluate(
+    ({ sel, cap }) => {
+      const el = document.querySelector(sel);
+      if (el instanceof HTMLElement) {
+        el.style.outline = "6px dashed #f00";
+        el.style.outlineOffset = "6px";
+      }
+      let capEl = document.getElementById("lift-bad-state");
+      if (!capEl) {
+        capEl = document.createElement("div");
+        capEl.id = "lift-bad-state";
+        capEl.setAttribute("data-evidence", "1");
+        capEl.style.cssText =
+          "position:fixed;bottom:72px;left:24px;right:24px;z-index:2147483647;padding:18px 22px;font:800 32px/1.2 system-ui,sans-serif;background:#7f1d1d;color:#fff;border:6px dashed #f00;text-align:center";
+        document.body.append(capEl);
+      }
+      capEl.textContent = cap;
+    },
+    { sel: selector, cap: caption },
+  );
+  await pause(page, 1500);
+}
+
+async function clearBadState(page: Page) {
+  await page.evaluate(() => {
+    document.getElementById("lift-bad-state")?.remove();
+  });
+}
+
 test("04-typed-body-tag", async ({ page }) => {
   await page.goto("/checkout/?lift_variant=control");
   await openCheckoutWithHover(page);
@@ -402,7 +443,7 @@ test("04-replace-button-to-span", async ({ page }) => {
 });
 
 test("04-late-content", async ({ page }) => {
-  await page.goto("/checkout/?lift_variant=control");
+  await page.goto("/checkout/?lift_variant=control&lift_bot=1");
   await openCheckoutWithHover(page);
   await showBanner(page, "MutationObserver — apply legal CSS, then inject late low-contrast text");
   const applied = await page.evaluate(async () => {
@@ -412,8 +453,9 @@ test("04-late-content", async ({ page }) => {
     };
     const host = document.createElement("div");
     host.className = "lift-late-slot";
-    host.textContent = "ok";
-    host.style.cssText = "padding:8px;background:#fff;color:#111";
+    host.textContent = "Readable slot";
+    host.style.cssText =
+      "position:fixed;left:40px;top:120px;z-index:20;padding:16px;background:#fff;color:#111;font:600 22px/1.3 system-ui;min-width:420px";
     document.body.append(host);
     return runtime.applyPatchSpec({
       id: "late-ok",
@@ -435,11 +477,20 @@ test("04-late-content", async ({ page }) => {
     });
   });
   expect(applied.ok).toBe(true);
-  await showBanner(page, "CSS applied — inserting white-on-white descendant");
-  const after = await page.evaluate(async () => {
+  await setBackstopsPaused(page, true);
+  await page.evaluate(() => {
     const slot = document.querySelector(".lift-late-slot");
-    slot?.insertAdjacentHTML("beforeend", `<span style="color:#fff">hidden</span>`);
-    await new Promise((resolve) => setTimeout(resolve, 120));
+    const ghost = document.createElement("span");
+    ghost.className = "lift-ghost";
+    ghost.textContent = "WHITE ON WHITE";
+    ghost.style.cssText =
+      "display:block;margin-top:12px;font:800 48px/1.1 system-ui,sans-serif;color:#fff;background:#fff;padding:24px";
+    slot?.append(ghost);
+  });
+  await markBadState(page, ".lift-ghost", "BAD STATE: white-on-white");
+  await setBackstopsPaused(page, false);
+  await page.waitForTimeout(80);
+  const after = await page.evaluate(() => {
     const failOpen = (window as unknown as { __LIFT_FAIL_OPEN__?: { reason: string }[] })
       .__LIFT_FAIL_OPEN__;
     return {
@@ -450,6 +501,7 @@ test("04-late-content", async ({ page }) => {
   });
   expect(after.css).toBe(false);
   expect(after.failOpen).toBeGreaterThan(0);
+  await clearBadState(page);
   await showBanner(
     page,
     `UNDONE by MutationObserver (${after.reason || "contrast"}) — fail-open recorded, style removed`,
@@ -458,10 +510,11 @@ test("04-late-content", async ({ page }) => {
 });
 
 test("04-descendant-contrast", async ({ page }) => {
-  await page.goto("/checkout/?lift_variant=control");
+  await page.goto("/checkout/?lift_variant=control&lift_bot=1");
   await openCheckoutWithHover(page);
   const before = await snapshotPage(page);
   await showBanner(page, "FAIL-OPEN — parent contrast is fine, descendant ghost text is not");
+  await setBackstopsPaused(page, true);
   const result = await page.evaluate(async () => {
     const href = new URL("/runtime/runtime.js", location.origin).href;
     const runtime = (await import(href)) as {
@@ -469,10 +522,14 @@ test("04-descendant-contrast", async ({ page }) => {
     };
     const host = document.createElement("div");
     host.className = "lift-card";
-    host.append("ok");
+    host.style.cssText =
+      "position:fixed;left:40px;top:120px;z-index:20;padding:16px;font:600 22px/1.3 system-ui;min-width:420px";
+    host.append("Readable parent");
     const ghost = document.createElement("span");
-    ghost.style.color = "#fff";
-    ghost.textContent = "hid";
+    ghost.className = "lift-ghost";
+    ghost.style.cssText =
+      "display:block;margin-top:12px;font:800 48px/1.1 system-ui,sans-serif;color:#fff;padding:24px";
+    ghost.textContent = "WHITE ON WHITE";
     host.append(ghost);
     document.body.append(host);
     return runtime.applyPatchSpec({
@@ -491,14 +548,155 @@ test("04-descendant-contrast", async ({ page }) => {
       ],
     });
   });
-  expect(result.ok).toBe(false);
+  expect(result.ok).toBe(true);
+  await markBadState(page, ".lift-ghost", "BAD STATE: white-on-white");
+  await setBackstopsPaused(page, false);
+  await page.waitForTimeout(80);
   expect(await page.evaluate(() => Boolean(document.querySelector("[data-lift-css]")))).toBe(false);
   const after = await snapshotPage(page);
   expect(after.pay).toBe(before.pay);
+  await clearBadState(page);
+  await showBanner(page, "UNDONE descendant contrast — injected CSS removed, parent readable again");
+  await pause(page, 2000);
+});
+
+test("04-submit-button-kept", async ({ page }) => {
+  await page.goto("/checkout/?lift_variant=control");
+  await openCheckoutWithHover(page);
+  await showBanner(page, "E1 — existing submit button must stay type=submit and still submit");
+  const result = await page.evaluate(async () => {
+    const href = new URL("/runtime/runtime.js", location.origin).href;
+    const runtime = (await import(href)) as {
+      applyPatchSpec: (input: unknown) => { ok: boolean; error?: string };
+    };
+    const form = document.createElement("form");
+    form.id = "keep-form";
+    form.style.cssText =
+      "position:fixed;left:40px;top:140px;z-index:20;padding:24px;background:#fff;border:2px solid #111";
+    const button = document.createElement("button");
+    button.id = "keep-submit";
+    button.type = "submit";
+    button.textContent = "Pay now";
+    button.style.cssText = "font:700 28px/1.2 system-ui;padding:12px 20px";
+    form.appendChild(button);
+    document.body.append(form);
+    let submits = 0;
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      submits += 1;
+    });
+    const applied = runtime.applyPatchSpec({
+      id: "keep-submit-spec",
+      version: 0,
+      ops: [{ op: "replaceTag", selector: "#keep-submit", tag: "button" }],
+    });
+    button.click();
+    return {
+      ok: applied.ok,
+      error: applied.error,
+      type: button.getAttribute("type"),
+      tag: button.tagName,
+      submits,
+    };
+  });
+  expect(result.ok).toBe(false);
+  expect(result.type).toBe("submit");
+  expect(result.tag).toBe("BUTTON");
+  expect(result.submits).toBe(1);
   await showBanner(
     page,
-    `UNDONE descendant contrast (${result.error ?? "not allowlisted"}) — injected CSS removed`,
+    `REFUSED replaceTag on submit button (${result.error ?? "host"}) — form submitted ${result.submits} time, type=submit kept`,
   );
+  await pause(page, 2000);
+});
+
+test("04-focus-within-color", async ({ page }) => {
+  await page.goto("/checkout/?lift_variant=control");
+  await openCheckoutWithHover(page);
+  await showBanner(page, "E2 — any selector.state may set only outline-* / text-decoration-*");
+  const result = await applyAttack(page, {
+    id: "fw-color",
+    version: 0,
+    ops: [
+      {
+        op: "injectCSS",
+        rules: [
+          {
+            selector: { classes: ["div-pay"], state: "focus-within" },
+            declarations: [{ property: "color", value: "#111" }],
+          },
+        ],
+      },
+    ],
+  });
+  expect(result.ok).toBe(false);
+  await showBanner(
+    page,
+    `REJECTED focus-within color (${result.error ?? "not allowlisted"}) — page unchanged`,
+  );
+  await pause(page, 2000);
+});
+
+test("04-covered-control", async ({ page }) => {
+  await page.goto("/checkout/?lift_variant=control&lift_bot=1");
+  await openCheckoutWithHover(page);
+  await showBanner(page, "W1 — enlarged fixed cookie bar covers Buy, then the spec is undone");
+  await setBackstopsPaused(page, true);
+  const applied = await page.evaluate(async () => {
+    const href = new URL("/runtime/runtime.js", location.origin).href;
+    const runtime = (await import(href)) as {
+      applyPatchSpec: (input: unknown) => { ok: boolean; error?: string };
+    };
+    const buy = document.createElement("button");
+    buy.id = "buy-now";
+    buy.type = "button";
+    buy.textContent = "Buy";
+    buy.style.cssText =
+      "position:fixed;top:90px;left:50%;transform:translateX(-50%);z-index:1;font:700 28px/1.2 system-ui;padding:12px 28px";
+    const bar = document.createElement("div");
+    bar.className = "cookie-bar";
+    bar.textContent = "Cookies";
+    bar.style.cssText =
+      "position:fixed;top:0;left:0;right:0;z-index:9;background:#111;color:#fff;font:600 16px/1.2 system-ui";
+    document.body.append(bar, buy);
+    return runtime.applyPatchSpec({
+      id: "cover-bar",
+      version: 0,
+      ops: [
+        {
+          op: "injectCSS",
+          rules: [
+            {
+              selector: { classes: ["cookie-bar"] },
+              declarations: [
+                { property: "font-size", value: "48px" },
+                { property: "padding", value: "24px" },
+                { property: "line-height", value: 3 },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+  });
+  expect(applied.ok).toBe(true);
+  await markBadState(page, ".cookie-bar", "BAD STATE: bar covering Buy");
+  await setBackstopsPaused(page, false);
+  await page.waitForTimeout(80);
+  const restored = await page.evaluate(() => {
+    const buy = document.getElementById("buy-now");
+    if (!buy) return { css: true, hitOk: false };
+    const box = buy.getBoundingClientRect();
+    const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+    return {
+      css: Boolean(document.querySelector("[data-lift-css]")),
+      hitOk: hit === buy || Boolean(buy.contains(hit)),
+    };
+  });
+  expect(restored.css).toBe(false);
+  expect(restored.hitOk).toBe(true);
+  await clearBadState(page);
+  await showBanner(page, "UNDONE covering cookie bar — Buy is hittable again");
   await pause(page, 2000);
 });
 

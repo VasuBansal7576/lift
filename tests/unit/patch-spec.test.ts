@@ -29,7 +29,7 @@ describe("parsePatchSpec", () => {
       "wrapLabel",
       "wrapLabel",
       "wrapLabel",
-      "replaceTag",
+      "wrapLabel",
       "setText",
       "replaceTag",
     ]);

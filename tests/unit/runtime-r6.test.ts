@@ -122,7 +122,7 @@ describe("R6 #2 attribute allowlist", () => {
         ops: [{ op: "setAttribute", selector: "#x", name: "aria-describedby", value: "empty" }],
       }).ok,
     ).toBe(false);
-    document.body.innerHTML = `<span id="x">x</span><span id="nm">Name</span>`;
+    document.body.innerHTML = `<span id="x"></span><span id="nm">Name</span>`;
     expect(
       applyPatchSpec({
         id: "by-ok",

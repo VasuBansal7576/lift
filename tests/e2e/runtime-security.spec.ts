@@ -400,8 +400,7 @@ test("bindEnterToClick on a non-native replacement forwards one click", async ({
       id: "enter-once",
       version: 0,
       ops: [
-        { op: "replaceTag", selector: "#lift-enter-once", tag: "span" },
-        { op: "makeFocusable", selector: "#lift-enter-once" },
+        { op: "replaceTag", selector: "#lift-enter-once", tag: "button" },
         { op: "bindEnterToClick", selector: "#lift-enter-once" },
       ],
     });
@@ -410,7 +409,7 @@ test("bindEnterToClick on a non-native replacement forwards one click", async ({
       ?.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
     return { clicks, keys, tag: document.getElementById("lift-enter-once")?.tagName ?? "" };
   });
-  expect(counts.tag).toBe("SPAN");
+  expect(counts.tag).toBe("BUTTON");
   expect(counts.clicks).toBe(1);
   expect(counts.keys).toBe(0);
 });
@@ -536,6 +535,288 @@ test("bindEnterToClick ignores Enter on descendants", async ({ page }) => {
   expect(counts.appliedOk).toBe(true);
   expect(counts.afterChild).toBe(0);
   expect(counts.clicks).toBe(1);
+});
+
+test("R7 E1 Chromium keeps an existing submit button submittable", async ({ page }) => {
+  await page.goto("/checkout/?lift_variant=control");
+  const result = await page.evaluate(async () => {
+    const href = new URL("/runtime/runtime.js", location.origin).href;
+    const runtime = (await import(href)) as {
+      applyPatchSpec: (input: unknown) => { ok: boolean };
+    };
+    const form = document.createElement("form");
+    form.id = "pay-form";
+    const button = document.createElement("button");
+    button.id = "pay-go";
+    button.type = "submit";
+    button.textContent = "Pay";
+    form.appendChild(button);
+    document.body.appendChild(form);
+    let submits = 0;
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      submits += 1;
+    });
+    const applied = runtime.applyPatchSpec({
+      id: "keep-submit",
+      version: 0,
+      ops: [{ op: "replaceTag", selector: "#pay-go", tag: "button" }],
+    });
+    button.click();
+    return {
+      ok: applied.ok,
+      type: button.getAttribute("type"),
+      tag: button.tagName,
+      submits,
+    };
+  });
+  expect(result.ok).toBe(false);
+  expect(result.type).toBe("submit");
+  expect(result.tag).toBe("BUTTON");
+  expect(result.submits).toBe(1);
+});
+
+test("R7 E2 Chromium rejects focus-within color", async ({ page }) => {
+  await page.goto("/checkout/?lift_variant=control");
+  const parsed = await page.evaluate(async () => {
+    const href = new URL("/runtime/runtime.js", location.origin).href;
+    const runtime = (await import(href)) as {
+      parsePatchSpec: (input: unknown) => { ok: boolean };
+    };
+    return runtime.parsePatchSpec({
+      id: "fw",
+      version: 0,
+      ops: [
+        {
+          op: "injectCSS",
+          rules: [
+            {
+              selector: { classes: ["x"], state: "focus-within" },
+              declarations: [{ property: "color", value: "#111" }],
+            },
+          ],
+        },
+      ],
+    }).ok;
+  });
+  expect(parsed).toBe(false);
+});
+
+test("R7 W1 Chromium undoes a covering cookie bar", async ({ page }) => {
+  await page.goto("/checkout/?lift_variant=control&lift_bot=1");
+  const result = await page.evaluate(async () => {
+    const href = new URL("/runtime/runtime.js", location.origin).href;
+    const runtime = (await import(href)) as {
+      applyPatchSpec: (input: unknown) => { ok: boolean };
+      setTestBackstopsPaused: (paused: boolean) => boolean;
+    };
+    const buy = document.createElement("button");
+    buy.id = "buy";
+    buy.type = "button";
+    buy.textContent = "Buy";
+    buy.style.cssText = "position:fixed;top:80px;left:40px;z-index:1";
+    const bar = document.createElement("div");
+    bar.className = "cookie-bar";
+    bar.textContent = "Cookies";
+    bar.style.cssText =
+      "position:fixed;top:0;left:0;right:0;z-index:9;background:#111;color:#fff";
+    document.body.append(bar, buy);
+    runtime.setTestBackstopsPaused(true);
+    const applied = runtime.applyPatchSpec({
+      id: "cover",
+      version: 0,
+      ops: [
+        {
+          op: "injectCSS",
+          rules: [
+            {
+              selector: { classes: ["cookie-bar"] },
+              declarations: [
+                { property: "font-size", value: "48px" },
+                { property: "padding", value: "24px" },
+                { property: "line-height", value: 3 },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+    const rect = buy.getBoundingClientRect();
+    const coveredWhilePaused = document.elementFromPoint(
+      rect.left + rect.width / 2,
+      rect.top + rect.height / 2,
+    );
+    runtime.setTestBackstopsPaused(false);
+    const after = buy.getBoundingClientRect();
+    const restored = document.elementFromPoint(
+      after.left + after.width / 2,
+      after.top + after.height / 2,
+    );
+    return {
+      paused: applied.ok,
+      covered:
+        coveredWhilePaused !== buy &&
+        coveredWhilePaused !== null &&
+        !buy.contains(coveredWhilePaused),
+      restored: restored === buy || Boolean(buy.contains(restored)),
+      cssAfter: Boolean(document.querySelector("[data-lift-css]")),
+    };
+  });
+  expect(result.paused).toBe(true);
+  expect(result.covered).toBe(true);
+  expect(result.restored).toBe(true);
+  expect(result.cssAfter).toBe(false);
+});
+
+test("R7 W1 Chromium refuses size-growing on a clipping card", async ({ page }) => {
+  await page.goto("/checkout/?lift_variant=control");
+  const ok = await page.evaluate(async () => {
+    const href = new URL("/runtime/runtime.js", location.origin).href;
+    const runtime = (await import(href)) as {
+      applyPatchSpec: (input: unknown) => { ok: boolean };
+    };
+    const card = document.createElement("div");
+    card.className = "card";
+    card.style.cssText = "height:90px;overflow:hidden";
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = "Buy";
+    card.appendChild(button);
+    document.body.appendChild(card);
+    return runtime.applyPatchSpec({
+      id: "clip",
+      version: 0,
+      ops: [
+        {
+          op: "injectCSS",
+          rules: [
+            {
+              selector: { classes: ["card"] },
+              declarations: [{ property: "padding", value: "24px" }],
+            },
+          ],
+        },
+      ],
+    }).ok;
+  });
+  expect(ok).toBe(false);
+});
+
+test("R7 W3 Chromium guard runs within 250ms under continuous mutations", async ({ page }) => {
+  await page.goto("/checkout/?lift_variant=control");
+  const result = await page.evaluate(async () => {
+    const href = new URL("/runtime/runtime.js", location.origin).href;
+    const runtime = (await import(href)) as {
+      applyPatchSpec: (input: unknown) => { ok: boolean };
+    };
+    const slot = document.createElement("span");
+    slot.className = "slot";
+    slot.textContent = "ok";
+    document.body.appendChild(slot);
+    const applied = runtime.applyPatchSpec({
+      id: "max-wait",
+      version: 0,
+      ops: [
+        {
+          op: "injectCSS",
+          rules: [
+            {
+              selector: { classes: ["slot"] },
+              declarations: [{ property: "color", value: "#111" }],
+            },
+          ],
+        },
+      ],
+    });
+    const started = performance.now();
+    const burst = window.setInterval(() => {
+      document.body.classList.toggle("busy");
+      document.body.setAttribute("data-tick", String(Date.now()));
+    }, 10);
+    document.body.setAttribute("style", "background:#000");
+    await new Promise((resolve) => {
+      const check = () => {
+        if (!document.querySelector("[data-lift-css]")) {
+          resolve(undefined);
+          return;
+        }
+        if (performance.now() - started > 400) {
+          resolve(undefined);
+          return;
+        }
+        window.setTimeout(check, 16);
+      };
+      check();
+    });
+    window.clearInterval(burst);
+    return {
+      applied: applied.ok,
+      undone: !document.querySelector("[data-lift-css]"),
+      ms: performance.now() - started,
+    };
+  });
+  expect(result.applied).toBe(true);
+  expect(result.undone).toBe(true);
+  expect(result.ms).toBeLessThan(300);
+});
+
+test("R7 W6 Chromium 10k-node apply and guard tick stay under 50ms", async ({ page }) => {
+  test.setTimeout(30_000);
+  await page.goto("/checkout/?lift_variant=control&lift_bot=1");
+  const result = await page.evaluate(async () => {
+    const href = new URL("/runtime/runtime.js", location.origin).href;
+    const runtime = (await import(href)) as {
+      applyPatchSpec: (input: unknown) => { ok: boolean };
+      setTestBackstopsPaused: (paused: boolean) => boolean;
+    };
+    const host = document.createElement("div");
+    host.id = "perf-host";
+    const probe = document.createElement("span");
+    probe.className = "probe";
+    probe.textContent = "x";
+    host.appendChild(probe);
+    const chunk = document.createDocumentFragment();
+    for (let i = 0; i < 10_000; i += 1) {
+      const node = document.createElement("span");
+      node.textContent = "n";
+      chunk.appendChild(node);
+    }
+    host.appendChild(chunk);
+    document.body.appendChild(host);
+    const spec = {
+      id: "perf-10k",
+      version: 0,
+      ops: [
+        {
+          op: "injectCSS",
+          rules: [
+            {
+              selector: { classes: ["probe"] },
+              declarations: [
+                { property: "color", value: "#111" },
+                { property: "background-color", value: "#fff" },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+    const t0 = performance.now();
+    const applied = runtime.applyPatchSpec(spec);
+    const applyMs = performance.now() - t0;
+    runtime.setTestBackstopsPaused(true);
+    document.body.classList.add("tick");
+    document.body.setAttribute("data-perf", "1");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const t1 = performance.now();
+    runtime.setTestBackstopsPaused(false);
+    const guardMs = performance.now() - t1;
+    return { ok: applied.ok, applyMs, guardMs };
+  });
+  console.log(`perf-10k applyMs=${result.applyMs.toFixed(2)} guardMs=${result.guardMs.toFixed(2)}`);
+  expect(result.ok).toBe(true);
+  expect(result.applyMs).toBeLessThan(50);
+  expect(result.guardMs).toBeLessThan(50);
 });
 
 test("GET // returns 400 and the site still serves", async ({ request }) => {

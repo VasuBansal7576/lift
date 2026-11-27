@@ -709,7 +709,7 @@ export const PATCH_SPEC_CORPUS: CorpusCase[] = [
     name: "replaceTag body",
     spec: op([{ op: "replaceTag", selector: "body", tag: "span" }]),
     ok: false,
-    error: "ops[0] target is not allowlisted",
+    error: "ops[0] tag is not allowlisted",
   },
   {
     name: "setText body",
@@ -1030,6 +1030,23 @@ export const PATCH_SPEC_CORPUS: CorpusCase[] = [
     error: "ops[0] text required",
   },
   {
+    name: "typed focus-within color",
+    spec: op([
+      {
+        op: "injectCSS",
+        rules: [
+          {
+            selector: { classes: ["x"], state: "focus-within" },
+            declarations: [{ property: "color", value: "#fff" }],
+          },
+        ],
+      },
+    ]),
+    ok: false,
+    error: "ops[0] css is not allowlisted",
+    schema: "skip",
+  },
+  {
     name: "typed hover color",
     spec: op([
       {
@@ -1086,7 +1103,7 @@ export const PATCH_SPEC_CORPUS: CorpusCase[] = [
       },
     ]),
     ok: false,
-    error: "ops[0] disallowed attribute: class",
+    error: "ops[0] tag is not allowlisted",
   },
   {
     name: "insertHTML anchor",

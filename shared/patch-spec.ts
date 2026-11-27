@@ -30,7 +30,7 @@ export type AxeGateRule = (typeof AXE_GATE_RULES)[number];
 export const INSERT_HTML_POSITIONS = ["before", "after", "prepend", "append"] as const;
 export type InsertHtmlPosition = (typeof INSERT_HTML_POSITIONS)[number];
 
-export const ALLOWED_REPLACE_TAGS = ["button", "label", "span", "a", "p", "strong", "em"] as const;
+export const ALLOWED_REPLACE_TAGS = ["button", "a"] as const;
 export type AllowedReplaceTag = (typeof ALLOWED_REPLACE_TAGS)[number];
 
 export interface SetAttributeOp {

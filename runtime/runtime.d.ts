@@ -26,3 +26,4 @@ export function applyPatchSpec(
   | { ok: false; error: string; ops: ApplyOpStatus[] };
 
 export function resetRuntimeGuards(): void;
+export function setTestBackstopsPaused(paused: boolean): boolean;

@@ -60,10 +60,9 @@
       "text": "CVC"
     },
     {
-      "op": "replaceTag",
-      "selector": "#terms-copy",
-      "tag": "label",
-      "attributes": { "for": "terms" }
+      "op": "wrapLabel",
+      "selector": "#terms",
+      "text": "I agree to the terms of sale and understand this order is final."
     },
     {
       "op": "setText",

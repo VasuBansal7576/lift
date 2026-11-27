@@ -363,7 +363,7 @@
                 { "$ref": "#/$defs/forbiddenHostSelector" }
               ]
             },
-            "tag": { "enum": ["button", "label", "span", "a", "p", "strong", "em"] },
+            "tag": { "enum": ["button", "a"] },
             "attributes": {
               "type": "object",
               "propertyNames": { "$ref": "#/$defs/replaceAttrName" },

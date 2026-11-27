@@ -294,15 +294,9 @@ export function serializeCss(rules) {
     .join(" ");
 }
 
-const STATE_ONLY_PROPS = new Set([
-  "outline-style",
-  "outline-color",
-  "outline-width",
-  "outline-offset",
-  "text-decoration-line",
-  "text-decoration-thickness",
-]);
-const PAINT_STATES = new Set(["hover", "focus", "focus-visible", "active"]);
+function isStateOnlyProperty(property) {
+  return property.startsWith("outline-") || property.startsWith("text-decoration-");
+}
 
 function ruleHasLowContrast(declarations) {
   const color = declarations.find((d) => d.property === "color");
@@ -315,8 +309,8 @@ function ruleHasLowContrast(declarations) {
 }
 
 function stateRuleNotAllowlisted(selector, declarations) {
-  if (!selector.state || !PAINT_STATES.has(selector.state)) return false;
-  return declarations.some((d) => !STATE_ONLY_PROPS.has(d.property));
+  if (!selector.state) return false;
+  return declarations.some((d) => !isStateOnlyProperty(d.property));
 }
 
 export function parseCssRules(rawRules, index) {

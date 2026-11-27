@@ -9,7 +9,7 @@
  * Loopback only (127.0.0.1 / localhost / ::1) unless --allow-remote.
  * Reads FLAGSMITH_API_URL and FLAGSMITH_ADMIN_API_TOKEN from a gitignored .env.
  */
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { config as loadEnv } from "dotenv";
@@ -33,6 +33,7 @@ export interface L3BootstrapArgs {
 
 export interface L3BootstrapResult {
   apiUrl: string;
+  dashboardUrl: string;
   projectId: string;
   environmentId: string;
   environmentKey: string;
@@ -86,6 +87,256 @@ function env(name: string, fallback = ""): string {
   return (process.env[name] ?? fallback).trim();
 }
 
+export function originFromApiUrl(apiUrl: string): string {
+  const url = new URL(apiUrl);
+  return `${url.protocol}//${url.host}`;
+}
+
+export function maskSecret(value: string): string {
+  if (!value) return "";
+  if (value.length <= 8) return "********";
+  return `${value.slice(0, 4)}…${value.slice(-4)}`;
+}
+
+export function upsertEnvFile(path: string, values: Record<string, string>): void {
+  let existing = "";
+  if (existsSync(path)) existing = readFileSync(path, "utf8");
+  const lines = existing.split("\n");
+  const pending = new Map(Object.entries(values));
+  const out: string[] = [];
+  for (const line of lines) {
+    const match = /^([A-Z0-9_]+)=/.exec(line);
+    if (match && pending.has(match[1])) {
+      out.push(`${match[1]}=${pending.get(match[1])}`);
+      pending.delete(match[1]);
+    } else if (line.length > 0 || out.length > 0) {
+      out.push(line);
+    }
+  }
+  for (const [key, value] of pending) out.push(`${key}=${value}`);
+  writeFileSync(path, `${out.join("\n").replace(/\n+$/, "")}\n`, { mode: 0o600 });
+}
+
+async function jsonRequest<T>(
+  url: string,
+  method: string,
+  headers: Record<string, string>,
+  body?: unknown,
+): Promise<{ status: number; data: T }> {
+  const res = await fetch(url, {
+    method,
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "application/json",
+      ...headers,
+    },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  const text = await res.text();
+  let data: T = null as T;
+  if (text) {
+    try {
+      data = JSON.parse(text) as T;
+    } catch {
+      data = text as T;
+    }
+  }
+  if (!res.ok) {
+    throw new L3BootstrapError(
+      `${method} ${url} -> ${res.status}: ${text.slice(0, 800)}`,
+      res.status,
+      text,
+    );
+  }
+  return { status: res.status, data };
+}
+
+async function userRequest<T>(
+  origin: string,
+  userToken: string,
+  method: string,
+  path: string,
+  body?: unknown,
+): Promise<T> {
+  const { data } = await jsonRequest<T>(
+    `${origin.replace(/\/+$/, "")}/api/v1${path.startsWith("/") ? path : `/${path}`}`,
+    method,
+    userToken ? { Authorization: `Token ${userToken}` } : {},
+    body,
+  );
+  return data;
+}
+
+interface AuthKey {
+  key?: string;
+}
+
+interface InstanceIds {
+  token: string;
+  projectId: string;
+  environmentId: string;
+  environmentKey: string;
+  orgId: string;
+}
+
+async function createOrLoginUser(origin: string, email: string, password: string): Promise<string> {
+  try {
+    const data = await userRequest<AuthKey>(origin, "", "POST", "/auth/users/", {
+      email,
+      password,
+      re_password: password,
+      first_name: "Lift",
+      last_name: "Admin",
+      superuser: true,
+    });
+    if (!data.key) throw new L3BootstrapError("Flagsmith signup did not return an auth token");
+    return data.key;
+  } catch (err) {
+    if (!(err instanceof L3BootstrapError) || (err.status !== 400 && err.status !== 409)) {
+      throw err;
+    }
+    const data = await userRequest<AuthKey>(origin, "", "POST", "/auth/login/", {
+      email,
+      password,
+    });
+    if (!data.key) throw new L3BootstrapError("Flagsmith login did not return an auth token");
+    return data.key;
+  }
+}
+
+async function ensureOrg(
+  origin: string,
+  userToken: string,
+  name: string,
+): Promise<NamedRecord> {
+  const listed = await userRequest<unknown>(origin, userToken, "GET", "/organisations/");
+  const match = listResults<NamedRecord>(listed).find((row) => row.name === name);
+  if (match) return match;
+  return userRequest<NamedRecord>(origin, userToken, "POST", "/organisations/", { name });
+}
+
+async function ensureProject(
+  origin: string,
+  userToken: string,
+  orgId: number,
+  name: string,
+): Promise<NamedRecord> {
+  const listed = await userRequest<unknown>(
+    origin,
+    userToken,
+    "GET",
+    `/projects/?organisation=${orgId}`,
+  );
+  const match = listResults<NamedRecord>(listed).find((row) => row.name === name);
+  if (match) return match;
+  return userRequest<NamedRecord>(origin, userToken, "POST", "/projects/", {
+    name,
+    organisation: orgId,
+  });
+}
+
+async function ensureEnvironment(
+  origin: string,
+  userToken: string,
+  projectId: string,
+  name: string,
+): Promise<NamedRecord> {
+  const listed = await userRequest<unknown>(
+    origin,
+    userToken,
+    "GET",
+    `/projects/${projectId}/environments/`,
+  );
+  const match = listResults<NamedRecord>(listed).find((row) => row.name === name);
+  if (match) return match;
+  return userRequest<NamedRecord>(origin, userToken, "POST", "/environments/", {
+    name,
+    project: Number(projectId),
+  });
+}
+
+async function ensureMasterKey(origin: string, userToken: string, orgId: number): Promise<string> {
+  const data = await userRequest<AuthKey>(
+    origin,
+    userToken,
+    "POST",
+    `/organisations/${orgId}/master-api-keys/`,
+    {
+      name: "lift-l3-admin",
+      organisation: orgId,
+      is_admin: true,
+      revoked: false,
+    },
+  );
+  if (!data.key) throw new L3BootstrapError("Flagsmith did not return a master API key");
+  return data.key;
+}
+
+async function ensureInstance(apiUrl: string): Promise<InstanceIds> {
+  const origin = originFromApiUrl(apiUrl);
+  let token = env("FLAGSMITH_ADMIN_API_TOKEN");
+  let projectId = env("FLAGSMITH_PROJECT_ID");
+  let environmentId = env("FLAGSMITH_ENVIRONMENT_ID");
+  let environmentKey = env("FLAGSMITH_ENVIRONMENT_KEY");
+  let orgId = env("FLAGSMITH_ORG_ID");
+
+  if (token && projectId && environmentKey) {
+    return { token, projectId, environmentId, environmentKey, orgId };
+  }
+
+  const email = env("FLAGSMITH_BOOTSTRAP_EMAIL", "admin@lift.local");
+  const password = env("FLAGSMITH_BOOTSTRAP_PASSWORD", "lift-dev-password");
+  const userToken = await createOrLoginUser(origin, email, password);
+  const org = await ensureOrg(origin, userToken, env("FLAGSMITH_ORG_NAME", "Lift"));
+  const project = await ensureProject(
+    origin,
+    userToken,
+    Number(org.id),
+    env("FLAGSMITH_PROJECT_NAME", "Lift"),
+  );
+  const environment = await ensureEnvironment(
+    origin,
+    userToken,
+    String(project.id),
+    env("FLAGSMITH_ENVIRONMENT_NAME", "Development"),
+  );
+  if (!token) token = await ensureMasterKey(origin, userToken, Number(org.id));
+  projectId = String(project.id);
+  environmentId = String(environment.id);
+  environmentKey = environment.api_key ?? environmentKey;
+  orgId = String(org.id);
+  if (!environmentKey) throw new L3BootstrapError("Flagsmith environment did not return an api_key");
+
+  upsertEnvFile(resolve(ROOT, ".env"), {
+    FLAGSMITH_API_URL: apiUrl,
+    FLAGSMITH_ADMIN_API_URL: `${origin}/api/v1/`,
+    FLAGSMITH_BOOTSTRAP_EMAIL: email,
+    FLAGSMITH_BOOTSTRAP_PASSWORD: password,
+    FLAGSMITH_ADMIN_API_TOKEN: token,
+    FLAGSMITH_PROJECT_ID: projectId,
+    FLAGSMITH_ENVIRONMENT_ID: environmentId,
+    FLAGSMITH_ENVIRONMENT_KEY: environmentKey,
+    FLAGSMITH_ENVIRONMENT_NAME: environment.name || "Development",
+    FLAGSMITH_ORG_ID: orgId,
+  });
+
+  return { token, projectId, environmentId, environmentKey, orgId };
+}
+
+function writeStateFile(state: {
+  dashboardUrl: string;
+  projectId: string;
+  environmentId: string;
+  environmentUuid?: string;
+  segmentId: number;
+  flagId: number;
+  orgId: string;
+}): void {
+  const dir = resolve(ROOT, "data");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(resolve(dir, "l3-state.json"), `${JSON.stringify(state, null, 2)}\n`);
+}
+
 export function resolveL3ApiUrl(override = ""): string {
   const raw =
     override ||
@@ -135,17 +386,18 @@ export function flagCreatePayload() {
 }
 
 export function segmentOverridePatch(segmentId: number) {
+  const jsonValue = JSON.stringify(L3_FLAG_CONFIG);
   return {
     environment_default: {
       enabled: false,
-      value: { type: "unicode", value: JSON.stringify(L3_FLAG_CONFIG) },
+      value: { type: "string", value: jsonValue },
     },
     segment_overrides: [
       {
         segment: { id: segmentId },
         enabled: true,
         priority: 0,
-        value: { type: "unicode", value: JSON.stringify(L3_FLAG_CONFIG) },
+        value: { type: "string", value: jsonValue },
       },
     ],
   };
@@ -201,6 +453,7 @@ interface NamedRecord {
   id: number;
   name?: string;
   api_key?: string;
+  uuid?: string;
 }
 
 async function findNamed(
@@ -345,15 +598,23 @@ async function applyOverrideClassic(
     const id = typeof fs === "number" ? fs : fs?.id;
     return id === featureSegmentId;
   });
+  const value = {
+    type: "unicode",
+    string_value: JSON.stringify(L3_FLAG_CONFIG),
+  };
   if (!match) {
-    throw new L3BootstrapError("Feature state for the sensory_safe override was not created");
+    await adminRequest(apiUrl, token, "POST", "/features/featurestates/", {
+      enabled: true,
+      feature: featureId,
+      environment: Number(environmentId),
+      feature_segment: featureSegmentId,
+      feature_state_value: value,
+    });
+    return true;
   }
   await adminRequest(apiUrl, token, "PATCH", `/features/featurestates/${match.id}/`, {
     enabled: true,
-    feature_state_value: {
-      type: "unicode",
-      string_value: JSON.stringify(L3_FLAG_CONFIG),
-    },
+    feature_state_value: value,
   });
   return true;
 }
@@ -385,15 +646,18 @@ export async function bootstrapL3(
   const apiUrl = resolveL3ApiUrl(args.apiUrl);
   assertLoopback(apiUrl, args.allowRemote);
 
-  const token = env("FLAGSMITH_ADMIN_API_TOKEN");
-  const projectId = env("FLAGSMITH_PROJECT_ID");
-  const environmentKey = env("FLAGSMITH_ENVIRONMENT_KEY");
+  let token = env("FLAGSMITH_ADMIN_API_TOKEN");
+  let projectId = env("FLAGSMITH_PROJECT_ID");
+  let environmentKey = env("FLAGSMITH_ENVIRONMENT_KEY");
   let environmentId = env("FLAGSMITH_ENVIRONMENT_ID");
   const environmentName = env("FLAGSMITH_ENVIRONMENT_NAME", "Development");
+
+  const dashboardUrl = originFromApiUrl(apiUrl);
 
   if (args.dryRun) {
     return {
       apiUrl,
+      dashboardUrl,
       projectId: projectId || "(dry-run)",
       environmentId: environmentId || "(dry-run)",
       environmentKey: environmentKey || "(dry-run)",
@@ -403,6 +667,12 @@ export async function bootstrapL3(
       dryRun: true,
     };
   }
+
+  const instance = await ensureInstance(apiUrl);
+  token = instance.token;
+  projectId = instance.projectId;
+  environmentKey = instance.environmentKey || environmentKey;
+  if (instance.environmentId) environmentId = instance.environmentId;
 
   if (!token) {
     throw new L3BootstrapError(
@@ -461,9 +731,34 @@ export async function bootstrapL3(
   }
 
   if (environmentKey) writeDemoConfig(environmentKey, apiUrl);
+  let environmentUuid = "";
+  try {
+    const { data: envList } = await adminRequest<unknown>(
+      apiUrl,
+      token,
+      "GET",
+      `/projects/${projectId}/environments/`,
+    );
+    const envMatch = listResults<NamedRecord>(envList).find(
+      (item) => String(item.id) === String(environmentId),
+    );
+    environmentUuid = envMatch?.uuid ?? "";
+  } catch {
+    environmentUuid = "";
+  }
+  writeStateFile({
+    dashboardUrl,
+    projectId,
+    environmentId,
+    environmentUuid,
+    segmentId: segment.id,
+    flagId: flag.id,
+    orgId: instance.orgId,
+  });
 
   return {
     apiUrl,
+    dashboardUrl,
     projectId,
     environmentId,
     environmentKey,
@@ -489,7 +784,18 @@ async function main() {
     return;
   }
   const result = await bootstrapL3(args);
-  process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+  const publicResult = {
+    apiUrl: result.apiUrl,
+    dashboardUrl: result.dashboardUrl,
+    projectId: result.projectId,
+    environmentId: result.environmentId,
+    environmentKey: maskSecret(result.environmentKey),
+    segmentId: result.segmentId,
+    flagId: result.flagId,
+    overrideApplied: result.overrideApplied,
+    dryRun: result.dryRun,
+  };
+  process.stdout.write(`${JSON.stringify(publicResult, null, 2)}\n`);
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {

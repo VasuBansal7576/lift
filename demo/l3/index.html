@@ -9,17 +9,19 @@
 <body data-site="l3">
   <p class="sim-banner" role="note">Lift Layer 3 demo. Stress samples never leave this page. Only the boolean trait overstimulated is sent to Flagsmith.</p>
   <p id="lift-l3-offline" class="offline-banner" hidden>
-    OFFLINE FALLBACK — tests only. Flagsmith segment evaluation skipped. Sensory-Safe is driven locally because no environment key was available.
+    Flagsmith unreachable. Staying in the normal flag-off state. Sensory-Safe was not applied locally.
   </p>
 
   <div class="promo" data-lift-promo>
     FLASH SALE 50% OFF — ONLY 00:07 LEFT — BUY BUY BUY
     <span>Sticky promo banner</span>
+    <button type="button" id="promo-focus">Promo offer</button>
   </div>
 
   <header class="masthead">
     <a class="wordmark" href="./">Northline Market</a>
     <button type="button" class="checkout-btn" id="checkout" data-lift-essential>Checkout</button>
+    <button type="button" id="lift-l3-opt-out" hidden>Exit Sensory-Safe</button>
   </header>
 
   <div class="flash-bar" aria-hidden="true">
@@ -67,7 +69,7 @@
             When the combined score stays at or above 0.62 for 1.5 seconds, the runtime calls Flagsmith’s JS SDK <code>setTrait('overstimulated', true)</code> on the sticky <code>lift_vid</code> identity. Flagsmith evaluates the <code>sensory_safe</code> segment rule <code>overstimulated == true</code> and serves the <code>l3_sensory_safe</code> flag. The page reads that flag. It does not apply the mode from a local <code>if (score)</code>. Returning to calm requires the score to stay below 0.38 for 8 seconds, plus a cooldown, and the restore fades over about 2 seconds.
           </p>
           <p>
-            Returning visitors keep the same identity via the <code>lift_vid</code> cookie or <code>?lift_identity=</code>. Checkout is marked <code>data-lift-essential</code> so Sensory-Safe never hides it, never strips focus, and never changes its role or accessible name. Promo, cookie, and marketing surfaces use <code>data-lift-promo</code>, <code>data-lift-cookie</code>, and <code>data-lift-marketing</code>.
+            Returning visitors keep the same identity via the <code>lift_vid</code> cookie or a <code>?lift_identity=lift-&lt;uuid&gt;</code> value. Checkout is marked <code>data-lift-essential</code> so Sensory-Safe never hides it, never strips focus, and never changes its role or accessible name. Only <code>data-lift-promo</code> and <code>data-lift-marketing</code> hide. Cookie consent, errors, and legal copy stay visible. Press Escape or “Exit Sensory-Safe” to opt out.
           </p>
         </div>
       </article>
@@ -101,6 +103,11 @@
   </div>
 
   <p class="confirm" id="order-confirm" role="status">Order confirmed. The jacket is on its way. (Demo only.)</p>
+  <p class="error-surface" data-lift-error role="alert">Card declined. This error surface must stay visible in Sensory-Safe.</p>
+  <p class="legal-surface" data-lift-legal>Legal: demo terms, returns, and privacy. Not a marketing banner.</p>
+  <video id="user-video" controls muted playsinline width="240">
+    <source src="./hero.webm" type="video/webm">
+  </video>
 
   <div class="cookie" data-lift-cookie>
     <p>We use cookies to retarget this flash sale across the entire internet. Accept to keep shopping.</p>
@@ -111,7 +118,8 @@
     Wait! 10% more off if you subscribe before the carousel stops.
   </div>
 
-  <div id="lift-l3-hud" aria-live="polite"></div>
+  <div id="lift-l3-hud" aria-hidden="true"></div>
+  <div id="lift-l3-live" class="lift-visually-hidden" aria-live="polite"></div>
 
   <script type="module" src="/runtime/l3-balancer.js"></script>
   <script type="module" src="./app.js"></script>

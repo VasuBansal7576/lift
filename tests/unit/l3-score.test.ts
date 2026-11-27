@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 import { WEIGHTS } from "../../shared/l3-constants.ts";
 import {
   combineStress,
+  dampenTremor,
   detectRageClicks,
   directionChangeRate,
+  isKeyboardOrNonPointerClick,
   mouseJitter,
   scoreBiometric,
   scoreErraticMouse,
@@ -100,6 +102,32 @@ describe("L3 detectors and score", () => {
       { t: 400, y: 900, dy: -900 },
     ];
     expect(scoreScrollThrash(thrash, 400)).toBeGreaterThan(0.5);
+  });
+
+  it("ignores keyboard clicks (detail 0) and non-pointer types for rage", () => {
+    const keyboard: PointSample[] = [
+      { t: 1000, x: 50, y: 50, detail: 0, pointerType: "mouse" },
+      { t: 1100, x: 50, y: 50, detail: 0 },
+      { t: 1200, x: 50, y: 50, detail: 0 },
+    ];
+    expect(keyboard.every(isKeyboardOrNonPointerClick)).toBe(true);
+    expect(detectRageClicks(keyboard, 1200)).toBe(0);
+    const penOk: PointSample[] = [
+      { t: 1000, x: 50, y: 50, detail: 1, pointerType: "pen" },
+      { t: 1100, x: 51, y: 50, detail: 1, pointerType: "pen" },
+      { t: 1200, x: 52, y: 50, detail: 1, pointerType: "pen" },
+    ];
+    expect(detectRageClicks(penOk, 1200)).toBe(1);
+  });
+
+  it("damps tiny high-frequency tremor so it does not look erratic", () => {
+    const tremor: PointSample[] = Array.from({ length: 40 }, (_, i) => ({
+      t: 1000 + i * 8,
+      x: 100 + (i % 2),
+      y: 100,
+    }));
+    expect(dampenTremor(tremor).length).toBeLessThan(5);
+    expect(scoreErraticMouse(tremor, tremor[tremor.length - 1].t)).toBeLessThan(0.15);
   });
 
   it("maps the simulated biometric slider 0–100 onto 0–1", () => {

@@ -27,6 +27,12 @@ export const FADE_MS = 2_000;
 export const RAGE_CLICK_COUNT = 3;
 export const RAGE_CLICK_MS = 700;
 export const RAGE_CLICK_RADIUS_PX = 30;
+/** Consecutive mouse samples closer than this are treated as tremor, not erratic motion. */
+export const TREMOR_MIN_PX = 3;
+export const SET_TRAIT_TIMEOUT_MS = 4_000;
+/** Sticky identity must be `lift-` plus a UUID. Anything else is rejected. */
+export const L3_IDENTITY_RE =
+  /^lift-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** Weights sum to 1. Each component is itself in [0, 1]. */
 export const WEIGHTS = {

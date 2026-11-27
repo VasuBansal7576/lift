@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { SOFT_INK, SOFT_PAPER, WCAG_AA_MIN } from "../../shared/l3-constants.ts";
 import {
+  appliedSoftColors,
   assertContrastFloor,
   contrastRatio,
   softenCssPair,
@@ -35,5 +36,13 @@ describe("L3 soften transform contrast floor", () => {
     const pair = softenPair([255, 0, 51], [255, 255, 255]);
     expect(pair.contrast).toBeGreaterThanOrEqual(WCAG_AA_MIN);
     expect(pair.fg[0] - pair.fg[1]).toBeLessThan(255 - 0);
+  });
+
+  it("softens the flag ink/paper and reports the contrast actually applied", () => {
+    const applied = appliedSoftColors("#000000", "#ffffff");
+    expect(applied.contrast).toBeGreaterThanOrEqual(WCAG_AA_MIN);
+    expect(applied.fg.toLowerCase()).not.toBe("#000000");
+    const low = appliedSoftColors("#c8c8c8", "#dcdcdc");
+    expect(low.contrast).toBeGreaterThanOrEqual(WCAG_AA_MIN);
   });
 });

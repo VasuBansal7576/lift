@@ -11,6 +11,9 @@
  * segment evaluation → hasFeature("l3_sensory_safe") → UI. The page does not
  * apply Sensory-Safe from a local score threshold check.
  *
+ * When Flagsmith is unavailable the runtime fail-opens: the page stays in the
+ * normal flag-off state and never calls applySensorySafe(true).
+ *
  * Constants must stay in sync with shared/l3-constants.ts.
  */
 const L3_FLAG_NAME = "l3_sensory_safe";
@@ -18,6 +21,8 @@ const L3_SEGMENT_NAME = "sensory_safe";
 const L3_TRAIT_NAME = "overstimulated";
 const L3_COOKIE = "lift_vid";
 const L3_SDK_URL = "https://cdn.jsdelivr.net/npm/@flagsmith/flagsmith@12.4.0/+esm";
+const L3_IDENTITY_RE =
+  /^lift-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const WINDOW_MS = 5_000;
 const ENTER_THRESHOLD = 0.62;
@@ -29,6 +34,8 @@ const FADE_MS = 2_000;
 const RAGE_CLICK_COUNT = 3;
 const RAGE_CLICK_MS = 700;
 const RAGE_CLICK_RADIUS_PX = 30;
+const TREMOR_MIN_PX = 3;
+const SET_TRAIT_TIMEOUT_MS = 4_000;
 const WCAG_AA_MIN = 4.5;
 const WEIGHTS = Object.freeze({
   erraticMouse: 0.3,
@@ -55,6 +62,7 @@ export const L3_CONSTANTS = Object.freeze({
   L3_TRAIT_NAME,
   L3_COOKIE,
   L3_SDK_URL,
+  L3_IDENTITY_RE,
   WINDOW_MS,
   ENTER_THRESHOLD,
   EXIT_THRESHOLD,
@@ -65,6 +73,8 @@ export const L3_CONSTANTS = Object.freeze({
   RAGE_CLICK_COUNT,
   RAGE_CLICK_MS,
   RAGE_CLICK_RADIUS_PX,
+  TREMOR_MIN_PX,
+  SET_TRAIT_TIMEOUT_MS,
   WCAG_AA_MIN,
   WEIGHTS,
   SOFT_INK,
@@ -117,8 +127,24 @@ export function directionChangeRate(points) {
   return counted === 0 ? 0 : changes / counted;
 }
 
+export function dampenTremor(points, minPx = TREMOR_MIN_PX) {
+  if (points.length === 0) return [];
+  const kept = [points[0]];
+  for (let i = 1; i < points.length; i += 1) {
+    if (dist(kept[kept.length - 1], points[i]) >= minPx) kept.push(points[i]);
+  }
+  return kept;
+}
+
+export function isKeyboardOrNonPointerClick(click) {
+  if (click.detail === 0) return true;
+  const pointerType = click.pointerType;
+  if (!pointerType) return false;
+  return pointerType !== "mouse" && pointerType !== "pen" && pointerType !== "touch";
+}
+
 export function scoreErraticMouse(points, now, windowMs = WINDOW_MS) {
-  const recent = inWindow(points, now, windowMs);
+  const recent = dampenTremor(inWindow(points, now, windowMs));
   if (recent.length < 5) return 0;
   const jitterScore = clamp01((mouseJitter(recent) - 1.5) / 10);
   const turnScore = clamp01(directionChangeRate(recent) / 0.55);
@@ -126,7 +152,7 @@ export function scoreErraticMouse(points, now, windowMs = WINDOW_MS) {
 }
 
 export function detectRageClicks(clicks, now, windowMs = WINDOW_MS) {
-  const recent = inWindow(clicks, now, windowMs);
+  const recent = inWindow(clicks, now, windowMs).filter((click) => !isKeyboardOrNonPointerClick(click));
   for (let i = 0; i < recent.length; i += 1) {
     const origin = recent[i];
     let n = 0;
@@ -249,6 +275,13 @@ export function stepHysteresis(state, score, now, cfg = {}) {
   return { state: next, event: "none" };
 }
 
+export function shouldApplySensorySafe(input) {
+  if (input.offline || input.optedOut) return false;
+  if (!input.flagOn) return false;
+  if (!input.hysteresisOn) return false;
+  return true;
+}
+
 function relativeLuminance(r, g, b) {
   const lin = [r, g, b].map((channel) => {
     const c = channel / 255;
@@ -356,6 +389,17 @@ export function softenCssPair(fg, bg) {
   return { fg: rgbToHex(pair.fg), bg: rgbToHex(pair.bg), contrast: pair.contrast };
 }
 
+export function appliedSoftColors(ink = "", paper = "") {
+  const fg = (ink || "").trim() || rgbToHex(SOFT_INK);
+  const bg = (paper || "").trim() || rgbToHex(SOFT_PAPER);
+  try {
+    return softenCssPair(fg, bg);
+  } catch {
+    const fallback = softenPair(SOFT_INK, SOFT_PAPER);
+    return { fg: rgbToHex(fallback.fg), bg: rgbToHex(fallback.bg), contrast: fallback.contrast };
+  }
+}
+
 export function parseCookie(header, name) {
   if (!header) return "";
   const parts = header.split(";");
@@ -369,16 +413,20 @@ export function parseCookie(header, name) {
   return "";
 }
 
+export function isSafeIdentity(value) {
+  return L3_IDENTITY_RE.test(String(value || "").trim());
+}
+
 export function stickyIdentity(doc = typeof document !== "undefined" ? document : null) {
-  if (!doc) return "lift-node";
+  if (!doc) return "lift-00000000-0000-4000-8000-000000000000";
   const params = new URLSearchParams(doc.defaultView?.location?.search ?? "");
   const fromQuery = (params.get("lift_identity") || "").trim();
-  if (fromQuery) {
+  if (fromQuery && isSafeIdentity(fromQuery)) {
     doc.cookie = `${L3_COOKIE}=${encodeURIComponent(fromQuery)}; Path=/; Max-Age=31536000; SameSite=Lax`;
     return fromQuery;
   }
   const existing = parseCookie(doc.cookie, L3_COOKIE).trim();
-  if (existing) return existing;
+  if (existing && isSafeIdentity(existing)) return existing;
   const created = `lift-${crypto.randomUUID()}`;
   doc.cookie = `${L3_COOKIE}=${encodeURIComponent(created)}; Path=/; Max-Age=31536000; SameSite=Lax`;
   return created;
@@ -394,6 +442,16 @@ function isHudOff() {
 
 function isOfflineFallback() {
   return params().get("l3_offline") === "1";
+}
+
+function prefersReducedMotion() {
+  return Boolean(window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches);
+}
+
+function fadeMsFor(config) {
+  if (prefersReducedMotion()) return 0;
+  const fade = Number(config?.fadeMs);
+  return Number.isFinite(fade) ? fade : FADE_MS;
 }
 
 function timingConfig() {
@@ -430,6 +488,9 @@ const runtime = {
   flagConfig: { ...DEFAULT_FLAG_CONFIG },
   segmentMember: false,
   offline: false,
+  optedOut: false,
+  desiredTrait: false,
+  traitSeq: 0,
   forceScore: null,
   lastScore: 0,
   lastComponents: {
@@ -441,9 +502,19 @@ const runtime = {
   lastPhase: "calm",
   applying: false,
   timer: 0,
+  fadeTimer: 0,
+  moveRaf: 0,
+  scrollRaf: 0,
   cursorEl: null,
   started: false,
+  unsubscribers: [],
+  lastAnnounced: "",
 };
+
+function on(target, type, handler, options) {
+  target.addEventListener(type, handler, options);
+  runtime.unsubscribers.push(() => target.removeEventListener(type, handler, options));
+}
 
 function trimSamples(now) {
   const cut = now - WINDOW_MS * 2;
@@ -468,9 +539,65 @@ function traitIsTrue(value) {
   return value === true || value === "true" || value === 1 || value === "1";
 }
 
+function withTimeout(promise, ms = SET_TRAIT_TIMEOUT_MS) {
+  return new Promise((resolve, reject) => {
+    const timer = window.setTimeout(() => reject(new Error("Flagsmith timeout")), ms);
+    Promise.resolve(promise).then(
+      (value) => {
+        window.clearTimeout(timer);
+        resolve(value);
+      },
+      (err) => {
+        window.clearTimeout(timer);
+        reject(err);
+      },
+    );
+  });
+}
+
+function isEssential(el) {
+  if (!el || !el.closest) return false;
+  if (el.id === "checkout" || el.closest("#checkout")) return true;
+  return Boolean(el.closest("[data-lift-essential]"));
+}
+
+function moveFocusOutOf(el) {
+  const active = document.activeElement;
+  if (!active || !el.contains(active)) return;
+  const fallback =
+    document.getElementById("checkout") || document.querySelector("main") || document.body;
+  if (!fallback) return;
+  if (fallback !== document.body && !fallback.hasAttribute("tabindex") && !fallback.matches("button, a, input, select, textarea")) {
+    fallback.setAttribute("tabindex", "-1");
+  }
+  if (typeof fallback.focus === "function") fallback.focus();
+}
+
+function isAutoplayMedia(el) {
+  return el.autoplay || el.hasAttribute("autoplay") || el.dataset.liftAutoplay === "1";
+}
+
+function bindMediaGuards() {
+  document.querySelectorAll("video, audio").forEach((el) => {
+    if (el.dataset.liftMediaBound === "1") return;
+    el.dataset.liftMediaBound = "1";
+    if (el.autoplay || el.hasAttribute("autoplay")) el.dataset.liftAutoplay = "1";
+    const markGesture = () => {
+      el.dataset.liftGesture = "1";
+    };
+    on(el, "pointerdown", markGesture);
+    on(el, "keydown", markGesture);
+    on(el, "play", () => {
+      if (el.dataset.liftGesture === "1") el.dataset.liftUserPlayback = "1";
+    });
+  });
+}
+
 function pauseMedia() {
   document.querySelectorAll("video, audio").forEach((el) => {
     if (!("paused" in el)) return;
+    if (el.dataset.liftUserPlayback === "1") return;
+    if (!isAutoplayMedia(el)) return;
     el.dataset.liftWasPlaying = el.paused ? "0" : "1";
     el.pause();
     el.autoplay = false;
@@ -495,19 +622,19 @@ function revealSummaries(on) {
 }
 
 function setBannerHidden(on) {
-  document
-    .querySelectorAll("[data-lift-promo], [data-lift-cookie], [data-lift-marketing]")
-    .forEach((el) => {
-      el.hidden = on;
-    });
+  document.querySelectorAll("[data-lift-promo], [data-lift-marketing]").forEach((el) => {
+    if (isEssential(el)) return;
+    if (on) moveFocusOutOf(el);
+    el.hidden = on;
+  });
 }
 
 function applySoftColors(on, config) {
   const root = document.documentElement;
   if (on && config.softenContrast) {
-    const pair = softenCssPair("#000000", "#ffffff");
-    root.style.setProperty("--lift-ink", config.ink || pair.fg);
-    root.style.setProperty("--lift-paper", config.paper || pair.bg);
+    const pair = appliedSoftColors(config.ink, config.paper);
+    root.style.setProperty("--lift-ink", pair.fg);
+    root.style.setProperty("--lift-paper", pair.bg);
     root.dataset.liftContrast = String(pair.contrast.toFixed(2));
   } else {
     root.style.removeProperty("--lift-ink");
@@ -516,34 +643,84 @@ function applySoftColors(on, config) {
   }
 }
 
+function ensureOptOutButton() {
+  let btn = document.getElementById("lift-l3-opt-out");
+  if (!btn) {
+    btn = document.createElement("button");
+    btn.id = "lift-l3-opt-out";
+    btn.type = "button";
+    btn.textContent = "Exit Sensory-Safe";
+    const host = document.querySelector(".masthead") || document.body;
+    host.appendChild(btn);
+  }
+  if (btn.dataset.liftBound !== "1") {
+    btn.dataset.liftBound = "1";
+    on(btn, "click", () => {
+      runtime.optedOut = true;
+      runtime.desiredTrait = false;
+      runtime.hysteresis.overstimulated = false;
+      void pushTrait(false);
+      applySensorySafe(false, runtime.flagConfig);
+      renderHud();
+    });
+  }
+  return btn;
+}
+
+function announce(text) {
+  if (runtime.lastAnnounced === text) return;
+  runtime.lastAnnounced = text;
+  let live = document.getElementById("lift-l3-live");
+  if (!live) {
+    live = document.createElement("div");
+    live.id = "lift-l3-live";
+    live.className = "lift-visually-hidden";
+    live.setAttribute("aria-live", "polite");
+    document.body.appendChild(live);
+  }
+  live.textContent = text;
+}
+
 /**
  * Apply or reverse Sensory-Safe from a Flagsmith flag decision.
  * Never changes roles, names, or tabindex. Never hides [data-lift-essential] or #checkout.
+ * Never hides cookie consent, errors, or legal copy.
  */
 export function applySensorySafe(on, config = DEFAULT_FLAG_CONFIG) {
   const root = document.documentElement;
-  const fadeMs = Number(config.fadeMs) || FADE_MS;
+  const fadeMs = fadeMsFor(config);
   root.style.setProperty("--lift-fade-ms", `${fadeMs}ms`);
+  window.clearTimeout(runtime.fadeTimer);
+  const optOut = ensureOptOutButton();
   if (on) {
     root.classList.add("lift-sensory-safe");
     root.classList.remove("lift-sensory-restoring");
     root.dataset.liftSensory = "on";
+    if (config.pauseMotion !== false) root.classList.add("lift-pause-motion");
+    else root.classList.remove("lift-pause-motion");
     if (config.pauseMedia !== false) pauseMedia();
     if (config.showSummaries !== false) revealSummaries(true);
     if (config.hideMarketing !== false) setBannerHidden(true);
     applySoftColors(true, config);
+    optOut.hidden = false;
   } else {
     const wasOn = root.classList.contains("lift-sensory-safe");
     root.classList.remove("lift-sensory-safe");
-    if (wasOn) root.classList.add("lift-sensory-restoring");
+    root.classList.remove("lift-pause-motion");
+    if (wasOn && fadeMs > 0) root.classList.add("lift-sensory-restoring");
     root.dataset.liftSensory = "off";
     resumeMedia();
     revealSummaries(false);
     setBannerHidden(false);
     applySoftColors(false, config);
-    window.setTimeout(() => {
+    optOut.hidden = true;
+    if (wasOn && fadeMs > 0) {
+      runtime.fadeTimer = window.setTimeout(() => {
+        root.classList.remove("lift-sensory-restoring");
+      }, fadeMs);
+    } else {
       root.classList.remove("lift-sensory-restoring");
-    }, fadeMs);
+    }
   }
   document.dispatchEvent(
     new CustomEvent("lift:sensory-safe", { detail: { on, config, source: "flagsmith-flag" } }),
@@ -565,44 +742,95 @@ function readFlagsmithState(flagsmith) {
   };
 }
 
+function failOpen(reason) {
+  runtime.offline = true;
+  runtime.flagOn = false;
+  runtime.segmentMember = false;
+  const banner = document.getElementById("lift-l3-offline");
+  if (banner) {
+    banner.hidden = false;
+    banner.textContent = isOfflineFallback()
+      ? "OFFLINE FALLBACK — tests only. Flagsmith skipped. Sensory-Safe stays off (fail-open)."
+      : "Flagsmith unreachable. Staying in the normal flag-off state. Sensory-Safe was not applied locally.";
+  }
+  applySensorySafe(false, runtime.flagConfig);
+  renderHud();
+  const hud = document.getElementById("lift-l3-hud");
+  if (hud && reason) hud.dataset.error = reason;
+}
+
 async function applyFromFlagsmith() {
   if (runtime.offline) {
-    const on = runtime.trait;
-    runtime.flagOn = on;
-    runtime.segmentMember = on;
-    runtime.flagConfig = { ...DEFAULT_FLAG_CONFIG };
-    applySensorySafe(on, runtime.flagConfig);
+    runtime.flagOn = false;
+    runtime.segmentMember = false;
+    applySensorySafe(false, runtime.flagConfig);
     renderHud();
     return;
   }
   const flagsmith = runtime.flagsmith;
-  if (!flagsmith) return;
+  if (!flagsmith) {
+    applySensorySafe(false, runtime.flagConfig);
+    renderHud();
+    return;
+  }
   const snapshot = readFlagsmithState(flagsmith);
   runtime.trait = snapshot.trait;
-  runtime.flagOn = snapshot.flagOn;
   runtime.flagConfig = snapshot.flagConfig;
-  runtime.segmentMember = snapshot.segmentMember;
-  applySensorySafe(snapshot.flagOn, snapshot.flagConfig);
+  const apply = shouldApplySensorySafe({
+    offline: runtime.offline,
+    optedOut: runtime.optedOut,
+    flagOn: snapshot.flagOn,
+    hysteresisOn: runtime.hysteresis.overstimulated,
+  });
+  runtime.flagOn = apply;
+  runtime.segmentMember = apply && snapshot.segmentMember;
+  applySensorySafe(apply, snapshot.flagConfig);
+  if (apply !== snapshot.flagOn || runtime.trait !== runtime.hysteresis.overstimulated) {
+    /* stale enter or opted-out: keep UI off */
+  }
   renderHud();
 }
 
 async function pushTrait(value) {
-  runtime.trait = value;
-  if (runtime.offline) {
-    await applyFromFlagsmith();
+  runtime.desiredTrait = value;
+  const seq = (runtime.traitSeq += 1);
+  if (runtime.offline || !runtime.flagsmith) {
+    runtime.trait = false;
+    applySensorySafe(false, runtime.flagConfig);
+    renderHud();
     return;
   }
   const flagsmith = runtime.flagsmith;
-  if (!flagsmith || typeof flagsmith.setTrait !== "function") return;
-  await flagsmith.setTrait(L3_TRAIT_NAME, value);
-  if (typeof flagsmith.getFlags === "function") {
-    try {
-      await flagsmith.getFlags();
-    } catch {
-      /* still apply whatever the SDK currently has */
+  if (typeof flagsmith.setTrait !== "function") {
+    failOpen("setTrait missing");
+    return;
+  }
+  try {
+    await withTimeout(flagsmith.setTrait(L3_TRAIT_NAME, value));
+    if (typeof flagsmith.getFlags === "function") {
+      await withTimeout(flagsmith.getFlags());
     }
+  } catch (err) {
+    failOpen(err instanceof Error ? err.message : "setTrait failed");
+    return;
+  }
+  if (seq !== runtime.traitSeq) return;
+  if (runtime.hysteresis.overstimulated !== value) {
+    void pushTrait(runtime.hysteresis.overstimulated);
+    return;
   }
   await applyFromFlagsmith();
+}
+
+function h(tag, attrs = {}, text) {
+  const node = document.createElement(tag);
+  for (const [key, value] of Object.entries(attrs)) {
+    if (value == null || value === false) continue;
+    if (key === "className") node.className = String(value);
+    else node.setAttribute(key, String(value));
+  }
+  if (text != null) node.textContent = String(text);
+  return node;
 }
 
 function fmt(n) {
@@ -612,6 +840,8 @@ function fmt(n) {
 function renderHud() {
   const hud = document.getElementById("lift-l3-hud");
   if (!hud) return;
+  hud.setAttribute("aria-hidden", "true");
+  hud.removeAttribute("aria-live");
   if (isHudOff()) {
     hud.hidden = true;
     return;
@@ -619,31 +849,75 @@ function renderHud() {
   hud.hidden = false;
   const now = Date.now();
   const cooldownLeft = Math.max(0, runtime.hysteresis.cooldownUntil - now);
-  const offlineNote = runtime.offline
-    ? `<p class="l3-hud-warn">OFFLINE FALLBACK — tests only. Flagsmith segment evaluation skipped.</p>`
-    : "";
+  const contrast = document.documentElement.dataset.liftContrast || "";
   hud.dataset.score = fmt(runtime.lastScore);
   hud.dataset.trait = String(runtime.trait);
   hud.dataset.flag = String(runtime.flagOn);
   hud.dataset.segment = String(runtime.segmentMember);
   hud.dataset.phase = runtime.lastPhase;
   hud.dataset.offline = String(runtime.offline);
-  hud.innerHTML = `
-    <p class="l3-hud-title">L3 Cognitive Overload Balancer</p>
-    ${offlineNote}
-    <p>score <strong data-l3="score">${fmt(runtime.lastScore)}</strong>${runtime.forceScore == null ? "" : " (forced)"}</p>
-    <ul>
-      <li>mouse ${fmt(runtime.lastComponents.erraticMouse)}</li>
-      <li>rage ${fmt(runtime.lastComponents.rageClicks)}</li>
-      <li>scroll ${fmt(runtime.lastComponents.scrollThrash)}</li>
-      <li>biometric ${fmt(runtime.lastComponents.biometric)} <em>(simulated)</em></li>
-    </ul>
-    <p>trait overstimulated <strong data-l3="trait">${runtime.trait}</strong> <span>(Flagsmith)</span></p>
-    <p>segment ${L3_SEGMENT_NAME} <strong data-l3="segment">${runtime.segmentMember ? "member" : "not a member"}</strong></p>
-    <p>flag ${L3_FLAG_NAME} <strong data-l3="flag">${runtime.flagOn ? "on" : "off"}</strong></p>
-    <p>phase <strong data-l3="phase">${runtime.lastPhase}</strong> cooldown ${Math.ceil(cooldownLeft / 1000)}s</p>
-    <p class="l3-hud-id">identity ${runtime.identity}</p>
-  `;
+  hud.dataset.contrast = contrast;
+  hud.dataset.enter = String(ENTER_THRESHOLD);
+  hud.dataset.exit = String(EXIT_THRESHOLD);
+  hud.replaceChildren();
+  hud.appendChild(h("p", { className: "l3-hud-title" }, "L3 Cognitive Overload Balancer"));
+  if (runtime.offline) {
+    hud.appendChild(
+      h(
+        "p",
+        { className: "l3-hud-warn" },
+        isOfflineFallback()
+          ? "OFFLINE FALLBACK — tests only. Flagsmith skipped. Sensory-Safe stays off (fail-open)."
+          : "Flagsmith unreachable. Sensory-Safe stays off (fail-open).",
+      ),
+    );
+  }
+  const scoreLine = h("p");
+  scoreLine.append("score ");
+  scoreLine.appendChild(h("strong", { "data-l3": "score" }, fmt(runtime.lastScore)));
+  if (runtime.forceScore != null) scoreLine.append(" (forced)");
+  hud.appendChild(scoreLine);
+  const list = h("ul");
+  list.appendChild(h("li", {}, `mouse ${fmt(runtime.lastComponents.erraticMouse)}`));
+  list.appendChild(h("li", {}, `rage ${fmt(runtime.lastComponents.rageClicks)}`));
+  list.appendChild(h("li", {}, `scroll ${fmt(runtime.lastComponents.scrollThrash)}`));
+  const bio = h("li");
+  bio.append(`biometric ${fmt(runtime.lastComponents.biometric)} `);
+  bio.appendChild(h("em", {}, "(simulated)"));
+  list.appendChild(bio);
+  hud.appendChild(list);
+  const traitLine = h("p");
+  traitLine.append("trait overstimulated ");
+  traitLine.appendChild(h("strong", { "data-l3": "trait" }, String(runtime.trait)));
+  traitLine.append(" (Flagsmith)");
+  hud.appendChild(traitLine);
+  const segLine = h("p");
+  segLine.append(`segment ${L3_SEGMENT_NAME} `);
+  segLine.appendChild(
+    h("strong", { "data-l3": "segment" }, runtime.segmentMember ? "member" : "not a member"),
+  );
+  hud.appendChild(segLine);
+  const flagLine = h("p");
+  flagLine.append(`flag ${L3_FLAG_NAME} `);
+  flagLine.appendChild(h("strong", { "data-l3": "flag" }, runtime.flagOn ? "on" : "off"));
+  hud.appendChild(flagLine);
+  const contrastLine = h("p");
+  contrastLine.append("contrast ");
+  contrastLine.appendChild(h("strong", { "data-l3": "contrast" }, contrast ? `${contrast}:1` : "—"));
+  contrastLine.append(" (WCAG AA ≥ 4.5:1)");
+  hud.appendChild(contrastLine);
+  const phaseLine = h("p");
+  phaseLine.append("phase ");
+  phaseLine.appendChild(h("strong", { "data-l3": "phase" }, runtime.lastPhase));
+  phaseLine.append(` cooldown ${Math.ceil(cooldownLeft / 1000)}s · enter ${ENTER_THRESHOLD} / exit ${EXIT_THRESHOLD}`);
+  hud.appendChild(phaseLine);
+  const idLine = h("p", { className: "l3-hud-id" });
+  idLine.append("identity ");
+  idLine.append(runtime.identity);
+  hud.appendChild(idLine);
+  announce(
+    `overstimulated ${runtime.trait ? "true" : "false"}, ${L3_FLAG_NAME} ${runtime.flagOn ? "on" : "off"}`,
+  );
 }
 
 function ensureCursorDot() {
@@ -670,29 +944,37 @@ function tick() {
   const stepped = stepHysteresis(runtime.hysteresis, runtime.lastScore, now, timingConfig());
   runtime.hysteresis = stepped.state;
   runtime.lastPhase = hysteresisPhase(runtime.hysteresis, now);
-  if (stepped.event === "enter" && !runtime.applying) {
-    runtime.applying = true;
-    void pushTrait(true).finally(() => {
-      runtime.applying = false;
-    });
-  } else if (stepped.event === "exit" && !runtime.applying) {
-    runtime.applying = true;
-    void pushTrait(false).finally(() => {
-      runtime.applying = false;
-    });
+  if (runtime.optedOut && stepped.event === "enter") {
+    runtime.hysteresis.overstimulated = false;
+    renderHud();
+    return;
+  }
+  if (stepped.event === "enter" || stepped.event === "exit") {
+    runtime.desiredTrait = stepped.event === "enter";
+    void pushTrait(runtime.desiredTrait);
   }
   renderHud();
 }
 
 function onMove(event) {
-  runtime.mouse.push({ t: Date.now(), x: event.clientX, y: event.clientY });
-  if (runtime.cursorEl) {
-    runtime.cursorEl.style.transform = `translate(${event.clientX}px, ${event.clientY}px)`;
-  }
+  if (runtime.moveRaf) return;
+  runtime.moveRaf = window.requestAnimationFrame(() => {
+    runtime.moveRaf = 0;
+    runtime.mouse.push({ t: Date.now(), x: event.clientX, y: event.clientY });
+    if (runtime.cursorEl) {
+      runtime.cursorEl.style.transform = `translate(${event.clientX}px, ${event.clientY}px)`;
+    }
+  });
 }
 
 function onClick(event) {
-  runtime.clicks.push({ t: Date.now(), x: event.clientX, y: event.clientY });
+  runtime.clicks.push({
+    t: Date.now(),
+    x: event.clientX,
+    y: event.clientY,
+    detail: event.detail,
+    pointerType: event.pointerType,
+  });
 }
 
 function onWheel(event) {
@@ -704,9 +986,20 @@ function onWheel(event) {
 }
 
 function onScroll() {
-  const y = window.scrollY || 0;
-  const last = runtime.scrolls[runtime.scrolls.length - 1];
-  runtime.scrolls.push({ t: Date.now(), y, dy: last ? y - last.y : 0 });
+  if (runtime.scrollRaf) return;
+  runtime.scrollRaf = window.requestAnimationFrame(() => {
+    runtime.scrollRaf = 0;
+    const y = window.scrollY || 0;
+    const last = runtime.scrolls[runtime.scrolls.length - 1];
+    runtime.scrolls.push({ t: Date.now(), y, dy: last ? y - last.y : 0 });
+  });
+}
+
+function onKeydown(event) {
+  if (event.key === "Escape" && document.documentElement.classList.contains("lift-sensory-safe")) {
+    const btn = document.getElementById("lift-l3-opt-out");
+    if (btn) btn.click();
+  }
 }
 
 function bindBiometric() {
@@ -716,7 +1009,7 @@ function bindBiometric() {
     runtime.biometric = Number(slider.value) || 0;
   };
   read();
-  slider.addEventListener("input", read);
+  on(slider, "input", read);
 }
 
 async function loadConfig() {
@@ -730,55 +1023,55 @@ async function loadConfig() {
 }
 
 async function initFlagsmith(config) {
+  runtime.identity = stickyIdentity();
   if (isOfflineFallback()) {
-    runtime.offline = true;
-    runtime.identity = stickyIdentity();
+    failOpen("l3_offline");
     return;
   }
-  runtime.identity = stickyIdentity();
   if (!config?.flagsmithEnvironmentKey) {
-    runtime.offline = true;
+    failOpen("missing environment key");
     return;
   }
   const { default: flagsmith } = await import(L3_SDK_URL);
-  await flagsmith.init({
-    environmentID: config.flagsmithEnvironmentKey,
-    api: config.flagsmithApiUrl,
-    identity: runtime.identity,
-    traits: {
-      simulated: false,
-      site: config.site || "l3",
-      [L3_TRAIT_NAME]: false,
-    },
-  });
+  await withTimeout(
+    flagsmith.init({
+      environmentID: config.flagsmithEnvironmentKey,
+      api: config.flagsmithApiUrl,
+      identity: runtime.identity,
+    }),
+  );
   runtime.flagsmith = flagsmith;
   runtime.offline = false;
   await applyFromFlagsmith();
+  if (runtime.trait) {
+    runtime.hysteresis.overstimulated = true;
+    runtime.desiredTrait = true;
+  }
+}
+
+function bindAll() {
+  ensureCursorDot();
+  ensureOptOutButton().hidden = true;
+  bindBiometric();
+  bindMediaGuards();
+  on(window, "mousemove", onMove, { passive: true });
+  on(window, "click", onClick, { passive: true });
+  on(window, "wheel", onWheel, { passive: true });
+  on(window, "scroll", onScroll, { passive: true });
+  on(window, "keydown", onKeydown);
 }
 
 export async function start() {
   if (runtime.started) return runtime;
   runtime.started = true;
-  runtime.hysteresis = initialHysteresis();
-  const config = await loadConfig();
-  ensureCursorDot();
-  bindBiometric();
-  window.addEventListener("mousemove", onMove, { passive: true });
-  window.addEventListener("click", onClick, { passive: true });
-  window.addEventListener("wheel", onWheel, { passive: true });
-  window.addEventListener("scroll", onScroll, { passive: true });
+  if (!runtime.unsubscribers.length) bindAll();
   try {
-    await initFlagsmith(config);
-  } catch (err) {
-    runtime.offline = true;
-    const hud = document.getElementById("lift-l3-hud");
-    if (hud) {
-      hud.dataset.error = err instanceof Error ? err.message : String(err);
+    if (!runtime.flagsmith && !runtime.offline) {
+      const config = await loadConfig();
+      await initFlagsmith(config);
     }
-  }
-  if (runtime.offline) {
-    const banner = document.getElementById("lift-l3-offline");
-    if (banner) banner.hidden = false;
+  } catch (err) {
+    failOpen(err instanceof Error ? err.message : String(err));
   }
   runtime.timer = window.setInterval(tick, 120);
   tick();
@@ -787,6 +1080,17 @@ export async function start() {
 
 export function stop() {
   window.clearInterval(runtime.timer);
+  window.clearTimeout(runtime.fadeTimer);
+  if (runtime.moveRaf) window.cancelAnimationFrame(runtime.moveRaf);
+  if (runtime.scrollRaf) window.cancelAnimationFrame(runtime.scrollRaf);
+  runtime.timer = 0;
+  runtime.fadeTimer = 0;
+  runtime.moveRaf = 0;
+  runtime.scrollRaf = 0;
+  for (const off of runtime.unsubscribers) off();
+  runtime.unsubscribers = [];
+  if (runtime.cursorEl?.parentNode) runtime.cursorEl.parentNode.removeChild(runtime.cursorEl);
+  runtime.cursorEl = null;
   runtime.started = false;
 }
 
@@ -800,6 +1104,8 @@ export const LiftL3 = {
   inWindow,
   mouseJitter,
   directionChangeRate,
+  dampenTremor,
+  isKeyboardOrNonPointerClick,
   scoreErraticMouse,
   detectRageClicks,
   scoreScrollThrash,
@@ -809,12 +1115,15 @@ export const LiftL3 = {
   initialHysteresis,
   hysteresisPhase,
   stepHysteresis,
+  shouldApplySensorySafe,
   contrastRatio,
   rgbToHex,
   assertContrastFloor,
   softenPair,
   softenCssPair,
+  appliedSoftColors,
   parseCookie,
+  isSafeIdentity,
   stickyIdentity,
   applySensorySafe,
   start,

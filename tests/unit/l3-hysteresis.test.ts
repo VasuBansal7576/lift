@@ -9,6 +9,7 @@ import {
   describeHysteresisEvent,
   hysteresisPhase,
   initialHysteresis,
+  shouldApplySensorySafe,
   stepHysteresis,
   type HysteresisEvent,
 } from "../../shared/l3-hysteresis.ts";
@@ -110,5 +111,35 @@ describe("L3 hysteresis and cooldown", () => {
     expect(describeHysteresisEvent("none")).toBe("none");
     expect(describeHysteresisEvent("enter")).toBe("enter");
     expect(describeHysteresisEvent("exit")).toBe("exit");
+  });
+
+  it("fail-opens: never applies Sensory-Safe when Flagsmith is offline or the enter is stale", () => {
+    expect(
+      shouldApplySensorySafe({ offline: true, optedOut: false, flagOn: true, hysteresisOn: true }),
+    ).toBe(false);
+    expect(
+      shouldApplySensorySafe({
+        offline: false,
+        optedOut: false,
+        flagOn: true,
+        hysteresisOn: false,
+      }),
+    ).toBe(false);
+    expect(
+      shouldApplySensorySafe({
+        offline: false,
+        optedOut: true,
+        flagOn: true,
+        hysteresisOn: true,
+      }),
+    ).toBe(false);
+    expect(
+      shouldApplySensorySafe({
+        offline: false,
+        optedOut: false,
+        flagOn: true,
+        hysteresisOn: true,
+      }),
+    ).toBe(true);
   });
 });

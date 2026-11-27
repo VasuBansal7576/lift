@@ -134,3 +134,20 @@ export function describeHysteresisEvent(event: HysteresisEvent): string {
     }
   }
 }
+
+/**
+ * Fail-open: Sensory-Safe is applied only from a live Flagsmith flag that
+ * still matches the local hysteresis. Offline, opted-out, and stale enters
+ * stay in the normal flag-off state.
+ */
+export function shouldApplySensorySafe(input: {
+  offline: boolean;
+  optedOut: boolean;
+  flagOn: boolean;
+  hysteresisOn: boolean;
+}): boolean {
+  if (input.offline || input.optedOut) return false;
+  if (!input.flagOn) return false;
+  if (!input.hysteresisOn) return false;
+  return true;
+}

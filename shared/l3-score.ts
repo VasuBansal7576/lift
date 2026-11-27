@@ -2,6 +2,7 @@ import {
   RAGE_CLICK_COUNT,
   RAGE_CLICK_MS,
   RAGE_CLICK_RADIUS_PX,
+  TREMOR_MIN_PX,
   WEIGHTS,
   WINDOW_MS,
   clamp01,
@@ -11,6 +12,8 @@ export interface PointSample {
   t: number;
   x: number;
   y: number;
+  detail?: number;
+  pointerType?: string;
 }
 
 export interface ScrollSample {
@@ -77,12 +80,32 @@ export function directionChangeRate(points: readonly PointSample[]): number {
   return changes / counted;
 }
 
+/** Drop sub-pixel tremor so Parkinson's-like jitter does not look like rage-mouse. */
+export function dampenTremor(
+  points: readonly PointSample[],
+  minPx = TREMOR_MIN_PX,
+): PointSample[] {
+  if (points.length === 0) return [];
+  const kept: PointSample[] = [points[0]];
+  for (let i = 1; i < points.length; i += 1) {
+    if (dist(kept[kept.length - 1], points[i]) >= minPx) kept.push(points[i]);
+  }
+  return kept;
+}
+
+export function isKeyboardOrNonPointerClick(click: PointSample): boolean {
+  if (click.detail === 0) return true;
+  const pointerType = click.pointerType;
+  if (!pointerType) return false;
+  return pointerType !== "mouse" && pointerType !== "pen" && pointerType !== "touch";
+}
+
 export function scoreErraticMouse(
   points: readonly PointSample[],
   now: number,
   windowMs = WINDOW_MS,
 ): number {
-  const recent = inWindow(points, now, windowMs);
+  const recent = dampenTremor(inWindow(points, now, windowMs));
   if (recent.length < 5) return 0;
   const jitter = mouseJitter(recent);
   const turns = directionChangeRate(recent);
@@ -96,7 +119,7 @@ export function detectRageClicks(
   now: number,
   windowMs = WINDOW_MS,
 ): number {
-  const recent = inWindow(clicks, now, windowMs);
+  const recent = inWindow(clicks, now, windowMs).filter((click) => !isKeyboardOrNonPointerClick(click));
   for (let i = 0; i < recent.length; i += 1) {
     const origin = recent[i];
     let n = 0;

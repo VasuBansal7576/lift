@@ -118,3 +118,25 @@ export function softenCssPair(
   const pair = softenPair(parseCssColor(fg), parseCssColor(bg));
   return { fg: rgbToHex(pair.fg), bg: rgbToHex(pair.bg), contrast: pair.contrast };
 }
+
+/**
+ * Soften the flag's ink/paper (or the documented defaults). If the pair is
+ * still below AA, correct it. Returns the colours that should actually be applied.
+ */
+export function appliedSoftColors(
+  ink = "",
+  paper = "",
+): { fg: string; bg: string; contrast: number } {
+  const fg = ink.trim() || rgbToHex(SOFT_INK);
+  const bg = paper.trim() || rgbToHex(SOFT_PAPER);
+  try {
+    return softenCssPair(fg, bg);
+  } catch {
+    const fallback = softenPair(SOFT_INK, SOFT_PAPER);
+    return {
+      fg: rgbToHex(fallback.fg),
+      bg: rgbToHex(fallback.bg),
+      contrast: fallback.contrast,
+    };
+  }
+}

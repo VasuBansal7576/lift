@@ -1,5 +1,6 @@
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { ROOT } from "../../agent/src/config.ts";
 import {
@@ -16,9 +17,12 @@ import {
   flagCreatePayload,
   isLoopbackUrl,
   L3BootstrapError,
+  maskSecret,
+  originFromApiUrl,
   parseL3Args,
   segmentCreatePayload,
   segmentOverridePatch,
+  upsertEnvFile,
 } from "../../scripts/l3-bootstrap.ts";
 import { parseCookie, resolveStickyIdentity } from "../../shared/l3-identity.ts";
 
@@ -73,37 +77,61 @@ describe("L3 Flagsmith bootstrap", () => {
   it("enables the flag only via the segment override", () => {
     const patch = segmentOverridePatch(99);
     expect(patch.environment_default.enabled).toBe(false);
+    expect(patch.environment_default.value.type).toBe("string");
     expect(patch.segment_overrides[0]).toMatchObject({
       segment: { id: 99 },
       enabled: true,
     });
+    expect(patch.segment_overrides[0].value.type).toBe("string");
   });
 
   it("throws a typed error class", () => {
     const err = new L3BootstrapError("nope", 401, "denied");
     expect(err.status).toBe(401);
   });
+
+  it("derives the dashboard origin and masks secrets", () => {
+    expect(originFromApiUrl("http://127.0.0.1:8000/api/v1/")).toBe("http://127.0.0.1:8000");
+    expect(maskSecret("ser.abcdefghijklmnop")).toBe("ser.…mnop");
+    expect(maskSecret("short")).toBe("********");
+  });
+
+  it("upserts a gitignored env file without dropping unrelated keys", () => {
+    const dir = mkdtempSync(join(tmpdir(), "l3-env-"));
+    const path = join(dir, ".env");
+    upsertEnvFile(path, { FLAGSMITH_API_URL: "http://127.0.0.1:8000/api/v1/" });
+    upsertEnvFile(path, { FLAGSMITH_PROJECT_ID: "1", FLAGSMITH_API_URL: "http://127.0.0.1:8000/api/v1/" });
+    const text = readFileSync(path, "utf8");
+    expect(text).toContain("FLAGSMITH_API_URL=http://127.0.0.1:8000/api/v1/");
+    expect(text).toContain("FLAGSMITH_PROJECT_ID=1");
+    expect(text.match(/FLAGSMITH_API_URL=/g)?.length).toBe(1);
+    rmSync(dir, { recursive: true, force: true });
+  });
 });
 
 describe("L3 sticky identity", () => {
   it("prefers ?lift_identity= then the lift_vid cookie", () => {
+    const queryId = "lift-aaaaaaaa-bbbb-4ccc-8ddd-111111111111";
+    const cookieId = "lift-aaaaaaaa-bbbb-4ccc-8ddd-222222222222";
     const fromQuery = resolveStickyIdentity({
-      queryIdentity: "lift-from-query",
-      cookieHeader: "lift_vid=from-cookie",
+      queryIdentity: queryId,
+      cookieHeader: `lift_vid=${cookieId}`,
     });
     expect(fromQuery.source).toBe("query");
-    expect(fromQuery.identity).toBe("lift-from-query");
-    expect(parseCookie(fromQuery.cookie, "lift_vid")).toBe("lift-from-query");
+    expect(fromQuery.identity).toBe(queryId);
+    expect(parseCookie(fromQuery.cookie, "lift_vid")).toBe(queryId);
 
     const fromCookie = resolveStickyIdentity({
-      cookieHeader: "other=1; lift_vid=sticky-user; x=y",
+      cookieHeader: `other=1; lift_vid=${cookieId}; x=y`,
     });
     expect(fromCookie.source).toBe("cookie");
-    expect(fromCookie.identity).toBe("sticky-user");
+    expect(fromCookie.identity).toBe(cookieId);
 
-    const created = resolveStickyIdentity({ randomId: "lift-new" });
+    const created = resolveStickyIdentity({
+      randomId: "lift-aaaaaaaa-bbbb-4ccc-8ddd-333333333333",
+    });
     expect(created.source).toBe("new");
-    expect(created.identity).toBe("lift-new");
+    expect(created.identity).toBe("lift-aaaaaaaa-bbbb-4ccc-8ddd-333333333333");
   });
 });
 
@@ -119,6 +147,9 @@ describe("L3 runtime stays aligned with shared constants", () => {
     expect(src).toContain("flagsmith.setTrait");
     expect(src).toContain("hasFeature(L3_FLAG_NAME)");
     expect(src).toContain("OFFLINE FALLBACK — tests only");
+    expect(src).toContain("WCAG AA ≥ 4.5:1");
+    expect(src).toContain('setAttribute("aria-hidden", "true")');
+    expect(src).not.toContain("innerHTML");
     expect(src).not.toMatch(/applySensorySafe\(\s*(score|runtime\.lastScore)/);
   });
 });

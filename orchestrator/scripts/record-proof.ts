@@ -291,9 +291,9 @@ async function main() {
   writeFileSync(LIVE_PATH, "{}\n");
   process.env.LIFT_ORCH_TRAFFIC_CONCURRENCY = process.env.LIFT_ORCH_TRAFFIC_CONCURRENCY || "16";
   process.env.LIFT_ORCH_RESULTS_INITIAL_MS = process.env.LIFT_ORCH_RESULTS_INITIAL_MS || "4000";
-  process.env.LIFT_ORCH_RESULTS_WAIT_MS = process.env.LIFT_ORCH_RESULTS_WAIT_MS || "60000";
+  process.env.LIFT_ORCH_RESULTS_WAIT_MS = process.env.LIFT_ORCH_RESULTS_WAIT_MS || "240000";
   process.env.LIFT_TRAFFIC_SEED = process.env.LIFT_TRAFFIC_SEED || "20261127";
-  process.env.LIFT_ORCH_MAX_EXTRA_ROUNDS = process.env.LIFT_ORCH_MAX_EXTRA_ROUNDS || "1";
+  process.env.LIFT_ORCH_MAX_EXTRA_ROUNDS = process.env.LIFT_ORCH_MAX_EXTRA_ROUNDS || "2";
 
   spawn(
     "xterm",

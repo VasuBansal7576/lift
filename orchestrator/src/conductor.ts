@@ -21,7 +21,12 @@ import { runRollout } from "./agents/rollout.ts";
 import { runScanner } from "./agents/scanner.ts";
 import { runTrafficAgent } from "./agents/traffic.ts";
 import { FlagsmithHttp } from "./flagsmith/http.ts";
-import { fetchExperimentResults, resultsIdentityCount, waitForResults } from "./flagsmith/results.ts";
+import {
+  fetchExperimentResults,
+  resultsAreReady,
+  resultsIdentityCount,
+  waitForResults,
+} from "./flagsmith/results.ts";
 import { EventLog } from "./log.ts";
 import { assertAllowedUrl } from "./loopback.ts";
 import { statePath } from "./paths.ts";
@@ -86,7 +91,10 @@ async function collectUntilWinner(
     const more = await runTrafficAgent(opts, flag, passed, controlSpec, log);
     visits = visits.concat(more);
     log.setPhase("analysing");
-    minIdentities = resultsIdentityCount(results) + 1;
+    const previousCount = resultsIdentityCount(results);
+    minIdentities = resultsAreReady(results, 0)
+      ? previousCount + 1
+      : Math.max(50, Math.floor(visits.length * 0.4), previousCount);
     results = await waitForResults(opts, flag.experimentId, opts.resultsWaitMs, undefined, minIdentities);
     recommendation = runAnalyst(results, log, opts.threshold);
   }

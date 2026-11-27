@@ -89,6 +89,8 @@ html.lift-pause-motion #lift-l3-opt-out {
 
 #lift-l3-opt-out,
 #lift-l3-opt-in {
+  position: relative;
+  z-index: 30;
   background: #f4f0e8;
   color: #2c3038;
   border: 2px solid #2c3038;

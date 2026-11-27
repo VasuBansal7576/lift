@@ -514,6 +514,8 @@ const runtime = {
   traitSeq: 0,
   traitRetries: 0,
   traitRetryTimer: 0,
+  reconnectTimer: 0,
+  reconnectRetries: 0,
   traitInFlight: false,
   traitPending: false,
   gestureUntil: 0,
@@ -864,6 +866,35 @@ function failOpen(reason) {
   renderHud();
   const hud = document.getElementById("lift-l3-hud");
   if (hud && reason) hud.dataset.error = reason;
+  if (!isOfflineFallback()) scheduleFlagsmithReconnect();
+}
+
+function scheduleFlagsmithReconnect() {
+  if (!runtime.started || isOfflineFallback()) return;
+  window.clearTimeout(runtime.reconnectTimer);
+  const delay = Math.min(1_200 * 2 ** Math.min(runtime.reconnectRetries, 5), 20_000);
+  runtime.reconnectRetries += 1;
+  runtime.reconnectTimer = window.setTimeout(() => {
+    runtime.reconnectTimer = 0;
+    void recoverFlagsmith();
+  }, delay);
+}
+
+async function recoverFlagsmith() {
+  if (!runtime.started || isOfflineFallback() || !runtime.offline) return;
+  try {
+    const config = await loadConfig();
+    await initFlagsmith(config);
+    if (runtime.offline || !runtime.flagsmith) {
+      scheduleFlagsmithReconnect();
+      return;
+    }
+    runtime.reconnectRetries = 0;
+    void pushTrait(latestDesiredTrait());
+    renderHud();
+  } catch {
+    scheduleFlagsmithReconnect();
+  }
 }
 
 async function applyFromFlagsmith() {
@@ -913,7 +944,7 @@ function latestDesiredTrait() {
   return Boolean(runtime.hysteresis.overstimulated);
 }
 
-async function pushTrait(value) {
+export async function pushTrait(value) {
   runtime.desiredTrait = Boolean(value);
   window.clearTimeout(runtime.traitRetryTimer);
   runtime.traitRetryTimer = 0;
@@ -1028,7 +1059,7 @@ function renderHud() {
   const traitLine = h("p");
   traitLine.append("trait overstimulated ");
   traitLine.appendChild(h("strong", { "data-l3": "trait" }, String(runtime.trait)));
-  traitLine.append(" (Flagsmith)");
+  traitLine.append(runtime.offline ? " (default, Flagsmith unreachable)" : " (Flagsmith)");
   hud.appendChild(traitLine);
   const segLine = h("p");
   segLine.append(`segment ${L3_SEGMENT_NAME} `);
@@ -1177,6 +1208,11 @@ async function initFlagsmith(config) {
   );
   runtime.flagsmith = flagsmith;
   runtime.offline = false;
+  runtime.reconnectRetries = 0;
+  window.clearTimeout(runtime.reconnectTimer);
+  runtime.reconnectTimer = 0;
+  const banner = document.getElementById("lift-l3-offline");
+  if (banner) banner.hidden = true;
   const snapshot = readFlagsmithState(flagsmith);
   runtime.trait = snapshot.trait;
   runtime.flagConfig = snapshot.flagConfig;
@@ -1206,14 +1242,17 @@ export async function start() {
   if (runtime.started) return runtime;
   runtime.started = true;
   runtime.optedOut = readOptOut();
+  if (!runtime.identity) runtime.identity = stickyIdentity();
   if (!runtime.unsubscribers.length) bindAll();
   syncOptButtons();
   try {
-    if (!runtime.flagsmith && !runtime.offline) {
+    if (runtime.flagsmith && !runtime.offline) {
+      void pushTrait(latestDesiredTrait());
+    } else if (!isOfflineFallback()) {
       const config = await loadConfig();
       await initFlagsmith(config);
-    } else if (runtime.flagsmith && !runtime.offline) {
-      void pushTrait(latestDesiredTrait());
+    } else {
+      failOpen("l3_offline");
     }
   } catch (err) {
     failOpen(err instanceof Error ? err.message : String(err));
@@ -1225,17 +1264,20 @@ export async function start() {
 
 export function stop() {
   window.clearInterval(runtime.timer);
-  window.clearTimeout(runtime.fadeTimer);
   window.clearTimeout(runtime.traitRetryTimer);
+  window.clearTimeout(runtime.reconnectTimer);
   runtime.traitSeq += 1;
   runtime.traitInFlight = false;
   runtime.traitPending = false;
   applySensorySafe(false, runtime.flagConfig);
+  window.clearTimeout(runtime.fadeTimer);
+  document.documentElement.classList.remove("lift-sensory-restoring");
   if (runtime.moveRaf) window.cancelAnimationFrame(runtime.moveRaf);
   if (runtime.scrollRaf) window.cancelAnimationFrame(runtime.scrollRaf);
   runtime.timer = 0;
   runtime.fadeTimer = 0;
   runtime.traitRetryTimer = 0;
+  runtime.reconnectTimer = 0;
   runtime.moveRaf = 0;
   runtime.scrollRaf = 0;
   for (const off of runtime.unsubscribers) off();
@@ -1284,6 +1326,7 @@ export const LiftL3 = {
   isSafeIdentity,
   stickyIdentity,
   applySensorySafe,
+  pushTrait,
   start,
   stop,
   getRuntime,

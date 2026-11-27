@@ -18,6 +18,7 @@ import {
   isLoopbackUrl,
   L3BootstrapError,
   maskSecret,
+  namedSegmentsSearchPath,
   originFromApiUrl,
   parseL3Args,
   segmentCreatePayload,
@@ -49,6 +50,13 @@ describe("L3 Flagsmith bootstrap", () => {
         apiUrl: "http://127.0.0.1:9/",
       },
     );
+  });
+
+  it("lists existing segments only via /projects/:id/segments/?search=", () => {
+    expect(namedSegmentsSearchPath("7")).toBe("/projects/7/segments/?search=sensory_safe");
+    const src = readFileSync(resolve(ROOT, "scripts/l3-bootstrap.ts"), "utf8");
+    expect(src).toContain("namedSegmentsSearchPath(projectId)");
+    expect(src).not.toContain("/segments/?project=");
   });
 
   it("creates the sensory_safe segment rule overstimulated == true", () => {
@@ -172,6 +180,8 @@ describe("L3 runtime stays aligned with shared constants", () => {
     expect(src).toContain("ENTER_THRESHOLD = 0.62");
     expect(src).toContain("EXIT_THRESHOLD = 0.38");
     expect(src).toContain('L3_TRAIT_NAME = "overstimulated"');
+    expect(src).toContain("(default, Flagsmith unreachable)");
+    expect(src).toContain("scheduleFlagsmithReconnect");
     expect(src).toContain("flagsmith.setTrait");
     expect(src).toContain("hasFeature(L3_FLAG_NAME)");
     expect(src).toContain("OFFLINE FALLBACK — tests only");

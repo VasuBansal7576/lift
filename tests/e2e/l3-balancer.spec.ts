@@ -434,6 +434,9 @@ test("L3 fail-open: missing Flagsmith keeps the page calm", async ({ page }) => 
   await expect(page.locator("html")).not.toHaveClass(/lift-sensory-safe/);
   await expect(page.locator("[data-lift-promo]")).toBeVisible();
   await expect(page.locator("#lift-l3-hud")).toHaveAttribute("data-flag", "false");
+  const hudOffline = (await page.locator("#lift-l3-hud").textContent()) ?? "";
+  expect(hudOffline).toContain("(default, Flagsmith unreachable)");
+  expect(hudOffline).not.toMatch(/\(Flagsmith\)/);
 });
 
 test("L3 opt-in does not apply Sensory-Safe while Flagsmith is down", async ({ page }) => {
@@ -446,7 +449,7 @@ test("L3 opt-in does not apply Sensory-Safe while Flagsmith is down", async ({ p
   });
   await page.reload();
   await expect(page.locator("#lift-l3-opt-in")).toBeVisible({ timeout: 10_000 });
-  await page.locator("#lift-l3-opt-in").click({ force: true });
+  await page.locator("#lift-l3-opt-in").click();
   await page.waitForTimeout(1_000);
   await expect(page.locator("html")).not.toHaveClass(/lift-sensory-safe/);
   await expect(page.locator("[data-lift-promo]")).toBeVisible();
@@ -472,6 +475,9 @@ test("L3 fail-open: env key present but API blocked stays calm", async ({ page }
   await page.waitForTimeout(2_200);
   await expect(page.locator("html")).not.toHaveClass(/lift-sensory-safe/);
   await expect(page.locator("[data-lift-promo]")).toBeVisible();
+  const hudBlocked = (await page.locator("#lift-l3-hud").textContent()) ?? "";
+  expect(hudBlocked).toContain("(default, Flagsmith unreachable)");
+  expect(hudBlocked).not.toMatch(/\(Flagsmith\)/);
 });
 
 test("L3 fail-open: Flagsmith dying mid-session keeps the normal page usable", async ({
@@ -625,6 +631,20 @@ test("L3 opt-out is keyboard reachable and Escape in a dialog does not exit", as
 test("L3 opt-in is clickable with a real pointer through the HUD", async ({ page }) => {
   skipUnlessFlagsmith();
   test.setTimeout(40_000);
+  await gotoDemo(page);
+  await page.evaluate(() => window.LiftL3.forceScore(0.9));
+  await expect(page.locator("#lift-l3-opt-out")).toBeVisible({ timeout: 20_000 });
+  await page.locator("#lift-l3-opt-out").click();
+  await expect(page.locator("#lift-l3-opt-in")).toBeVisible();
+  await page.locator("#lift-l3-opt-in").click();
+  await expect(page.locator("#lift-l3-opt-in")).toBeHidden();
+  expect(await page.evaluate(() => window.LiftL3.getRuntime().optedOut)).toBe(false);
+});
+
+test("L3 opt-out and opt-in stay clickable at 800x600 over the popup", async ({ page }) => {
+  skipUnlessFlagsmith();
+  test.setTimeout(40_000);
+  await page.setViewportSize({ width: 800, height: 600 });
   await gotoDemo(page);
   await page.evaluate(() => window.LiftL3.forceScore(0.9));
   await expect(page.locator("#lift-l3-opt-out")).toBeVisible({ timeout: 20_000 });

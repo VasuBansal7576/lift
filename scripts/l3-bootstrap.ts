@@ -42,6 +42,7 @@ export interface L3BootstrapResult {
   flagId: number;
   overrideApplied: boolean;
   dryRun: boolean;
+  segmentCreated: boolean;
 }
 
 export class L3BootstrapError extends Error {
@@ -494,6 +495,10 @@ async function findNamed(
   return listResults<NamedRecord>(data).find((row) => row.name === name) ?? null;
 }
 
+export function namedSegmentsSearchPath(projectId: string, name = L3_SEGMENT_NAME): string {
+  return `/projects/${projectId}/segments/?search=${encodeURIComponent(name)}`;
+}
+
 async function listNamedSegments(
   apiUrl: string,
   token: string,
@@ -503,18 +508,11 @@ async function listNamedSegments(
     apiUrl,
     token,
     "GET",
-    `/projects/${projectId}/segments/?search=${encodeURIComponent(L3_SEGMENT_NAME)}`,
+    namedSegmentsSearchPath(projectId),
   );
-  const listed = await adminRequest<unknown>(
-    apiUrl,
-    token,
-    "GET",
-    `/segments/?project=${encodeURIComponent(projectId)}`,
-  );
-  const rows = [...listResults<NamedRecord>(searched.data), ...listResults<NamedRecord>(listed.data)];
   const seen = new Set<number>();
   const matches: NamedRecord[] = [];
-  for (const row of rows) {
+  for (const row of listResults<NamedRecord>(searched.data)) {
     if (row.name !== L3_SEGMENT_NAME || !row.id || seen.has(row.id)) continue;
     seen.add(row.id);
     matches.push(row);
@@ -543,7 +541,7 @@ async function ensureSegment(
   apiUrl: string,
   token: string,
   projectId: string,
-): Promise<NamedRecord> {
+): Promise<{ segment: NamedRecord; created: boolean }> {
   const existing = await listNamedSegments(apiUrl, token, projectId);
   if (existing.length === 0) {
     const { data } = await adminRequest<NamedRecord>(
@@ -553,7 +551,7 @@ async function ensureSegment(
       `/projects/${projectId}/segments/`,
       segmentCreatePayload(projectId),
     );
-    return data;
+    return { segment: data, created: true };
   }
   const first = existing[0];
   if (!first) {
@@ -563,7 +561,7 @@ async function ensureSegment(
   for (const row of existing) {
     chosen = await writeSegmentRules(apiUrl, token, projectId, row.id);
   }
-  return chosen;
+  return { segment: chosen, created: false };
 }
 
 async function ensureFlag(
@@ -740,6 +738,7 @@ export async function bootstrapL3(
       flagId: 0,
       overrideApplied: false,
       dryRun: true,
+      segmentCreated: false,
     };
   }
 
@@ -774,7 +773,7 @@ export async function bootstrapL3(
     environmentId = String(match.id);
   }
 
-  const segment = await ensureSegment(apiUrl, token, projectId);
+  const { segment, created: segmentCreated } = await ensureSegment(apiUrl, token, projectId);
   const flag = await ensureFlag(apiUrl, token, projectId);
   if (!segment.id || !flag.id) {
     throw new L3BootstrapError("Flagsmith did not return segment or flag ids");
@@ -841,6 +840,7 @@ export async function bootstrapL3(
     flagId: flag.id,
     overrideApplied,
     dryRun: false,
+    segmentCreated,
   };
 }
 
@@ -869,6 +869,7 @@ async function main() {
     flagId: result.flagId,
     overrideApplied: result.overrideApplied,
     dryRun: result.dryRun,
+    segmentCreated: result.segmentCreated,
   };
   process.stdout.write(`${JSON.stringify(publicResult, null, 2)}\n`);
 }

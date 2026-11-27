@@ -17,12 +17,16 @@ function makeEnv(init: {
   storage?: string | null;
   randomId?: string;
   secure?: boolean;
+  host?: string;
+  allowBotOverride?: boolean;
 }): IdentityEnv & { cookieHeader: string; storageValue: string | null; cookieWrites: string[] } {
   let cookieHeader = init.cookie ?? "";
   let storageValue = init.storage ?? null;
   const cookieWrites: string[] = [];
   return {
     search: init.search ?? "",
+    host: init.host ?? "127.0.0.1",
+    allowBotOverride: init.allowBotOverride,
     getCookie: () => cookieHeader,
     setCookie: (value) => {
       cookieWrites.push(value);
@@ -60,20 +64,39 @@ describe("isUsableIdentity", () => {
 });
 
 describe("readQueryIdentity", () => {
-  it("honors ?lift_identity= only together with lift_bot=1", () => {
-    expect(readQueryIdentity("?lift_bot=1&lift_identity=lift-sim-run-1-0")).toBe("lift-sim-run-1-0");
-    expect(readQueryIdentity("lift_bot=1&lift_identity=plain")).toBe("plain");
+  const local = { host: "127.0.0.1" };
+
+  it("honors ?lift_identity= only together with lift_bot=1 on loopback", () => {
+    expect(readQueryIdentity("?lift_bot=1&lift_identity=lift-sim-run-1-0", local)).toBe(
+      "lift-sim-run-1-0",
+    );
+    expect(readQueryIdentity("lift_bot=1&lift_identity=plain", local)).toBe("plain");
   });
 
   it("ignores lift_identity without lift_bot=1", () => {
-    expect(readQueryIdentity("?lift_identity=lift-sim-run-1-0")).toBeNull();
-    expect(readQueryIdentity("lift_identity=plain")).toBeNull();
+    expect(readQueryIdentity("?lift_identity=lift-sim-run-1-0", local)).toBeNull();
+    expect(readQueryIdentity("lift_identity=plain", local)).toBeNull();
+  });
+
+  it("ignores the override on a deployed host", () => {
+    expect(
+      readQueryIdentity("?lift_bot=1&lift_identity=lift-sim-run-1-0", { host: "user.github.io" }),
+    ).toBeNull();
+  });
+
+  it("honors a build-time allowBotOverride flag off loopback", () => {
+    expect(
+      readQueryIdentity("?lift_bot=1&lift_identity=lift-sim-run-1-0", {
+        host: "user.github.io",
+        allowBotOverride: true,
+      }),
+    ).toBe("lift-sim-run-1-0");
   });
 
   it("ignores missing or unusable query values", () => {
     expect(readQueryIdentity("")).toBeNull();
     expect(readQueryIdentity("?other=1")).toBeNull();
-    expect(readQueryIdentity("?lift_bot=1&lift_identity=bad;id")).toBeNull();
+    expect(readQueryIdentity("?lift_bot=1&lift_identity=bad;id", local)).toBeNull();
   });
 });
 
@@ -112,10 +135,20 @@ describe("cookie stickiness", () => {
       search: "?lift_bot=1&lift_identity=lift-sim-bot-9",
       cookie: "lift_vid=old-cookie",
       storage: "old-storage",
+      host: "127.0.0.1",
     });
     expect(resolveVisitorId(env)).toBe("lift-sim-bot-9");
     expect(env.storageValue).toBe("old-storage");
     expect(env.cookieWrites.join("")).not.toContain("lift-sim-bot-9");
+  });
+
+  it("ignores lift_bot=1 on a deployed host and keeps the cookie", () => {
+    const env = makeEnv({
+      search: "?lift_bot=1&lift_identity=evil-id",
+      cookie: "lift_vid=old-cookie",
+      host: "user.github.io",
+    });
+    expect(resolveVisitorId(env)).toBe("old-cookie");
   });
 
   it("reuses the cookie when the query is absent", () => {

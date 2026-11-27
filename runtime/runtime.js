@@ -5,8 +5,11 @@
 
 import {
   cssKey,
+  elementForbiddenAsTextOrTagHost,
+  elementHasVoidOrControlDescendant,
   hashKey,
   isSafeInsertHtml,
+  localTagName,
   mountKeyFor,
   parsePatchSpec,
   sanitizeInsertHtml,
@@ -59,6 +62,16 @@ function applySetAttribute(root, op, index) {
   if (found.error) return miss(index, op.selector, found.error);
   const el = found.el;
   if (!(el instanceof Element)) return miss(index, op.selector);
+  const attrName = op.name.toLowerCase();
+  if (attrName.startsWith("data-lift-")) {
+    return { status: "miss", error: `ops[${index}] disallowed attribute` };
+  }
+  if (attrName === "type") {
+    const tag = localTagName(el);
+    if (tag === "input" || tag === "select" || tag === "textarea" || op.value.toLowerCase() === "hidden") {
+      return { status: "miss", error: `ops[${index}] disallowed attribute` };
+    }
+  }
   if (el.getAttribute(op.name) === op.value) return noop();
   const had = el.hasAttribute(op.name);
   const prev = el.getAttribute(op.name);
@@ -69,14 +82,12 @@ function applySetAttribute(root, op, index) {
   });
 }
 
-const FORBIDDEN_TEXT_HOSTS = new Set(["STYLE", "SCRIPT", "TEMPLATE", "NOSCRIPT"]);
-
 function applySetText(root, op, index) {
   const found = queryOne(root, op.selector);
   if (found.error) return miss(index, op.selector, found.error);
   const el = found.el;
   if (!(el instanceof Element)) return miss(index, op.selector);
-  if (FORBIDDEN_TEXT_HOSTS.has(el.tagName)) {
+  if (elementForbiddenAsTextOrTagHost(el)) {
     return { status: "miss", error: `ops[${index}] target is not allowlisted` };
   }
   const prevChildren = [...el.childNodes];
@@ -91,7 +102,7 @@ function applyInjectCss(root, op) {
   const doc = docOf(root);
   const id = cssKey(op);
   const existing = doc.getElementById(id);
-  if (existing && existing.tagName === "STYLE") {
+  if (existing && localTagName(existing) === "style") {
     const prev = existing.textContent ?? "";
     if (prev === op.css) return noop();
     existing.textContent = op.css;
@@ -205,8 +216,15 @@ function markForwardedTo(event, target) {
   set.add(target);
 }
 
+function isNativeActivator(el) {
+  const tag = localTagName(el);
+  if (tag === "button") return true;
+  if (tag === "a" && el.hasAttribute("href")) return true;
+  return false;
+}
+
 function forwardUiEvents(from, to) {
-  const nativeActivator = from.tagName === "BUTTON" || from.tagName === "A";
+  const nativeActivator = isNativeActivator(from);
   const onClick = (event) => {
     if (alreadyForwardedTo(event, to)) return;
     markForwardedTo(event, to);
@@ -225,6 +243,7 @@ function forwardUiEvents(from, to) {
   let onKey = null;
   if (!nativeActivator) {
     onKey = (event) => {
+      if (from.getAttribute("data-lift-enter") === "1") return;
       if (alreadyForwardedTo(event, to)) return;
       markForwardedTo(event, to);
       let copy;
@@ -291,6 +310,12 @@ function applyReplaceTag(root, op, index) {
   if (found.error) return miss(index, op.selector, found.error);
   const el = found.el;
   if (!(el instanceof Element)) return miss(index, op.selector);
+  if (elementForbiddenAsTextOrTagHost(el)) {
+    return { status: "miss", error: `ops[${index}] target is not allowlisted` };
+  }
+  if (elementHasVoidOrControlDescendant(el)) {
+    return { status: "miss", error: `ops[${index}] target is not allowlisted` };
+  }
   if (el.getAttribute("data-lift-replaced") === key) {
     return overlayAttributes(el, op.attributes || {});
   }

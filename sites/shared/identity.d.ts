@@ -11,10 +11,14 @@ export interface IdentityEnv {
   setStorage: (value: string) => void;
   randomId: () => string;
   secure: boolean;
+  host?: string;
+  allowBotOverride?: boolean;
 }
 
 export function isUsableIdentity(value: unknown): value is string;
-export function readQueryIdentity(search: string): string | null;
+export function isLoopbackHost(host: string | undefined): boolean;
+export function botOverrideAllowed(env: Pick<IdentityEnv, "host" | "allowBotOverride">): boolean;
+export function readQueryIdentity(search: string, env?: Pick<IdentityEnv, "host" | "allowBotOverride">): string | null;
 export function readCookieIdentity(header: string): string | null;
 export function cookieWriteValue(id: string, secure: boolean): string;
 export function resolveVisitorId(env: IdentityEnv): string;

@@ -12,7 +12,12 @@ export function isSafeAttributeValue(name: string, value: string): boolean;
 export function stripCssComments(css: string): string;
 export function decodeCssEscapes(css: string): string;
 export function isSafeCss(css: string): boolean;
+export function selectorTargetsForbiddenHost(selector: string): boolean;
 export function selectorTargetsForbiddenTextHost(selector: string): boolean;
+export function localTagName(el: Element): string;
+export function isHtmlNamespace(el: Element): boolean;
+export function elementForbiddenAsTextOrTagHost(el: Element): boolean;
+export function elementHasVoidOrControlDescendant(el: Element): boolean;
 export function hashKey(value: string): string;
 export function cssKey(op: { css: string; id?: string }): string;
 export function mountKeyFor(op: {

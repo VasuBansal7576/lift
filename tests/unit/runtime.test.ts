@@ -385,6 +385,116 @@ describe("applyPatchSpec ops", () => {
     expect(document.querySelectorAll("[data-lift-css]")).toHaveLength(1);
   });
 
+  it("refuses replaceTag on body and setText on head", () => {
+    const snapshot = document.documentElement.outerHTML;
+    expect(
+      applyPatchSpec({
+        id: "kill-body",
+        version: 0,
+        ops: [{ op: "replaceTag", selector: "body", tag: "span" }],
+      }).ok,
+    ).toBe(false);
+    expect(
+      applyPatchSpec({
+        id: "kill-head",
+        version: 0,
+        ops: [{ op: "setText", selector: "head", text: "gone" }],
+      }).ok,
+    ).toBe(false);
+    expect(document.documentElement.outerHTML).toBe(snapshot);
+  });
+
+  it("refuses replaceTag when the target contains a form control", () => {
+    document.body.innerHTML = `<div id="wrap"><input id="in"></div>`;
+    expect(
+      applyPatchSpec({
+        id: "wrap-input",
+        version: 0,
+        ops: [{ op: "replaceTag", selector: "#wrap", tag: "span" }],
+      }).ok,
+    ).toBe(false);
+    expect(document.getElementById("wrap")?.tagName).toBe("DIV");
+    expect(document.getElementById("in")).not.toBeNull();
+  });
+
+  it("rejects replaceTag to a without href", () => {
+    document.body.innerHTML = `<span id="x">Go</span>`;
+    const parsed = validatePatchSpec({
+      id: "a-no-href",
+      version: 0,
+      ops: [{ op: "replaceTag", selector: "#x", tag: "a" }],
+    });
+    expect(parsed.ok).toBe(false);
+    if (parsed.ok) return;
+    expect(parsed.error).toContain("a requires href");
+  });
+
+  it("does not forward keydown when bindEnterToClick is on the replacement", () => {
+    document.body.innerHTML = `<div id="pay">Pay</div>`;
+    let clicks = 0;
+    let keys = 0;
+    document.getElementById("pay")?.addEventListener("click", () => {
+      clicks += 1;
+    });
+    document.getElementById("pay")?.addEventListener("keydown", () => {
+      keys += 1;
+    });
+    expect(
+      applyPatchSpec({
+        id: "enter-once",
+        version: 0,
+        ops: [
+          { op: "replaceTag", selector: "#pay", tag: "span" },
+          { op: "makeFocusable", selector: "#pay" },
+          { op: "bindEnterToClick", selector: "#pay" },
+        ],
+      }).ok,
+    ).toBe(true);
+    const next = document.getElementById("pay");
+    next?.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    expect(clicks).toBe(1);
+    expect(keys).toBe(0);
+  });
+
+  it("defaults insertHTML buttons to type=button and reserves data-lift-*", () => {
+    document.body.innerHTML = `<div id="host"></div>`;
+    expect(
+      applyPatchSpec({
+        id: "btn",
+        version: 0,
+        ops: [
+          {
+            op: "insertHTML",
+            selector: "#host",
+            position: "append",
+            html: "<button>Go</button>",
+            mountId: "go-btn",
+          },
+        ],
+      }).ok,
+    ).toBe(true);
+    expect(document.querySelector("#host button")?.getAttribute("type")).toBe("button");
+    expect(
+      validatePatchSpec({
+        id: "reserved",
+        version: 0,
+        ops: [{ op: "setAttribute", selector: "#host", name: "data-lift-x", value: "1" }],
+      }).ok,
+    ).toBe(false);
+  });
+
+  it("refuses setText into an SVG style element", () => {
+    document.body.innerHTML = `<svg id="g"><style id="svg-style">.x{fill:red}</style></svg>`;
+    const before = document.getElementById("svg-style")?.textContent;
+    const result = applyPatchSpec({
+      id: "svg-style-text",
+      version: 0,
+      ops: [{ op: "setText", selector: "#svg-style", text: "url(http://evil.example)" }],
+    });
+    expect(result.ok).toBe(false);
+    expect(document.getElementById("svg-style")?.textContent).toBe(before);
+  });
+
   it("restores the previous injectCSS text when a later op rolls back", () => {
     expect(
       applyPatchSpec({

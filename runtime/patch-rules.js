@@ -68,6 +68,93 @@ const DROP_INSERT_ATTR = new Set([
   "name",
 ]);
 
+const HTML_NS = "http://www.w3.org/1999/xhtml";
+
+const FORBIDDEN_OP_HOSTS = new Set([
+  "html",
+  "head",
+  "body",
+  "form",
+  "input",
+  "select",
+  "textarea",
+  "script",
+  "style",
+  "template",
+  "iframe",
+  "svg",
+  "noscript",
+]);
+
+const VOID_OR_CONTROL = new Set([
+  "area",
+  "base",
+  "br",
+  "col",
+  "embed",
+  "hr",
+  "img",
+  "input",
+  "link",
+  "meta",
+  "param",
+  "source",
+  "track",
+  "wbr",
+  "select",
+  "textarea",
+  "button",
+  "option",
+  "optgroup",
+  "datalist",
+  "output",
+  "progress",
+  "meter",
+  "fieldset",
+  "form",
+]);
+
+const FORBIDDEN_CSS_TYPES = new Set(["html", "body", "head"]);
+
+const ALLOWED_CSS_PSEUDO = new Set([
+  "focus",
+  "focus-visible",
+  "focus-within",
+  "hover",
+  "active",
+  "disabled",
+  "checked",
+]);
+
+const ALLOWED_CSS_PSEUDO_EL = new Set(["placeholder"]);
+
+const COLOR_PROPS = new Set([
+  "color",
+  "background-color",
+  "outline-color",
+  "border-color",
+  "border-top-color",
+  "border-right-color",
+  "border-bottom-color",
+  "border-left-color",
+  "text-decoration-color",
+]);
+
+const BOX_PROPS = new Set([
+  "margin",
+  "margin-top",
+  "margin-right",
+  "margin-bottom",
+  "margin-left",
+  "padding",
+  "padding-top",
+  "padding-right",
+  "padding-bottom",
+  "padding-left",
+]);
+
+const SIZE_PROPS = new Set(["width", "height", "min-width", "min-height", "max-width", "max-height"]);
+
 const ALLOWED_CSS_PROPS = new Set([
   "color",
   "background-color",
@@ -123,9 +210,6 @@ const ALLOWED_CSS_PROPS = new Set([
   "min-height",
   "max-width",
   "max-height",
-  "clip",
-  "clip-path",
-  "visibility",
   "opacity",
   "animation",
   "transition",
@@ -184,10 +268,11 @@ export function isSafeMountId(value) {
 
 export function isAllowedAttributeName(name) {
   if (typeof name !== "string") return false;
-  if (name.toLowerCase().startsWith("on")) return false;
-  if (ALLOWED_ATTR_NAMES.has(name)) return true;
-  if (/^aria-[a-z0-9-]+$/.test(name)) return true;
-  if (/^data-lift-[a-z0-9-]+$/.test(name)) return true;
+  const lower = name.toLowerCase();
+  if (lower.startsWith("on")) return false;
+  if (lower.startsWith("data-lift-")) return false;
+  if (ALLOWED_ATTR_NAMES.has(lower)) return true;
+  if (/^aria-[a-z0-9-]+$/.test(lower)) return true;
   return false;
 }
 
@@ -208,7 +293,7 @@ export function isSafeAttributeValue(name, value) {
   if (typeof value !== "string") return false;
   if (/[\u0000-\u001F\u007F]/.test(value)) return false;
   if (/^\s*javascript:/i.test(value)) return false;
-  if (name === "href") return isSafeHref(value);
+  if (name.toLowerCase() === "href") return isSafeHref(value);
   return true;
 }
 
@@ -216,36 +301,85 @@ export function stripCssComments(css) {
   return css.replace(/\/\*[\s\S]*?\*\//g, " ");
 }
 
+function replacementChar(code) {
+  if (!Number.isFinite(code) || code === 0 || code > 0x10ffff) return "\uFFFD";
+  if (code >= 0xd800 && code <= 0xdfff) return "\uFFFD";
+  return String.fromCodePoint(code);
+}
+
 export function decodeCssEscapes(css) {
   return css.replace(/\\([0-9a-fA-F]{1,6})(?:\r\n|[ \t\r\n\f])?|\\(.)/g, (_, hex, ch) => {
-    if (hex) return String.fromCodePoint(parseInt(hex, 16));
+    if (hex) return replacementChar(parseInt(hex, 16));
     return ch;
   });
 }
 
-function cssIdentAt(selector, index) {
-  const before = index === 0 ? "" : selector[index - 1];
-  if (before && /[a-zA-Z0-9_-]/.test(before)) return false;
-  return true;
+function cssHasForbiddenTokens(text) {
+  if (/<\/\s*style/i.test(text)) return true;
+  if (/@/.test(text)) return true;
+  if (/\b(?:url|src|image-set|image|element|paint|expression)\s*\(/i.test(text)) return true;
+  return false;
 }
 
-function selectorListForbidden(selectorList) {
+function isAllowedCompound(compound) {
+  if (!compound) return false;
+  let i = 0;
+  let anchored = false;
+  const type = compound.match(/^[a-zA-Z_][\w-]*/);
+  if (type) {
+    const name = type[0].toLowerCase();
+    if (FORBIDDEN_CSS_TYPES.has(name) || FORBIDDEN_OP_HOSTS.has(name)) return false;
+    anchored = true;
+    i = type[0].length;
+  }
+  while (i < compound.length) {
+    const rest = compound.slice(i);
+    const cls = rest.match(/^\.[a-zA-Z_][\w-]*/);
+    if (cls) {
+      anchored = true;
+      i += cls[0].length;
+      continue;
+    }
+    const id = rest.match(/^#[a-zA-Z_][\w-]*/);
+    if (id) {
+      anchored = true;
+      i += id[0].length;
+      continue;
+    }
+    const attr = rest.match(/^\[[a-zA-Z_][\w-]*(?:=[a-zA-Z_][\w-]*)?\]/);
+    if (attr) {
+      if (!anchored) return false;
+      i += attr[0].length;
+      continue;
+    }
+    const pseudoEl = rest.match(/^::([a-zA-Z_][\w-]*)/);
+    if (pseudoEl) {
+      if (!ALLOWED_CSS_PSEUDO_EL.has(pseudoEl[1].toLowerCase())) return false;
+      i += pseudoEl[0].length;
+      continue;
+    }
+    const pseudo = rest.match(/^:([a-zA-Z_][\w-]*)/);
+    if (pseudo) {
+      if (!ALLOWED_CSS_PSEUDO.has(pseudo[1].toLowerCase())) return false;
+      i += pseudo[0].length;
+      continue;
+    }
+    return false;
+  }
+  return anchored;
+}
+
+function isAllowedSelectorList(selectorList) {
+  if (selectorList.includes("*") || selectorList.includes("|") || /[()]/.test(selectorList)) {
+    return false;
+  }
   for (const raw of selectorList.split(",")) {
     const selector = raw.trim();
-    if (!selector) return true;
-    if (/(?:^|[\s>+~])\*(?:$|[\s>+~.#[:])/.test(` ${selector} `)) return true;
-    if (/:root(?:$|[^a-zA-Z0-9_-])/.test(`${selector} `)) return true;
-    const typeMatch = selector.matchAll(/(?:^|[\s>+~])([a-zA-Z][\w-]*)/g);
-    for (const match of typeMatch) {
-      const ident = match[1].toLowerCase();
-      if (ident === "html" || ident === "body") return true;
-    }
-    if (/^html\b|^body\b/i.test(selector) && cssIdentAt(selector, 0)) {
-      const ident = selector.match(/^[a-zA-Z][\w-]*/);
-      if (ident && /^(html|body)$/i.test(ident[0])) return true;
-    }
+    if (!selector) return false;
+    const compounds = selector.split(/\s*[>+~]\s*|\s+/);
+    if (compounds.some((part) => !isAllowedCompound(part))) return false;
   }
-  return false;
+  return true;
 }
 
 function cssFunctionsAllowed(value) {
@@ -257,17 +391,80 @@ function cssFunctionsAllowed(value) {
   return true;
 }
 
+function isNonNegPx(token, max) {
+  if (token === "0") return true;
+  const match = token.match(/^(\d+(?:\.\d+)?)px$/i);
+  if (!match) return false;
+  const n = Number(match[1]);
+  return n >= 0 && n <= max;
+}
+
+function isSafeMarginPadding(value) {
+  const parts = value.trim().split(/\s+/);
+  if (parts.length < 1 || parts.length > 4) return false;
+  return parts.every((part) => isNonNegPx(part, 64));
+}
+
+function isSafeSize(value) {
+  const v = value.trim().toLowerCase();
+  if (v === "0" || v === "auto") return true;
+  const px = v.match(/^(\d+(?:\.\d+)?)px$/);
+  if (px) return Number(px[1]) >= 0 && Number(px[1]) <= 1200;
+  const pct = v.match(/^(\d+(?:\.\d+)?)%$/);
+  if (pct) return Number(pct[1]) >= 0 && Number(pct[1]) <= 100;
+  return false;
+}
+
+function isSafeFontSize(value) {
+  const v = value.trim().toLowerCase();
+  const px = v.match(/^(\d+(?:\.\d+)?)px$/);
+  if (px) {
+    const n = Number(px[1]);
+    return n >= 10 && n <= 48;
+  }
+  const em = v.match(/^(\d+(?:\.\d+)?)(em|rem)$/);
+  if (em) {
+    const n = Number(em[1]);
+    return n >= 0.75 && n <= 3;
+  }
+  return false;
+}
+
+function isSafeLineHeight(value) {
+  const v = value.trim();
+  if (!/^\d+(?:\.\d+)?$/.test(v)) return false;
+  const n = Number(v);
+  return n >= 1 && n <= 3;
+}
+
+function isTransparentColor(value) {
+  const v = value.trim().toLowerCase();
+  if (v === "transparent") return true;
+  if (/^#(?:0000|00000000)$/.test(v)) return true;
+  if (/^rgba?\(\s*0(?:\.0+)?\s*,\s*0(?:\.0+)?\s*,\s*0(?:\.0+)?\s*(?:,\s*0(?:\.0+)?\s*)?\)$/.test(v)) {
+    return true;
+  }
+  return false;
+}
+
 function isSafeCssValue(prop, value) {
   if (!value) return false;
   if (!cssFunctionsAllowed(value)) return false;
   const v = value.trim();
+  if (COLOR_PROPS.has(prop) && isTransparentColor(v)) return false;
   if (prop === "display") return ALLOWED_DISPLAY.has(v.toLowerCase());
   if (prop === "position") return /^(static|relative)$/i.test(v);
   if (prop === "animation" || prop === "transition") return /^none$/i.test(v);
-  if (prop === "visibility") return /^(visible|hidden|collapse)$/i.test(v);
   if (prop === "opacity") {
     const n = Number(v);
-    return Number.isFinite(n) && n >= 0 && n <= 1;
+    return Number.isFinite(n) && n >= 0.5 && n <= 1;
+  }
+  if (prop === "font-size") return isSafeFontSize(v);
+  if (prop === "line-height") return isSafeLineHeight(v);
+  if (BOX_PROPS.has(prop)) return isSafeMarginPadding(v);
+  if (SIZE_PROPS.has(prop)) return isSafeSize(v);
+  if (prop === "letter-spacing" || prop === "word-spacing") {
+    return v.toLowerCase() === "normal" || isNonNegPx(v, 64);
   }
   return true;
 }
@@ -290,25 +487,73 @@ function isSafeDeclarationBlock(body) {
   return true;
 }
 
-/** Tokenizing CSS allowlist: comments stripped, escapes decoded, then properties/selectors checked. */
+/** Small CSS grammar: no strings, comments stripped, escapes decoded, allowlisted props/selectors. */
 export function isSafeCss(css) {
-  if (typeof css !== "string" || css.length === 0) return false;
-  const decoded = decodeCssEscapes(stripCssComments(css));
-  if (/<\/\s*style/i.test(decoded)) return false;
-  if (/@/.test(decoded)) return false;
-  if (/\b(?:url|src|image-set|image|element|paint|expression)\s*\(/i.test(decoded)) return false;
-  let ok = true;
-  const leftover = decoded.replace(/([^{}]+)\{([^{}]*)\}/g, (_, selector, body) => {
-    if (selectorListForbidden(selector) || !isSafeDeclarationBlock(body)) ok = false;
-    return " ";
-  });
-  if (!ok) return false;
-  return leftover.trim().length === 0;
+  try {
+    if (typeof css !== "string" || css.length === 0) return false;
+    if (/["']/.test(css)) return false;
+    if (/\\[\r\n]/.test(css)) return false;
+    if (cssHasForbiddenTokens(css)) return false;
+    const stripped = stripCssComments(css);
+    if (cssHasForbiddenTokens(stripped)) return false;
+    const decoded = decodeCssEscapes(stripped);
+    if (decoded.includes("\uFFFD") || decoded.includes("\u0000")) return false;
+    if (/["']/.test(decoded)) return false;
+    if (cssHasForbiddenTokens(decoded)) return false;
+    let ok = true;
+    const leftover = decoded.replace(/([^{}]+)\{([^{}]*)\}/g, (_, selector, body) => {
+      if (!isAllowedSelectorList(selector) || !isSafeDeclarationBlock(body)) ok = false;
+      return " ";
+    });
+    if (!ok) return false;
+    return leftover.trim().length === 0;
+  } catch {
+    return false;
+  }
+}
+
+function selectorTypeIsForbiddenHost(selector) {
+  for (const raw of selector.split(",")) {
+    const compounds = raw.trim().split(/\s*[>+~]\s*|\s+/);
+    for (const compound of compounds) {
+      const type = compound.match(/^[a-zA-Z_][\w-]*/);
+      if (type && FORBIDDEN_OP_HOSTS.has(type[0].toLowerCase())) return true;
+    }
+  }
+  return false;
+}
+
+export function selectorTargetsForbiddenHost(selector) {
+  if (typeof selector !== "string" || selector.length === 0) return true;
+  return selectorTypeIsForbiddenHost(selector);
 }
 
 export function selectorTargetsForbiddenTextHost(selector) {
-  if (typeof selector !== "string") return true;
-  return /(?:^|[\s>+~,])(?:style|script|template|noscript)(?:$|[\s.#[:>+~,])/i.test(selector.trim());
+  return selectorTargetsForbiddenHost(selector);
+}
+
+export function localTagName(el) {
+  return String(el.localName || el.tagName || "").toLowerCase();
+}
+
+export function isHtmlNamespace(el) {
+  const ns = el.namespaceURI;
+  return !ns || ns === HTML_NS;
+}
+
+export function elementForbiddenAsTextOrTagHost(el) {
+  if (!el || el.nodeType !== 1) return true;
+  if (!isHtmlNamespace(el)) return true;
+  return FORBIDDEN_OP_HOSTS.has(localTagName(el));
+}
+
+export function elementHasVoidOrControlDescendant(el) {
+  if (!el || typeof el.querySelectorAll !== "function") return true;
+  for (const child of el.querySelectorAll("*")) {
+    if (!isHtmlNamespace(child)) return true;
+    if (VOID_OR_CONTROL.has(localTagName(child))) return true;
+  }
+  return false;
 }
 
 export function hashKey(value) {
@@ -336,14 +581,20 @@ function resolveDoc(doc) {
 function insertAttrForbidden(name) {
   const n = name.toLowerCase();
   if (n.startsWith("on")) return true;
+  if (n.startsWith("data-lift-")) return true;
   if (n.includes(":")) return true;
   if (DROP_INSERT_ATTR.has(n)) return true;
   return false;
 }
 
 function sanitizeInsertedElement(el) {
-  const tag = el.tagName.toLowerCase();
+  const tag = localTagName(el);
   if (!INSERT_TAGS.has(tag)) return false;
+  if (tag === "button") {
+    const type = (el.getAttribute("type") || "").toLowerCase();
+    if (!type) el.setAttribute("type", "button");
+    else if (type !== "button") return false;
+  }
   for (const attr of [...el.attributes]) {
     const name = attr.name;
     if (insertAttrForbidden(name)) return false;
@@ -416,6 +667,7 @@ function parseOp(raw, index, doc) {
       if (!isNonEmptyString(raw.selector)) return { error: `ops[${index}] selector required` };
       if (!isNonEmptyString(raw.name)) return { error: `ops[${index}] name required` };
       if (typeof raw.value !== "string") return { error: `ops[${index}] value must be a string` };
+      if (raw.name.toLowerCase() === "type") return { error: `ops[${index}] disallowed attribute` };
       if (!isAllowedAttributeName(raw.name)) return { error: `ops[${index}] disallowed attribute` };
       if (!isSafeAttributeValue(raw.name, raw.value)) {
         return { error: `ops[${index}] unsafe attribute value` };
@@ -425,7 +677,7 @@ function parseOp(raw, index, doc) {
     case "setText": {
       if (!isNonEmptyString(raw.selector)) return { error: `ops[${index}] selector required` };
       if (typeof raw.text !== "string") return { error: `ops[${index}] text must be a string` };
-      if (selectorTargetsForbiddenTextHost(raw.selector)) {
+      if (selectorTargetsForbiddenHost(raw.selector)) {
         return { error: `ops[${index}] target is not allowlisted` };
       }
       return { op, selector: raw.selector, text: raw.text };
@@ -453,8 +705,16 @@ function parseOp(raw, index, doc) {
       if (typeof raw.tag !== "string" || !REPLACE_TAG_SET.has(raw.tag)) {
         return { error: `ops[${index}] tag is not allowlisted` };
       }
+      if (selectorTargetsForbiddenHost(raw.selector)) {
+        return { error: `ops[${index}] target is not allowlisted` };
+      }
       const attributes = parseAttributes(raw.attributes, index);
       if (attributes.error) return { error: attributes.error };
+      if (raw.tag === "a") {
+        if (typeof attributes.href !== "string" || !isSafeHref(attributes.href)) {
+          return { error: `ops[${index}] a requires href` };
+        }
+      }
       return Object.keys(attributes).length > 0
         ? { op, selector: raw.selector, tag: raw.tag, attributes }
         : { op, selector: raw.selector, tag: raw.tag };
@@ -481,17 +741,21 @@ function parseOp(raw, index, doc) {
 }
 
 export function parsePatchSpec(input, doc) {
-  if (!isRecord(input)) return { ok: false, error: "spec must be an object" };
-  if (!isNonEmptyString(input.id)) return { ok: false, error: "id required" };
-  if (input.version !== PATCH_SPEC_VERSION) {
-    return { ok: false, error: `unsupported version: ${String(input.version)}` };
+  try {
+    if (!isRecord(input)) return { ok: false, error: "spec must be an object" };
+    if (!isNonEmptyString(input.id)) return { ok: false, error: "id required" };
+    if (input.version !== PATCH_SPEC_VERSION) {
+      return { ok: false, error: `unsupported version: ${String(input.version)}` };
+    }
+    if (!Array.isArray(input.ops)) return { ok: false, error: "ops must be an array" };
+    const ops = [];
+    for (let i = 0; i < input.ops.length; i++) {
+      const parsed = parseOp(input.ops[i], i, doc);
+      if (parsed.error) return { ok: false, error: parsed.error };
+      ops.push(parsed);
+    }
+    return { ok: true, spec: { id: input.id, version: PATCH_SPEC_VERSION, ops } };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
-  if (!Array.isArray(input.ops)) return { ok: false, error: "ops must be an array" };
-  const ops = [];
-  for (let i = 0; i < input.ops.length; i++) {
-    const parsed = parseOp(input.ops[i], i, doc);
-    if (parsed.error) return { ok: false, error: parsed.error };
-    ops.push(parsed);
-  }
-  return { ok: true, spec: { id: input.id, version: PATCH_SPEC_VERSION, ops } };
 }

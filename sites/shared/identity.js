@@ -14,6 +14,8 @@ export const IDENTITY_MAX_LENGTH = 128;
  * @property {(value: string) => void} setStorage
  * @property {() => string} randomId
  * @property {boolean} secure
+ * @property {string} [host]
+ * @property {boolean} [allowBotOverride]
  */
 
 export function isUsableIdentity(value) {
@@ -25,9 +27,25 @@ export function isUsableIdentity(value) {
   return true;
 }
 
-export function readQueryIdentity(search) {
+export function isLoopbackHost(host) {
+  if (typeof host !== "string" || host.length === 0) return false;
+  const h = host.replace(/^\[|\]$/g, "").toLowerCase();
+  return h === "localhost" || h === "127.0.0.1" || h === "::1" || h === "0:0:0:0:0:0:0:1";
+}
+
+/** Query override is for local traffic bots only, never for deployed pages. */
+export function botOverrideAllowed(env) {
+  if (env && env.allowBotOverride === true) return true;
+  if (typeof globalThis !== "undefined" && globalThis.LIFT_ALLOW_BOT_OVERRIDE === true) {
+    return true;
+  }
+  return isLoopbackHost(env && env.host);
+}
+
+export function readQueryIdentity(search, env) {
   const params = new URLSearchParams(search.startsWith("?") ? search.slice(1) : search);
   if (params.get("lift_bot") !== "1") return null;
+  if (!botOverrideAllowed(env ?? {})) return null;
   const raw = params.get("lift_identity");
   if (raw === null) return null;
   return isUsableIdentity(raw) ? raw : null;
@@ -52,6 +70,8 @@ export function readCookieIdentity(header) {
 }
 
 export function cookieWriteValue(id, secure) {
+  // Path=/ is host-wide. On a GitHub Pages host (*.github.io) that is one cookie
+  // for every project site on the same user/org domain — fine for the demo.
   const base = `${IDENTITY_COOKIE}=${encodeURIComponent(id)}; Path=/; Max-Age=${IDENTITY_MAX_AGE_SEC}; SameSite=Lax`;
   return secure ? `${base}; Secure` : base;
 }
@@ -71,10 +91,12 @@ function persist(id, env) {
 
 /** Resolve a sticky visitor id. Cookie, then localStorage, then a new UUID. */
 export function resolveVisitorId(env) {
-  const fromQuery = readQueryIdentity(env.search);
+  const fromQuery = readQueryIdentity(env.search, env);
   if (fromQuery) {
-    // Honor ?lift_identity= only when lift_bot=1 is also present (traffic bots / e2e).
-    // Do not persist that override: a crafted link must not overwrite a real visitor cookie.
+    // Honor ?lift_identity= only when lift_bot=1 is present AND the page is on
+    // loopback (or a build-time LIFT_ALLOW_BOT_OVERRIDE flag). Do not persist
+    // that override: a crafted link must not overwrite a real visitor cookie,
+    // and deployed pages (e.g. *.github.io) ignore the query entirely.
     return fromQuery;
   }
   const fromCookie = readCookieIdentity(env.getCookie());
@@ -120,5 +142,6 @@ export function browserIdentityEnv() {
     },
     randomId: () => crypto.randomUUID(),
     secure: typeof location !== "undefined" && location.protocol === "https:",
+    host: typeof location !== "undefined" ? location.hostname : "",
   };
 }

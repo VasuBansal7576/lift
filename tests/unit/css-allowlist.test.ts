@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isSafeCss } from "../../runtime/patch-rules.js";
+import { decodeCssEscapes, isSafeCss, parsePatchSpec } from "../../runtime/patch-rules.js";
 import { CSS_ATTACKS } from "../fixtures/patch-spec-corpus.ts";
 
 describe("isSafeCss allowlist", () => {
@@ -15,5 +15,18 @@ describe("isSafeCss allowlist", () => {
     for (const attack of CSS_ATTACKS) {
       expect(isSafeCss(attack.css), attack.name).toBe(false);
     }
+  });
+
+  it("never throws on oversized CSS escapes and rejects them", () => {
+    const css = ".x { color: \\110000; }";
+    expect(() => decodeCssEscapes(css)).not.toThrow();
+    expect(() => isSafeCss(css)).not.toThrow();
+    expect(isSafeCss(css)).toBe(false);
+    expect(() =>
+      parsePatchSpec({ id: "esc", version: 0, ops: [{ op: "injectCSS", css }] }),
+    ).not.toThrow();
+    expect(parsePatchSpec({ id: "esc", version: 0, ops: [{ op: "injectCSS", css }] }).ok).toBe(
+      false,
+    );
   });
 });

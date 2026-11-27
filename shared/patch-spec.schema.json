@@ -36,14 +36,24 @@
           { "pattern": "display\\s*:\\s*none" },
           { "pattern": "(^|[,\\s>{])(html|body)([\\s>+~.#:,{]|$)" },
           { "pattern": "(^|[,\\s>{])\\*" },
-          { "pattern": ":root" }
+          { "pattern": ":root" },
+          { "pattern": "[\"']" },
+          { "pattern": ":is\\s*\\(" },
+          { "pattern": ":not\\s*\\(" },
+          { "pattern": ":where\\s*\\(" },
+          { "pattern": ":has\\s*\\(" },
+          { "pattern": ":scope" },
+          { "pattern": "\\|" },
+          { "pattern": "visibility" },
+          { "pattern": "clip-path" },
+          { "pattern": "transparent" }
         ]
       }
     },
     "safeAttrName": {
       "type": "string",
       "minLength": 1,
-      "not": { "pattern": "^([oO][nN]|src$|srcset$|formaction$|id$|name$)" }
+      "not": { "pattern": "^([oO][nN]|src$|srcset$|formaction$|id$|name$|data-lift-)" }
     },
     "safeHref": {
       "type": "string",
@@ -58,7 +68,12 @@
           "properties": {
             "op": { "const": "setAttribute" },
             "selector": { "$ref": "#/$defs/selector" },
-            "name": { "$ref": "#/$defs/safeAttrName" },
+            "name": {
+              "allOf": [
+                { "$ref": "#/$defs/safeAttrName" },
+                { "not": { "pattern": "^type$" } }
+              ]
+            },
             "value": { "type": "string" }
           },
           "if": { "properties": { "name": { "const": "href" } } },
@@ -75,7 +90,7 @@
                 { "$ref": "#/$defs/selector" },
                 {
                   "not": {
-                    "pattern": "(^|[\\s>+~,])(style|script|template|noscript)($|[\\s.#[:>+~,])"
+                    "pattern": "(^|[\\s>+~,])(html|head|body|form|input|select|textarea|script|style|template|iframe|svg|noscript)($|[\\s.#[:>+~,])"
                   }
                 }
               ]
@@ -127,12 +142,31 @@
           "required": ["op", "selector", "tag"],
           "properties": {
             "op": { "const": "replaceTag" },
-            "selector": { "$ref": "#/$defs/selector" },
+            "selector": {
+              "allOf": [
+                { "$ref": "#/$defs/selector" },
+                {
+                  "not": {
+                    "pattern": "(^|[\\s>+~,])(html|head|body|form|input|select|textarea|script|style|template|iframe|svg|noscript)($|[\\s.#[:>+~,])"
+                  }
+                }
+              ]
+            },
             "tag": { "enum": ["button", "label", "span", "a", "p", "strong", "em"] },
             "attributes": {
               "type": "object",
               "propertyNames": { "$ref": "#/$defs/safeAttrName" },
               "additionalProperties": { "type": "string" }
+            }
+          },
+          "if": { "properties": { "tag": { "const": "a" } } },
+          "then": {
+            "required": ["attributes"],
+            "properties": {
+              "attributes": {
+                "type": "object",
+                "required": ["href"]
+              }
             }
           }
         },

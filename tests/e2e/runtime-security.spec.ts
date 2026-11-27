@@ -252,6 +252,149 @@ test("injectCSS with the same id updates css and undo restores the previous text
   expect(result.styleCount).toBe(1);
 });
 
+test("Chromium rejects string-hidden CSS comments and :is(body)", async ({ page }) => {
+  await page.goto("/checkout/?lift_variant=control");
+  const result = await page.evaluate(async () => {
+    const href = new URL("/runtime/runtime.js", location.origin).href;
+    const runtime = (await import(href)) as {
+      isSafeCss: (css: string) => boolean;
+      applyPatchSpec: (input: unknown) => { ok: boolean };
+    };
+    const smuggle = 'h1{color:"/*"; background-image:url(http://x/leak) /* */}';
+    const isBody = ":is(body){opacity:0}";
+    const before = document.body.style.opacity;
+    const applied = runtime.applyPatchSpec({
+      id: "evil",
+      version: 0,
+      ops: [{ op: "injectCSS", css: isBody }],
+    });
+    return {
+      smuggleSafe: runtime.isSafeCss(smuggle),
+      isBodySafe: runtime.isSafeCss(isBody),
+      appliedOk: applied.ok,
+      opacity: document.body.style.opacity,
+      before,
+    };
+  });
+  expect(result.smuggleSafe).toBe(false);
+  expect(result.isBodySafe).toBe(false);
+  expect(result.appliedOk).toBe(false);
+  expect(result.opacity).toBe(result.before);
+});
+
+test("Chromium refuses setText into an SVG <style>", async ({ page }) => {
+  await page.goto("/checkout/?lift_variant=control");
+  const result = await page.evaluate(async () => {
+    const href = new URL("/runtime/runtime.js", location.origin).href;
+    const runtime = (await import(href)) as {
+      applyPatchSpec: (input: unknown) => { ok: boolean };
+    };
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    const style = document.createElementNS("http://www.w3.org/2000/svg", "style");
+    style.id = "svg-style";
+    style.textContent = ".x{fill:red}";
+    svg.append(style);
+    document.body.append(svg);
+    const before = style.textContent;
+    const applied = runtime.applyPatchSpec({
+      id: "svg-style-text",
+      version: 0,
+      ops: [{ op: "setText", selector: "#svg-style", text: "url(http://evil.example)" }],
+    });
+    return { ok: applied.ok, after: style.textContent, before };
+  });
+  expect(result.ok).toBe(false);
+  expect(result.after).toBe(result.before);
+});
+
+test("Chromium refuses replaceTag body and setText head", async ({ page }) => {
+  await page.goto("/checkout/?lift_variant=control");
+  const result = await page.evaluate(async () => {
+    const href = new URL("/runtime/runtime.js", location.origin).href;
+    const runtime = (await import(href)) as {
+      applyPatchSpec: (input: unknown) => { ok: boolean };
+    };
+    const pay = document.getElementById("place-order")?.outerHTML ?? "";
+    const body = runtime.applyPatchSpec({
+      id: "kill-body",
+      version: 0,
+      ops: [{ op: "replaceTag", selector: "body", tag: "span" }],
+    });
+    const head = runtime.applyPatchSpec({
+      id: "kill-head",
+      version: 0,
+      ops: [{ op: "setText", selector: "head", text: "gone" }],
+    });
+    return {
+      bodyOk: body.ok,
+      headOk: head.ok,
+      stillHasPay: Boolean(document.getElementById("place-order")),
+      pay,
+      payNow: document.getElementById("place-order")?.outerHTML ?? "",
+      title: document.title,
+    };
+  });
+  expect(result.bodyOk).toBe(false);
+  expect(result.headOk).toBe(false);
+  expect(result.stillHasPay).toBe(true);
+  expect(result.payNow).toBe(result.pay);
+});
+
+test("Chromium rejects replaceTag to <a> without href", async ({ page }) => {
+  await page.goto("/checkout/?lift_variant=control");
+  const result = await page.evaluate(async () => {
+    const href = new URL("/runtime/runtime.js", location.origin).href;
+    const runtime = (await import(href)) as {
+      parsePatchSpec: (input: unknown) => { ok: boolean; error?: string };
+    };
+    return runtime.parsePatchSpec({
+      id: "a-no-href",
+      version: 0,
+      ops: [{ op: "replaceTag", selector: "#place-order", tag: "a" }],
+    });
+  });
+  expect(result.ok).toBe(false);
+  expect(result.error).toContain("a requires href");
+});
+
+test("bindEnterToClick on a non-native replacement forwards one click", async ({ page }) => {
+  await page.goto("/checkout/?lift_variant=control");
+  const counts = await page.evaluate(async () => {
+    const href = new URL("/runtime/runtime.js", location.origin).href;
+    const runtime = (await import(href)) as {
+      applyPatchSpec: (input: unknown) => { ok: boolean };
+    };
+    const host = document.createElement("div");
+    host.id = "lift-enter-once";
+    host.textContent = "Pay";
+    document.body.append(host);
+    let clicks = 0;
+    let keys = 0;
+    host.addEventListener("click", () => {
+      clicks += 1;
+    });
+    host.addEventListener("keydown", () => {
+      keys += 1;
+    });
+    runtime.applyPatchSpec({
+      id: "enter-once",
+      version: 0,
+      ops: [
+        { op: "replaceTag", selector: "#lift-enter-once", tag: "span" },
+        { op: "makeFocusable", selector: "#lift-enter-once" },
+        { op: "bindEnterToClick", selector: "#lift-enter-once" },
+      ],
+    });
+    document
+      .getElementById("lift-enter-once")
+      ?.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    return { clicks, keys, tag: document.getElementById("lift-enter-once")?.tagName ?? "" };
+  });
+  expect(counts.tag).toBe("SPAN");
+  expect(counts.clicks).toBe(1);
+  expect(counts.keys).toBe(0);
+});
+
 test("GET // returns 400 and the site still serves", async ({ request }) => {
   const status = await new Promise<number>((resolve, reject) => {
     const req = http.request(

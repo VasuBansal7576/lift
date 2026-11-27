@@ -351,11 +351,34 @@ export function resolveL3ApiUrl(override = ""): string {
   return raw.replace(/\/?$/, "/");
 }
 
+export function collectSegmentProperties(rules: unknown, out: string[] = []): string[] {
+  if (rules == null) return out;
+  const list = Array.isArray(rules) ? rules : [rules];
+  for (const rule of list) {
+    if (!rule || typeof rule !== "object") continue;
+    const node = rule as { property?: unknown; conditions?: unknown; rules?: unknown };
+    if (typeof node.property === "string" && node.property) out.push(node.property);
+    collectSegmentProperties(node.conditions, out);
+    collectSegmentProperties(node.rules, out);
+  }
+  return out;
+}
+
+export function segmentUsesTrait(segment: unknown, traitName = L3_TRAIT_NAME): boolean {
+  const rules =
+    segment && typeof segment === "object" && "rules" in segment
+      ? (segment as { rules?: unknown }).rules
+      : undefined;
+  const props = collectSegmentProperties(rules);
+  if (props.includes("is_sensory_safe")) return false;
+  return props.length > 0 && props.every((property) => property === traitName);
+}
+
 export function segmentCreatePayload(projectId: number | string) {
   return {
     name: L3_SEGMENT_NAME,
     description:
-      "Lift L3 Sensory-Safe: identities whose overstimulated trait is true. Evaluated by Flagsmith, not by the page.",
+      "Lift L3 Sensory-Safe: identities whose overstimulated trait is true. Evaluated by Flagsmith, not by the page. Rule: overstimulated Exactly Matches true.",
     project: Number(projectId),
     rules: [
       {
@@ -471,34 +494,76 @@ async function findNamed(
   return listResults<NamedRecord>(data).find((row) => row.name === name) ?? null;
 }
 
+async function listNamedSegments(
+  apiUrl: string,
+  token: string,
+  projectId: string,
+): Promise<NamedRecord[]> {
+  const searched = await adminRequest<unknown>(
+    apiUrl,
+    token,
+    "GET",
+    `/projects/${projectId}/segments/?search=${encodeURIComponent(L3_SEGMENT_NAME)}`,
+  );
+  const listed = await adminRequest<unknown>(
+    apiUrl,
+    token,
+    "GET",
+    `/segments/?project=${encodeURIComponent(projectId)}`,
+  );
+  const rows = [...listResults<NamedRecord>(searched.data), ...listResults<NamedRecord>(listed.data)];
+  const seen = new Set<number>();
+  const matches: NamedRecord[] = [];
+  for (const row of rows) {
+    if (row.name !== L3_SEGMENT_NAME || !row.id || seen.has(row.id)) continue;
+    seen.add(row.id);
+    matches.push(row);
+  }
+  return matches;
+}
+
+async function writeSegmentRules(
+  apiUrl: string,
+  token: string,
+  projectId: string,
+  segmentId: number,
+): Promise<NamedRecord> {
+  const payload = { ...segmentCreatePayload(projectId), id: segmentId };
+  const { data } = await adminRequest<NamedRecord>(
+    apiUrl,
+    token,
+    "PUT",
+    `/projects/${projectId}/segments/${segmentId}/`,
+    payload,
+  );
+  return data;
+}
+
 async function ensureSegment(
   apiUrl: string,
   token: string,
   projectId: string,
 ): Promise<NamedRecord> {
-  const existing =
-    (await findNamed(
+  const existing = await listNamedSegments(apiUrl, token, projectId);
+  if (existing.length === 0) {
+    const { data } = await adminRequest<NamedRecord>(
       apiUrl,
       token,
-      `/projects/${projectId}/segments/?search=${encodeURIComponent(L3_SEGMENT_NAME)}`,
-      L3_SEGMENT_NAME,
-    )) ??
-    (await findNamed(
-      apiUrl,
-      token,
-      `/segments/?project=${encodeURIComponent(projectId)}`,
-      L3_SEGMENT_NAME,
-    ));
-  if (existing) return existing;
-
-  const { data } = await adminRequest<NamedRecord>(
-    apiUrl,
-    token,
-    "POST",
-    `/projects/${projectId}/segments/`,
-    segmentCreatePayload(projectId),
-  );
-  return data;
+      "POST",
+      `/projects/${projectId}/segments/`,
+      segmentCreatePayload(projectId),
+    );
+    return data;
+  }
+  const first = existing[0];
+  if (!first) {
+    throw new L3BootstrapError("Segment list was empty after lookup");
+  }
+  let chosen = first;
+  for (const row of existing) {
+    chosen = await writeSegmentRules(apiUrl, token, projectId, row.id);
+  }
+  return chosen;
 }
 
 async function ensureFlag(

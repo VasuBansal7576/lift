@@ -40,9 +40,9 @@ const OUT_DIRS = [
   resolve("/cursor/stores/self/artifacts"),
   resolve(ROOT, "test-results/l3-recordings"),
 ];
-const RECORD_IDENTITY = "lift-aaaaaaaa-bbbb-4ccc-8ddd-111111111111";
-const NOFLAP_IDENTITY = "lift-aaaaaaaa-bbbb-4ccc-8ddd-444444444444";
-const SEGMENT_IDENTITY = "lift-aaaaaaaa-bbbb-4ccc-8ddd-333333333333";
+const RECORD_IDENTITY = "lift-aaaaaaaa-bbbb-4ccc-8ddd-777777777777";
+const NOFLAP_IDENTITY = "lift-aaaaaaaa-bbbb-4ccc-8ddd-999999999999";
+const SEGMENT_IDENTITY = "lift-aaaaaaaa-bbbb-4ccc-8ddd-666666666666";
 const TILE = { w: 960, h: 1020 };
 
 interface L3State {
@@ -271,12 +271,10 @@ async function openIdentity(page: Page, state: L3State, identifier: string): Pro
 }
 
 async function refreshIdentity(win: HeadedWindow): Promise<void> {
-  retile(win);
   await win.page.reload({ waitUntil: "domcontentloaded" });
   await hideFlagsmithSnippets(win.page);
   await win.page.getByText("Traits", { exact: true }).first().waitFor({ timeout: 15_000 });
   await hideFlagsmithSnippets(win.page);
-  retile(win);
 }
 
 async function launchWindow(x: number, y: number, w: number, h: number): Promise<HeadedWindow> {
@@ -322,12 +320,12 @@ function startGrab(outPath: string): ChildProcess {
       "x11grab",
       "-draw_mouse",
       "1",
+      "-framerate",
+      "25",
       "-video_size",
       "1920x1200",
       "-i",
       `${process.env.DISPLAY || ":1"}`,
-      "-r",
-      "25",
       "-c:v",
       "libx264",
       "-pix_fmt",
@@ -401,6 +399,18 @@ async function driftScore(page: Page, values: number[], holdMs: number): Promise
   }
 }
 
+async function sweepScore(page: Page, from: number, to: number, stepMs = 320): Promise<void> {
+  const delta = to >= from ? 0.02 : -0.02;
+  const values: number[] = [];
+  if (delta > 0) {
+    for (let n = from; n <= to + 1e-9; n += delta) values.push(Number(n.toFixed(2)));
+  } else {
+    for (let n = from; n >= to - 1e-9; n += delta) values.push(Number(n.toFixed(2)));
+  }
+  if (values[values.length - 1] !== Number(to.toFixed(2))) values.push(Number(to.toFixed(2)));
+  await driftScore(page, values, stepMs);
+}
+
 async function waitUntilCalm(page: Page): Promise<void> {
   const on = await page.locator("html").evaluate((el) => el.classList.contains("lift-sensory-safe"));
   if (!on) return;
@@ -424,6 +434,8 @@ async function fullLoop(): Promise<void> {
     await demo.page.goto(`${BASE}/?lift_identity=${RECORD_IDENTITY}`, {
       waitUntil: "domcontentloaded",
     });
+    await demo.page.waitForSelector("#lift-l3-hud", { timeout: 20_000 });
+    await waitUntilCalm(demo.page);
     await demo.page.waitForSelector("#lift-l3-hud[data-flag='false']", { timeout: 20_000 });
     retile(demo);
     await openIdentity(admin.page, state, RECORD_IDENTITY);
@@ -432,26 +444,22 @@ async function fullLoop(): Promise<void> {
     await sleep(800);
     grab = startGrab(tmp);
     await sleep(1_000);
-    retile(demo);
-    retile(admin);
     await spikeLive(demo.page);
     await demo.page.waitForSelector("#lift-l3-hud[data-trait='true']", { timeout: 20_000 });
     await demo.page.waitForSelector("#lift-l3-hud[data-flag='true']", { timeout: 20_000 });
     await sleep(2_400);
     await refreshIdentity(admin);
     await sleep(3_200);
-    retile(demo);
     await demo.page.locator("#lift-biometric").evaluate((el) => {
       const input = el as HTMLInputElement;
       input.value = "8";
       input.dispatchEvent(new Event("input", { bubbles: true }));
     });
-    await driftScore(demo.page, [0.5, 0.32, 0.12], 900);
+    await sweepScore(demo.page, 0.9, 0.12, 380);
     await demo.page.waitForSelector("#lift-l3-hud[data-trait='false']", { timeout: 25_000 });
     await sleep(2_200);
     await refreshIdentity(admin);
     await sleep(3_200);
-    retile(demo);
     await sleep(2_000);
   } finally {
     if (grab) await stopGrab(grab);
@@ -482,25 +490,23 @@ async function noFlap(): Promise<void> {
     retile(admin);
     retile(demo);
     grab = startGrab(tmp);
+    await sleep(1_200);
+    await sweepScore(demo.page, 0.48, 0.6, 320);
+    await sweepScore(demo.page, 0.6, 0.5, 320);
+    for (let i = 0; i < 5; i += 1) {
+      await sweepScore(demo.page, 0.54, 0.64, 180);
+      await sweepScore(demo.page, 0.64, 0.54, 180);
+    }
     await sleep(1_000);
-    retile(demo);
-    retile(admin);
-    const crossings: number[] = [];
-    for (let i = 0; i < 8; i += 1) crossings.push(i % 2 === 0 ? 0.65 : 0.55);
-    await driftScore(demo.page, crossings, 1_050);
-    await refreshIdentity(admin);
-    await sleep(2_200);
-    retile(demo);
-    await demo.page.evaluate(() => window.LiftL3.forceScore(0.9));
+    await sweepScore(demo.page, 0.54, 0.9, 260);
     await demo.page.waitForSelector("#lift-l3-hud[data-trait='true']", { timeout: 20_000 });
-    await sleep(1_600);
+    await sleep(2_000);
     await refreshIdentity(admin);
-    await sleep(2_400);
-    retile(demo);
-    const stayOn: number[] = [];
-    for (let i = 0; i < 8; i += 1) stayOn.push(i % 2 === 0 ? 0.45 : 0.4);
-    await driftScore(demo.page, stayOn, 1_050);
+    await sleep(2_800);
+    await sweepScore(demo.page, 0.9, 0.45, 420);
     await sleep(1_600);
+    await sweepScore(demo.page, 0.45, 0.4, 500);
+    await sleep(2_400);
   } finally {
     if (grab) await stopGrab(grab);
     await demo.browser.close().catch(() => {});
@@ -522,6 +528,8 @@ async function segment(): Promise<void> {
     await demo.page.goto(`${BASE}/?lift_identity=${SEGMENT_IDENTITY}`, {
       waitUntil: "domcontentloaded",
     });
+    await demo.page.waitForSelector("#lift-l3-hud", { timeout: 20_000 });
+    await waitUntilCalm(demo.page);
     await demo.page.waitForSelector("#lift-l3-hud[data-trait='false']", { timeout: 20_000 });
     retile(demo);
     await admin.page.goto(projectSegmentsUrl(state), { waitUntil: "domcontentloaded" });
@@ -530,26 +538,19 @@ async function segment(): Promise<void> {
     retile(admin);
     retile(demo);
     grab = startGrab(tmp);
-    await sleep(1_200);
-    retile(admin);
-    retile(demo);
-    await sleep(3_400);
+    await sleep(4_000);
     await openIdentity(admin.page, state, SEGMENT_IDENTITY);
-    retile(admin);
-    retile(demo);
-    await sleep(2_400);
-    await demo.page.evaluate(() => window.LiftL3.forceScore(0.95));
+    await sleep(2_800);
+    await sweepScore(demo.page, 0.2, 0.95, 280);
     await demo.page.waitForSelector("#lift-l3-hud[data-trait='true']", { timeout: 20_000 });
     await sleep(1_800);
     await refreshIdentity(admin);
     await sleep(3_000);
-    retile(demo);
-    await driftScore(demo.page, [0.32, 0.1], 900);
+    await sweepScore(demo.page, 0.95, 0.1, 380);
     await demo.page.waitForSelector("#lift-l3-hud[data-trait='false']", { timeout: 25_000 });
     await sleep(1_600);
     await refreshIdentity(admin);
     await sleep(3_200);
-    retile(demo);
   } finally {
     if (grab) await stopGrab(grab);
     await demo.browser.close().catch(() => {});

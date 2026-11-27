@@ -386,6 +386,7 @@ html.lift-sensory-restoring .cookie button {
   font: 13px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
   box-shadow: 0 10px 40px rgba(0,0,0,0.45);
   border: 1px solid #334155;
+  pointer-events: none;
 }
 
 .l3-hud-title { font-weight: 800; margin: 0 0 0.4rem; color: #fde68a; }

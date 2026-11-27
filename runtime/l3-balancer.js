@@ -666,7 +666,11 @@ function resumeMedia() {
     if (el.dataset.liftWasPlaying === "1") {
       el.dataset.liftResuming = "1";
       const play = el.play();
-      if (play && typeof play.catch === "function") play.catch(() => {});
+      if (play && typeof play.catch === "function") {
+        play.catch(() => {
+          delete el.dataset.liftResuming;
+        });
+      }
     }
     delete el.dataset.liftWasPlaying;
   });
@@ -714,8 +718,7 @@ function setOptedOut(value) {
     if (snapshot?.trait || snapshot?.flagOn || runtime.trait || runtime.flagOn) {
       runtime.hysteresis.overstimulated = true;
       runtime.hysteresis.cooldownUntil = Date.now() + timingConfig().cooldownMs;
-      applySensorySafe(true, runtime.flagConfig);
-      void applyFromFlagsmith();
+      void pushTrait(true);
     }
   }
   syncOptButtons();
@@ -939,15 +942,15 @@ async function pushTrait(value) {
       await withTimeout(flagsmith.getFlags());
     }
   } catch {
-    runtime.traitInFlight = false;
     if (seq !== runtime.traitSeq) return;
+    runtime.traitInFlight = false;
     applySensorySafe(false, runtime.flagConfig);
     scheduleTraitRetry();
     renderHud();
     return;
   }
-  runtime.traitInFlight = false;
   if (seq !== runtime.traitSeq) return;
+  runtime.traitInFlight = false;
   runtime.traitRetries = 0;
   const latest = latestDesiredTrait();
   if (runtime.traitPending || latest !== sent) {
@@ -1209,6 +1212,8 @@ export async function start() {
     if (!runtime.flagsmith && !runtime.offline) {
       const config = await loadConfig();
       await initFlagsmith(config);
+    } else if (runtime.flagsmith && !runtime.offline) {
+      void pushTrait(latestDesiredTrait());
     }
   } catch (err) {
     failOpen(err instanceof Error ? err.message : String(err));
@@ -1225,6 +1230,7 @@ export function stop() {
   runtime.traitSeq += 1;
   runtime.traitInFlight = false;
   runtime.traitPending = false;
+  applySensorySafe(false, runtime.flagConfig);
   if (runtime.moveRaf) window.cancelAnimationFrame(runtime.moveRaf);
   if (runtime.scrollRaf) window.cancelAnimationFrame(runtime.scrollRaf);
   runtime.timer = 0;

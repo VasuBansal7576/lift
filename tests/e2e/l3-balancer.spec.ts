@@ -23,6 +23,7 @@ declare global {
         traitSeq: number;
       };
     };
+    __setTraitCalls?: number;
   }
 }
 
@@ -300,6 +301,8 @@ test("L3 full loop: stress, Flagsmith trait/segment/flag, Sensory-Safe, fade bac
     expect(hudTextStart).not.toContain(cfg.flagsmithEnvironmentKey);
   }
   expect(hudTextStart).not.toMatch(/\bser\./);
+  expect(hudTextStart).toMatch(/trait overstimulated/);
+  expect(hudTextStart).not.toContain("is_sensory_safe");
   await page.locator("#hero-video").evaluate((el) => {
     const video = el as HTMLVideoElement;
     video.muted = true;
@@ -431,6 +434,22 @@ test("L3 fail-open: missing Flagsmith keeps the page calm", async ({ page }) => 
   await expect(page.locator("html")).not.toHaveClass(/lift-sensory-safe/);
   await expect(page.locator("[data-lift-promo]")).toBeVisible();
   await expect(page.locator("#lift-l3-hud")).toHaveAttribute("data-flag", "false");
+});
+
+test("L3 opt-in does not apply Sensory-Safe while Flagsmith is down", async ({ page }) => {
+  test.setTimeout(40_000);
+  const identity = liftIdentity();
+  await page.goto(`${L3_URL}/?l3_offline=1&lift_identity=${identity}`);
+  await expect(page.locator("#checkout")).toBeVisible();
+  await page.evaluate(() => {
+    sessionStorage.setItem("lift-l3-opt-out", "1");
+  });
+  await page.reload();
+  await expect(page.locator("#lift-l3-opt-in")).toBeVisible({ timeout: 10_000 });
+  await page.locator("#lift-l3-opt-in").click({ force: true });
+  await page.waitForTimeout(1_000);
+  await expect(page.locator("html")).not.toHaveClass(/lift-sensory-safe/);
+  await expect(page.locator("[data-lift-promo]")).toBeVisible();
 });
 
 test("L3 fail-open: env key present but API blocked stays calm", async ({ page }) => {
@@ -603,6 +622,19 @@ test("L3 opt-out is keyboard reachable and Escape in a dialog does not exit", as
   await expect(page.locator("[data-lift-promo]")).toBeVisible();
 });
 
+test("L3 opt-in is clickable with a real pointer through the HUD", async ({ page }) => {
+  skipUnlessFlagsmith();
+  test.setTimeout(40_000);
+  await gotoDemo(page);
+  await page.evaluate(() => window.LiftL3.forceScore(0.9));
+  await expect(page.locator("#lift-l3-opt-out")).toBeVisible({ timeout: 20_000 });
+  await page.locator("#lift-l3-opt-out").click();
+  await expect(page.locator("#lift-l3-opt-in")).toBeVisible();
+  await page.locator("#lift-l3-opt-in").click();
+  await expect(page.locator("#lift-l3-opt-in")).toBeHidden();
+  expect(await page.evaluate(() => window.LiftL3.getRuntime().optedOut)).toBe(false);
+});
+
 test("L3 setTrait does not loop when opt-out races a slow push", async ({ page }) => {
   skipUnlessFlagsmith();
   test.setTimeout(40_000);
@@ -616,9 +648,9 @@ test("L3 setTrait does not loop when opt-out races a slow push", async ({ page }
     } | null;
     if (!flagsmith?.setTrait) throw new Error("Flagsmith SDK was not ready");
     const orig = flagsmith.setTrait.bind(flagsmith);
-    (window as unknown as { __setTraitCalls: number }).__setTraitCalls = 0;
+    window.__setTraitCalls = 0;
     flagsmith.setTrait = (name, value) => {
-      (window as unknown as { __setTraitCalls: number }).__setTraitCalls += 1;
+      window.__setTraitCalls = (window.__setTraitCalls ?? 0) + 1;
       return new Promise((resolve, reject) => {
         window.setTimeout(() => {
           orig(name, value).then(resolve, reject);
@@ -627,27 +659,26 @@ test("L3 setTrait does not loop when opt-out races a slow push", async ({ page }
     };
   });
   await page.evaluate(() => window.LiftL3.forceScore(0.95));
-  await page.waitForTimeout(1_700);
+  await page.waitForFunction(() => (window.__setTraitCalls ?? 0) >= 1, null, { timeout: 10_000 });
   await page.locator("#lift-l3-opt-out").evaluate((el) => (el as HTMLButtonElement).click());
   await page.waitForTimeout(3_000);
-  const mid = await page.evaluate(
-    () => (window as unknown as { __setTraitCalls: number }).__setTraitCalls,
-  );
+  const mid = await page.evaluate(() => window.__setTraitCalls ?? 0);
   await page.waitForTimeout(1_200);
-  const late = await page.evaluate(
-    () => (window as unknown as { __setTraitCalls: number }).__setTraitCalls,
-  );
+  const late = await page.evaluate(() => window.__setTraitCalls ?? 0);
   expect(late).toBe(mid);
   expect(late).toBeLessThan(8);
   await expect(page.locator("html")).not.toHaveClass(/lift-sensory-safe/);
 });
 
-test("L3 stop clears bindings and cancels trait retries", async ({ page }) => {
+test("L3 stop clears bindings, drops Sensory-Safe, and resyncs on start", async ({ page }) => {
   skipUnlessFlagsmith();
+  test.setTimeout(40_000);
   await gotoDemo(page);
   await expect(page.locator("#lift-l3-hud")).toHaveAttribute("data-offline", "false", {
     timeout: 20_000,
   });
+  await page.evaluate(() => window.LiftL3.forceScore(0.9));
+  await expect(page.locator("html")).toHaveClass(/lift-sensory-safe/, { timeout: 20_000 });
   await page.evaluate(() => window.LiftL3.stop());
   const leftover = await page.evaluate(() => ({
     bound: document.querySelectorAll("[data-lift-bound]").length,
@@ -659,4 +690,8 @@ test("L3 stop clears bindings and cancels trait retries", async ({ page }) => {
   expect(leftover.media).toBe(0);
   expect(leftover.retry).toBe(0);
   expect(leftover.seq).toBeGreaterThan(0);
+  await expect(page.locator("html")).not.toHaveClass(/lift-sensory-safe/);
+  await expect(page.locator("#lift-l3-opt-out")).toBeHidden();
+  await page.evaluate(() => window.LiftL3.start());
+  await expect(page.locator("html")).toHaveClass(/lift-sensory-safe/, { timeout: 20_000 });
 });

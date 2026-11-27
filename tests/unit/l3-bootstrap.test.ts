@@ -22,6 +22,7 @@ import {
   parseL3Args,
   segmentCreatePayload,
   segmentOverridePatch,
+  segmentUsesTrait,
   randomBootstrapPassword,
   upsertEnvFile,
   writeDemoConfig,
@@ -59,6 +60,18 @@ describe("L3 Flagsmith bootstrap", () => {
       property: L3_TRAIT_NAME,
       value: "true",
     });
+    expect(condition.property).toBe("overstimulated");
+    expect(condition.property).not.toBe("is_sensory_safe");
+    expect(segmentUsesTrait(body)).toBe(true);
+    expect(
+      segmentUsesTrait({
+        rules: [
+          {
+            conditions: [{ property: "is_sensory_safe", operator: "EQUAL", value: "true" }],
+          },
+        ],
+      }),
+    ).toBe(false);
   });
 
   it("creates l3_sensory_safe as a STANDARD flag default-off with JSON config", () => {

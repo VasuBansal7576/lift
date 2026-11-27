@@ -319,9 +319,16 @@ async function showRolledOutFeature(page: Page, flagName: string, dashboardUrl: 
   await pointerClick(page, search);
   await sleep(150);
   xdo(["type", "--delay", "28", flagName]);
-  const name = page.getByText(flagName, { exact: true }).first();
-  await name.waitFor({ state: "visible", timeout: 10_000 });
-  await pointerClick(page, name);
+  await sleep(800);
+  const visibleName = page.getByText(flagName, { exact: true }).filter({ visible: true }).first();
+  const row = page.locator("tr, li, [role='row'], [role='listitem'], a").filter({ hasText: flagName }).filter({ visible: true }).first();
+  if (await visibleName.count()) {
+    await pointerClick(page, visibleName);
+  } else if (await row.count()) {
+    await pointerClick(page, row);
+  } else {
+    await typeUrlInOmnibox(page, dashboardUrl);
+  }
   await page.getByRole("heading").first().waitFor({ state: "visible", timeout: 10_000 });
   assertNotLogin(page, "features winner");
 }

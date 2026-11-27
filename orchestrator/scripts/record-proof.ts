@@ -96,10 +96,14 @@ async function visibleReload(page: Page): Promise<void> {
   await page.bringToFront();
   await sleep(200);
   xdo(["key", "--clearmodifiers", "F5"]);
-  await page.waitForFunction(() => {
-    const nav = performance.getEntriesByType("navigation")[0] as PerformanceNavigationTiming | undefined;
-    return nav?.type === "reload";
-  }, { timeout: 15_000 });
+  await page.waitForFunction(
+    () => {
+      const nav = performance.getEntriesByType("navigation")[0] as PerformanceNavigationTiming | undefined;
+      return nav?.type === "reload";
+    },
+    undefined,
+    { timeout: 12_000 },
+  );
   await page.waitForLoadState("domcontentloaded");
 }
 
@@ -361,7 +365,6 @@ async function main() {
     );
     if (state.flag?.dashboardUrl) {
       await typeUrlInOmnibox(page, state.flag.dashboardUrl);
-      await visibleReload(page);
     }
     if (state.recommendation?.kind === "winner" && state.flag) {
       process.stdout.write(
@@ -446,7 +449,6 @@ async function main() {
     process.stdout.write(`gen-2 recommendation ${JSON.stringify(rec)}\n`);
     if (gen2.flag?.dashboardUrl) {
       await typeUrlInOmnibox(page, gen2.flag.dashboardUrl);
-      await visibleReload(page);
     }
     if (rec?.kind === "winner" && gen2.flag) {
       if (rec.arm === "control") {
@@ -463,9 +465,6 @@ async function main() {
       process.stdout.write(
         "Gen-2 did not beat the champion; keeping the champion. Harness is not typing APPROVE.\n",
       );
-      if (gen2.flag?.dashboardUrl) {
-        await visibleReload(page);
-      }
       await sleep(2800);
     }
     assertNotLogin(page, "l2b");

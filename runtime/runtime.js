@@ -1,171 +1,30 @@
 /**
- * Declarative patch runtime. Fail-open: invalid specs and thrown ops leave the page as it was.
- * Keep allowlists in sync with shared/patch-spec.ts.
+ * Declarative patch runtime. Fail-open: invalid specs and thrown/missed ops leave the page as it was.
+ * Validation lives in ./patch-rules.js (shared with the TypeScript wrapper).
  */
 
-const PATCH_SPEC_VERSION = 0;
-const PATCH_OPS = new Set([
-  "setAttribute",
-  "setText",
-  "injectCSS",
-  "wrapLabel",
-  "makeFocusable",
-  "bindEnterToClick",
-  "replaceTag",
-  "insertHTML",
-]);
-const INSERT_HTML_POSITIONS = new Set(["before", "after", "prepend", "append"]);
-const ALLOWED_REPLACE_TAGS = new Set(["button", "label", "span", "a", "p", "strong", "em"]);
-const ALLOWED_ATTR_NAMES = new Set([
-  "id",
-  "class",
-  "for",
-  "type",
-  "tabindex",
-  "role",
-  "alt",
-  "lang",
-  "autocomplete",
-  "name",
-  "title",
-  "aria-expanded",
-  "aria-controls",
-  "aria-label",
-  "aria-labelledby",
-  "aria-describedby",
-  "aria-hidden",
-  "href",
-]);
+import {
+  cssKey,
+  isAllowedAttributeName,
+  isSafeAttributeValue,
+  isSafeInsertHtml,
+  mountKeyFor,
+  parsePatchSpec,
+  sanitizeInsertHtml,
+} from "./patch-rules.js";
 
-function isRecord(value) {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function isNonEmptyString(value) {
-  return typeof value === "string" && value.length > 0;
-}
-
-export function isAllowedAttributeName(name) {
-  if (typeof name !== "string") return false;
-  if (name.toLowerCase().startsWith("on")) return false;
-  if (ALLOWED_ATTR_NAMES.has(name)) return true;
-  if (/^aria-[a-z0-9-]+$/.test(name)) return true;
-  if (/^data-lift-[a-z0-9-]+$/.test(name)) return true;
-  return false;
-}
-
-export function isSafeAttributeValue(name, value) {
-  if (typeof value !== "string") return false;
-  if (/[\u0000-\u001F\u007F]/.test(value)) return false;
-  if (/^\s*javascript:/i.test(value)) return false;
-  if (name === "href") return value.startsWith("#") || value.startsWith("/");
-  return true;
-}
-
-export function isSafeInsertHtml(html) {
-  if (typeof html !== "string") return false;
-  if (/<\s*(script|iframe|object|embed|link|meta|style|form)\b/i.test(html)) return false;
-  if (/\bon[a-z]+\s*=/i.test(html)) return false;
-  if (/javascript:/i.test(html)) return false;
-  return true;
-}
-
-function parseAttributes(raw) {
-  if (raw === undefined) return {};
-  if (!isRecord(raw)) return { error: "attributes must be an object" };
-  const out = {};
-  for (const [name, value] of Object.entries(raw)) {
-    if (!isAllowedAttributeName(name)) return { error: `disallowed attribute: ${name}` };
-    if (typeof value !== "string") return { error: `attribute ${name} must be a string` };
-    if (!isSafeAttributeValue(name, value)) return { error: `unsafe attribute value: ${name}` };
-    out[name] = value;
-  }
-  return out;
-}
-
-function parseOp(raw, index) {
-  if (!isRecord(raw)) return { error: `ops[${index}] must be an object` };
-  const op = raw.op;
-  if (typeof op !== "string" || !PATCH_OPS.has(op)) {
-    return { error: `ops[${index}] unknown op: ${String(op)}` };
-  }
-  switch (op) {
-    case "setAttribute": {
-      if (!isNonEmptyString(raw.selector)) return { error: `ops[${index}] selector required` };
-      if (!isNonEmptyString(raw.name)) return { error: `ops[${index}] name required` };
-      if (typeof raw.value !== "string") return { error: `ops[${index}] value must be a string` };
-      if (!isAllowedAttributeName(raw.name)) return { error: `ops[${index}] disallowed attribute` };
-      if (!isSafeAttributeValue(raw.name, raw.value)) {
-        return { error: `ops[${index}] unsafe attribute value` };
-      }
-      return { op, selector: raw.selector, name: raw.name, value: raw.value };
-    }
-    case "setText": {
-      if (!isNonEmptyString(raw.selector)) return { error: `ops[${index}] selector required` };
-      if (typeof raw.text !== "string") return { error: `ops[${index}] text must be a string` };
-      return { op, selector: raw.selector, text: raw.text };
-    }
-    case "injectCSS": {
-      if (!isNonEmptyString(raw.css)) return { error: `ops[${index}] css required` };
-      if (/<\/\s*style/i.test(raw.css)) return { error: `ops[${index}] css must not close a style tag` };
-      if (raw.id !== undefined && !isNonEmptyString(raw.id)) return { error: `ops[${index}] id must be a string` };
-      return raw.id === undefined ? { op, css: raw.css } : { op, css: raw.css, id: raw.id };
-    }
-    case "wrapLabel": {
-      if (!isNonEmptyString(raw.selector)) return { error: `ops[${index}] selector required` };
-      if (!isNonEmptyString(raw.text)) return { error: `ops[${index}] text required` };
-      return { op, selector: raw.selector, text: raw.text };
-    }
-    case "makeFocusable":
-    case "bindEnterToClick": {
-      if (!isNonEmptyString(raw.selector)) return { error: `ops[${index}] selector required` };
-      return { op, selector: raw.selector };
-    }
-    case "replaceTag": {
-      if (!isNonEmptyString(raw.selector)) return { error: `ops[${index}] selector required` };
-      if (typeof raw.tag !== "string" || !ALLOWED_REPLACE_TAGS.has(raw.tag)) {
-        return { error: `ops[${index}] tag is not allowlisted` };
-      }
-      const attributes = parseAttributes(raw.attributes);
-      if (attributes.error) return { error: `ops[${index}] ${attributes.error}` };
-      return Object.keys(attributes).length > 0
-        ? { op, selector: raw.selector, tag: raw.tag, attributes }
-        : { op, selector: raw.selector, tag: raw.tag };
-    }
-    case "insertHTML": {
-      if (!isNonEmptyString(raw.selector)) return { error: `ops[${index}] selector required` };
-      if (typeof raw.position !== "string" || !INSERT_HTML_POSITIONS.has(raw.position)) {
-        return { error: `ops[${index}] position must be before|after|prepend|append` };
-      }
-      if (!isNonEmptyString(raw.html) || !isSafeInsertHtml(raw.html)) {
-        return { error: `ops[${index}] html is not allowlisted` };
-      }
-      if (raw.mountId !== undefined && !isNonEmptyString(raw.mountId)) {
-        return { error: `ops[${index}] mountId must be a string` };
-      }
-      return raw.mountId === undefined
-        ? { op, selector: raw.selector, position: raw.position, html: raw.html }
-        : { op, selector: raw.selector, position: raw.position, html: raw.html, mountId: raw.mountId };
-    }
-    default:
-      return { error: `ops[${index}] unknown op: ${op}` };
-  }
-}
+export {
+  isAllowedAttributeName,
+  isSafeAttributeValue,
+  isSafeCss,
+  isSafeHref,
+  isSafeInsertHtml,
+  isSafeMountId,
+  parsePatchSpec,
+} from "./patch-rules.js";
 
 export function validatePatchSpec(input) {
-  if (!isRecord(input)) return { ok: false, error: "spec must be an object" };
-  if (!isNonEmptyString(input.id)) return { ok: false, error: "id required" };
-  if (input.version !== PATCH_SPEC_VERSION) {
-    return { ok: false, error: `unsupported version: ${String(input.version)}` };
-  }
-  if (!Array.isArray(input.ops)) return { ok: false, error: "ops must be an array" };
-  const ops = [];
-  for (let i = 0; i < input.ops.length; i++) {
-    const parsed = parseOp(input.ops[i], i);
-    if (parsed.error) return { ok: false, error: parsed.error };
-    ops.push(parsed);
-  }
-  return { ok: true, spec: { id: input.id, version: PATCH_SPEC_VERSION, ops } };
+  return parsePatchSpec(input);
 }
 
 function docOf(root) {
@@ -174,103 +33,135 @@ function docOf(root) {
 
 function queryOne(root, selector) {
   try {
-    return root.querySelector(selector);
+    return { el: root.querySelector(selector) };
   } catch {
-    return null;
+    return { error: "invalid selector" };
   }
 }
 
-function cssKey(op) {
-  if (op.id) return `lift-patch-css-${op.id}`;
-  let hash = 0;
-  for (let i = 0; i < op.css.length; i++) hash = (Math.imul(31, hash) + op.css.charCodeAt(i)) | 0;
-  return `lift-patch-css-${hash >>> 0}`;
+function miss(index, selector, extra) {
+  const suffix = extra ? `: ${extra}` : "";
+  return {
+    status: "miss",
+    error: `ops[${index}] selector did not match: ${selector}${suffix}`,
+  };
 }
 
-function applySetAttribute(root, op) {
-  const el = queryOne(root, op.selector);
-  if (!(el instanceof Element)) return null;
-  if (el.getAttribute(op.name) === op.value) return null;
+function applied(undo) {
+  return { status: "applied", undo };
+}
+
+function noop() {
+  return { status: "noop" };
+}
+
+function applySetAttribute(root, op, index) {
+  const found = queryOne(root, op.selector);
+  if (found.error) return miss(index, op.selector, found.error);
+  const el = found.el;
+  if (!(el instanceof Element)) return miss(index, op.selector);
+  if (el.getAttribute(op.name) === op.value) return noop();
   const had = el.hasAttribute(op.name);
   const prev = el.getAttribute(op.name);
   el.setAttribute(op.name, op.value);
-  return () => {
+  return applied(() => {
     if (!had) el.removeAttribute(op.name);
     else el.setAttribute(op.name, prev ?? "");
-  };
+  });
 }
 
-function applySetText(root, op) {
-  const el = queryOne(root, op.selector);
-  if (!(el instanceof Element)) return null;
+function applySetText(root, op, index) {
+  const found = queryOne(root, op.selector);
+  if (found.error) return miss(index, op.selector, found.error);
+  const el = found.el;
+  if (!(el instanceof Element)) return miss(index, op.selector);
   const prev = el.textContent ?? "";
-  if (prev === op.text) return null;
+  if (prev === op.text) return noop();
   el.textContent = op.text;
-  return () => {
+  return applied(() => {
     el.textContent = prev;
-  };
+  });
 }
 
 function applyInjectCss(root, op) {
   const doc = docOf(root);
   const id = cssKey(op);
-  if (doc.getElementById(id)) return null;
+  if (doc.getElementById(id)) return noop();
   const style = doc.createElement("style");
   style.id = id;
   style.setAttribute("data-lift-css", "1");
   style.textContent = op.css;
   const parent = doc.head ?? doc.documentElement;
   parent.appendChild(style);
-  return () => {
+  return applied(() => {
     style.remove();
-  };
+  });
 }
 
-function applyWrapLabel(root, op) {
-  const input = queryOne(root, op.selector);
-  if (!(input instanceof Element)) return null;
-  if (input.getAttribute("data-labelled") === "1") return null;
+function alreadyLabelled(input) {
+  if (input.getAttribute("data-labelled") === "1") return true;
+  if (input.getAttribute("aria-label")) return true;
+  if (input.getAttribute("aria-labelledby")) return true;
+  const labels = input.labels;
+  return Boolean(labels && labels.length > 0);
+}
+
+function applyWrapLabel(root, op, index) {
+  const found = queryOne(root, op.selector);
+  if (found.error) return miss(index, op.selector, found.error);
+  const input = found.el;
+  if (!(input instanceof Element)) return miss(index, op.selector);
+  if (alreadyLabelled(input)) return noop();
   const id = input.id;
-  if (!id) return null;
+  if (!id) return miss(index, op.selector, "input has no id");
   const doc = docOf(root);
   const label = doc.createElement("label");
   label.setAttribute("for", id);
   label.textContent = op.text;
-  const hint = input.parentElement?.querySelector(".visible-hint") ?? null;
-  const prevLabelled = input.getAttribute("data-labelled");
+  const prevSibling = input.previousElementSibling;
+  const hint =
+    prevSibling && prevSibling.classList.contains("visible-hint") ? prevSibling : null;
   const hadUnlabeled = input.hasAttribute("data-unlabeled");
+  const unlabeledValue = hadUnlabeled ? input.getAttribute("data-unlabeled") : null;
+  const hadLabelled = input.hasAttribute("data-labelled");
+  const labelledValue = hadLabelled ? input.getAttribute("data-labelled") : null;
   input.removeAttribute("data-unlabeled");
   input.setAttribute("data-labelled", "1");
   if (hint) hint.replaceWith(label);
   else input.insertAdjacentElement("beforebegin", label);
-  return () => {
+  return applied(() => {
     if (hint) label.replaceWith(hint);
     else label.remove();
-    if (prevLabelled == null) input.removeAttribute("data-labelled");
-    else input.setAttribute("data-labelled", prevLabelled);
-    if (hadUnlabeled) input.setAttribute("data-unlabeled", "");
-  };
+    if (!hadLabelled) input.removeAttribute("data-labelled");
+    else input.setAttribute("data-labelled", labelledValue ?? "");
+    if (hadUnlabeled) input.setAttribute("data-unlabeled", unlabeledValue ?? "");
+    else input.removeAttribute("data-unlabeled");
+  });
 }
 
-function applyMakeFocusable(root, op) {
-  const el = queryOne(root, op.selector);
-  if (!(el instanceof HTMLElement)) return null;
-  if (el.getAttribute("data-lift-focusable") === "1") return null;
+function applyMakeFocusable(root, op, index) {
+  const found = queryOne(root, op.selector);
+  if (found.error) return miss(index, op.selector, found.error);
+  const el = found.el;
+  if (!(el instanceof HTMLElement)) return miss(index, op.selector);
+  if (el.getAttribute("data-lift-focusable") === "1") return noop();
   const hadTab = el.hasAttribute("tabindex");
   const prevTab = el.getAttribute("tabindex");
   el.tabIndex = 0;
   el.setAttribute("data-lift-focusable", "1");
-  return () => {
+  return applied(() => {
     el.removeAttribute("data-lift-focusable");
     if (!hadTab) el.removeAttribute("tabindex");
     else el.setAttribute("tabindex", prevTab ?? "0");
-  };
+  });
 }
 
-function applyBindEnterToClick(root, op) {
-  const el = queryOne(root, op.selector);
-  if (!(el instanceof HTMLElement)) return null;
-  if (el.getAttribute("data-lift-enter") === "1") return null;
+function applyBindEnterToClick(root, op, index) {
+  const found = queryOne(root, op.selector);
+  if (found.error) return miss(index, op.selector, found.error);
+  const el = found.el;
+  if (!(el instanceof HTMLElement)) return miss(index, op.selector);
+  if (el.getAttribute("data-lift-enter") === "1") return noop();
   const onKey = (event) => {
     if (event.key === "Enter") {
       event.preventDefault();
@@ -279,24 +170,46 @@ function applyBindEnterToClick(root, op) {
   };
   el.addEventListener("keydown", onKey);
   el.setAttribute("data-lift-enter", "1");
-  return () => {
+  return applied(() => {
     el.removeEventListener("keydown", onKey);
     el.removeAttribute("data-lift-enter");
+  });
+}
+
+const FORWARDED = new WeakSet();
+
+function forwardUiEvents(from, to) {
+  const handler = (event) => {
+    if (FORWARDED.has(event)) return;
+    let copy;
+    try {
+      copy = new event.constructor(event.type, event);
+    } catch {
+      copy = new Event(event.type, { bubbles: event.bubbles, cancelable: event.cancelable });
+    }
+    FORWARDED.add(copy);
+    to.dispatchEvent(copy);
+  };
+  from.addEventListener("click", handler);
+  from.addEventListener("keydown", handler);
+  return () => {
+    from.removeEventListener("click", handler);
+    from.removeEventListener("keydown", handler);
   };
 }
 
-function copySafeAttributes(from, to) {
+function copyAttributesExceptHandlers(from, to) {
   for (const attr of [...from.attributes]) {
-    if (attr.name === "id" || attr.name === "class") continue;
-    if (!isAllowedAttributeName(attr.name)) continue;
-    if (!isSafeAttributeValue(attr.name, attr.value)) continue;
+    if (attr.name.toLowerCase().startsWith("on")) continue;
     to.setAttribute(attr.name, attr.value);
   }
 }
 
-function applyReplaceTag(root, op) {
-  const el = queryOne(root, op.selector);
-  if (!(el instanceof Element)) return null;
+function applyReplaceTag(root, op, index) {
+  const found = queryOne(root, op.selector);
+  if (found.error) return miss(index, op.selector, found.error);
+  const el = found.el;
+  if (!(el instanceof Element)) return miss(index, op.selector);
   if (el.tagName.toLowerCase() === op.tag.toLowerCase()) {
     const attrs = op.attributes || {};
     const undoAttrs = [];
@@ -310,39 +223,52 @@ function applyReplaceTag(root, op) {
         else el.setAttribute(name, prev ?? "");
       });
     }
-    if (undoAttrs.length === 0) return null;
-    return () => {
+    if (undoAttrs.length === 0) return noop();
+    return applied(() => {
       for (const undo of undoAttrs.reverse()) undo();
-    };
+    });
   }
   const doc = docOf(root);
   const next = doc.createElement(op.tag);
-  if (el.id) next.id = el.id;
-  if (el.className && typeof el.className === "string") next.className = el.className;
-  next.textContent = el.textContent ?? "";
-  copySafeAttributes(el, next);
+  copyAttributesExceptHandlers(el, next);
   for (const [name, value] of Object.entries(op.attributes || {})) {
     next.setAttribute(name, value);
   }
+  while (el.firstChild) next.appendChild(el.firstChild);
   el.replaceWith(next);
-  return () => {
+  const stopForward = forwardUiEvents(next, el);
+  return applied(() => {
+    stopForward();
+    while (next.firstChild) el.appendChild(next.firstChild);
     next.replaceWith(el);
-  };
+  });
 }
 
-function applyInsertHtml(root, op) {
-  const doc = docOf(root);
-  if (op.mountId) {
-    const existing = queryOne(root, `[data-lift-mount="${op.mountId}"]`);
-    if (existing) return null;
+function findMount(root, mountId) {
+  const scope = "querySelectorAll" in root ? root : docOf(root);
+  for (const el of scope.querySelectorAll("[data-lift-mount]")) {
+    if (el.getAttribute("data-lift-mount") === mountId) return el;
   }
-  const target = queryOne(root, op.selector);
-  if (!(target instanceof Element)) return null;
-  if (!isSafeInsertHtml(op.html)) return null;
+  return null;
+}
+
+function applyInsertHtml(root, op, index) {
+  const key = mountKeyFor(op);
+  if (findMount(root, key)) return noop();
+  const found = queryOne(root, op.selector);
+  if (found.error) return miss(index, op.selector, found.error);
+  const target = found.el;
+  if (!(target instanceof Element)) return miss(index, op.selector);
+  const doc = docOf(root);
+  if (!isSafeInsertHtml(op.html, doc)) {
+    return { status: "miss", error: `ops[${index}] html is not allowlisted` };
+  }
+  const fragment = sanitizeInsertHtml(op.html, doc);
+  if (!fragment) return { status: "miss", error: `ops[${index}] html is not allowlisted` };
   const holder = doc.createElement("span");
-  holder.setAttribute("data-lift-mount", op.mountId || "lift-html");
+  holder.setAttribute("data-lift-mount", key);
   holder.setAttribute("data-lift-inserted", "1");
-  holder.innerHTML = op.html;
+  holder.appendChild(fragment);
   switch (op.position) {
     case "before":
       target.before(holder);
@@ -357,62 +283,85 @@ function applyInsertHtml(root, op) {
       target.append(holder);
       break;
     default:
-      return null;
+      return { status: "miss", error: `ops[${index}] position must be before|after|prepend|append` };
   }
-  return () => {
+  return applied(() => {
     holder.remove();
-  };
+  });
 }
 
-function applyOp(root, op) {
+function applyOp(root, op, index) {
   switch (op.op) {
     case "setAttribute":
-      return applySetAttribute(root, op);
+      return applySetAttribute(root, op, index);
     case "setText":
-      return applySetText(root, op);
+      return applySetText(root, op, index);
     case "injectCSS":
       return applyInjectCss(root, op);
     case "wrapLabel":
-      return applyWrapLabel(root, op);
+      return applyWrapLabel(root, op, index);
     case "makeFocusable":
-      return applyMakeFocusable(root, op);
+      return applyMakeFocusable(root, op, index);
     case "bindEnterToClick":
-      return applyBindEnterToClick(root, op);
+      return applyBindEnterToClick(root, op, index);
     case "replaceTag":
-      return applyReplaceTag(root, op);
+      return applyReplaceTag(root, op, index);
     case "insertHTML":
-      return applyInsertHtml(root, op);
+      return applyInsertHtml(root, op, index);
     default:
-      return null;
+      return { status: "miss", error: `ops[${index}] unknown op: ${String(op.op)}` };
   }
 }
 
-/** Apply a validated spec. On any throw, undo applied ops so the page is untouched. */
+function undoAll(undos) {
+  for (const undo of undos.reverse()) {
+    try {
+      undo();
+    } catch {
+      /* fail-open: best-effort undo */
+    }
+  }
+}
+
+/** Apply a validated spec. On throw or a required-selector miss, undo so the page is untouched. */
 export function applyPatchSpec(input, root) {
+  const opsStatus = [];
   try {
-    const parsed = validatePatchSpec(input);
-    if (!parsed.ok) return { ok: false, error: parsed.error };
+    const parsed = parsePatchSpec(input);
+    if (!parsed.ok) return { ok: false, error: parsed.error, ops: opsStatus };
     const scope = root ?? (typeof document === "undefined" ? null : document);
-    if (!scope) return { ok: false, error: "no document" };
+    if (!scope) return { ok: false, error: "no document", ops: opsStatus };
     const undos = [];
     try {
-      for (const op of parsed.spec.ops) {
-        const undo = applyOp(scope, op);
-        if (undo) undos.push(undo);
-      }
-      return { ok: true };
-    } catch (err) {
-      for (const undo of undos.reverse()) {
-        try {
-          undo();
-        } catch {
-          /* fail-open: best-effort undo */
+      for (let i = 0; i < parsed.spec.ops.length; i++) {
+        const op = parsed.spec.ops[i];
+        const result = applyOp(scope, op, i);
+        if (result.status === "miss") {
+          undoAll(undos);
+          return { ok: false, error: result.error, ops: opsStatus };
+        }
+        if (result.status === "applied") {
+          undos.push(result.undo);
+          opsStatus.push({ op: op.op, status: "applied" });
+        } else {
+          opsStatus.push({ op: op.op, status: "noop" });
         }
       }
-      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+      return { ok: true, ops: opsStatus };
+    } catch (err) {
+      undoAll(undos);
+      return {
+        ok: false,
+        error: err instanceof Error ? err.message : String(err),
+        ops: opsStatus,
+      };
     }
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : String(err),
+      ops: opsStatus,
+    };
   }
 }
 

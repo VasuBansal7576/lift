@@ -73,6 +73,7 @@ function persist(id, env) {
 export function resolveVisitorId(env) {
   const fromQuery = readQueryIdentity(env.search);
   if (fromQuery) {
+    // ?lift_identity= overwrites the cookie by design so bots and e2e stay deterministic.
     persist(fromQuery, env);
     return fromQuery;
   }

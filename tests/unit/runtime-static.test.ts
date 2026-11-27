@@ -15,4 +15,15 @@ describe("resolveRuntimePath", () => {
     expect(resolveRuntimePath("/runtime/../package.json", ROOT)).toBeNull();
     expect(resolveRuntimePath("/checkout/app.js", ROOT)).toBeNull();
   });
+
+  it("does not throw on malformed percent-encoding", () => {
+    expect(() => resolveRuntimePath("/runtime/%E0%A4%A", ROOT)).not.toThrow();
+    expect(resolveRuntimePath("/runtime/%E0%A4%A", ROOT)).toBeNull();
+  });
+
+  it("rejects NUL bytes so %00 cannot resolve to the runtime directory", () => {
+    expect(resolveRuntimePath("/runtime/%00", ROOT)).toBeNull();
+    expect(resolveRuntimePath("/runtime/%00/runtime.js", ROOT)).toBeNull();
+    expect(resolveRuntimePath("/runtime/runtime.js%00", ROOT)).toBeNull();
+  });
 });

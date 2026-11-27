@@ -41,7 +41,12 @@ export function serveSites(
   const allowMock = opts?.allowMock ?? true;
   const server = createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", `http://127.0.0.1:${port}`);
-    const runtimePath = resolveRuntimePath(url.pathname, ROOT);
+    let runtimePath: string | null = null;
+    try {
+      runtimePath = resolveRuntimePath(url.pathname, ROOT);
+    } catch {
+      runtimePath = null;
+    }
     if (runtimePath) {
       try {
         const raw = await readFile(runtimePath);

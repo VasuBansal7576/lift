@@ -42,7 +42,12 @@ function placeholderFor(relative: string): Record<string, unknown> {
 
 const server = createServer(async (req, res) => {
   const url = new URL(req.url ?? "/", `http://127.0.0.1:${port}`);
-  const runtimePath = resolveRuntimePath(url.pathname, rootDir);
+  let runtimePath: string | null = null;
+  try {
+    runtimePath = resolveRuntimePath(url.pathname, rootDir);
+  } catch {
+    runtimePath = null;
+  }
   if (runtimePath) {
     try {
       const body = await readFile(runtimePath);

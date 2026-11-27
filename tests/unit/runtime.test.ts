@@ -39,7 +39,7 @@ const CHECKOUT_HTML = `
       <input id="terms" type="checkbox">
       <span id="terms-copy">I agree to the terms of sale and understand this order is final.</span>
     </p>
-    <div id="place-order" class="div-pay">💳</div>
+    <div id="place-order" class="div-pay" data-barrier="div_button" style="color: red">💳<span class="glyph">x</span></div>
   </form>
 `;
 
@@ -102,6 +102,85 @@ describe("applyPatchSpec ops", () => {
     expect(document.querySelectorAll("[data-lift-css]")).toHaveLength(1);
   });
 
+  it("replaceTag moves children, copies data-* / style, and forwards click to the original node", () => {
+    document.body.innerHTML = `<div id="place-order" class="div-pay" data-barrier="div_button" style="color: red">💳<span id="kid">x</span></div>`;
+    const original = document.getElementById("place-order");
+    let clicks = 0;
+    original?.addEventListener("click", () => {
+      clicks += 1;
+    });
+    const result = applyPatchSpec({
+      id: "replace",
+      version: 0,
+      ops: [{ op: "replaceTag", selector: "#place-order", tag: "button", attributes: { type: "button" } }],
+    });
+    expect(result.ok).toBe(true);
+    const next = document.getElementById("place-order");
+    expect(next?.tagName).toBe("BUTTON");
+    expect(next?.getAttribute("data-barrier")).toBe("div_button");
+    expect(next?.getAttribute("style")).toBe("color: red");
+    expect(document.getElementById("kid")?.textContent).toBe("x");
+    expect(document.getElementById("kid")?.parentElement).toBe(next);
+    next?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(clicks).toBe(1);
+  });
+
+  it("wrapLabel only replaces a previous-sibling hint and skips already-labelled inputs", () => {
+    document.body.innerHTML = `
+      <p>
+        <span class="visible-hint" id="other-hint">Other</span>
+        <span id="between">x</span>
+        <input id="email" data-unlabeled="yes">
+      </p>
+      <p>
+        <label for="named">Name</label>
+        <input id="named">
+      </p>
+      <p>
+        <input id="aria" aria-label="Phone">
+      </p>
+    `;
+    const result = applyPatchSpec({
+      id: "wrap",
+      version: 0,
+      ops: [
+        { op: "wrapLabel", selector: "#email", text: "Email" },
+        { op: "wrapLabel", selector: "#named", text: "Dup" },
+        { op: "wrapLabel", selector: "#aria", text: "Dup" },
+      ],
+    });
+    expect(result.ok).toBe(true);
+    expect(document.getElementById("other-hint")).not.toBeNull();
+    expect(document.querySelector('label[for="email"]')?.textContent).toBe("Email");
+    expect(document.getElementById("email")?.previousElementSibling?.tagName).toBe("LABEL");
+    expect(document.querySelectorAll('label[for="named"]')).toHaveLength(1);
+    expect(document.querySelectorAll('label[for="aria"]')).toHaveLength(0);
+
+    const originalCreate = document.createElement.bind(document);
+    document.createElement = ((tag: string) => {
+      if (tag === "style") throw new Error("style boom");
+      return originalCreate(tag);
+    }) as typeof document.createElement;
+    try {
+      document.body.innerHTML = `<p><span class="visible-hint">Email</span><input id="email" data-unlabeled="yes"></p>`;
+      const rolled = applyPatchSpec({
+        id: "wrap-undo-2",
+        version: 0,
+        ops: [
+          { op: "wrapLabel", selector: "#email", text: "Email" },
+          { op: "injectCSS", css: "p { color: red; }" },
+        ],
+      });
+      expect(rolled.ok).toBe(false);
+      const input = document.getElementById("email");
+      expect(input?.getAttribute("data-unlabeled")).toBe("yes");
+      expect(input?.hasAttribute("data-labelled")).toBe(false);
+      expect(document.querySelector(".visible-hint")).not.toBeNull();
+    } finally {
+      document.createElement = originalCreate;
+    }
+  });
+
   it("makeFocusable, bindEnterToClick, and insertHTML at a mount node", () => {
     document.body.innerHTML = `<div id="host"><span id="chip">Pay</span></div>`;
     const spec = {
@@ -137,18 +216,32 @@ describe("applyPatchSpec ops", () => {
     expect(clicked).toBe(1);
   });
 
-  it("skips missing selectors and leaves other ops applied", () => {
+  it("defaults a mount key so insertHTML without mountId is idempotent", () => {
+    document.body.innerHTML = `<div id="host"></div>`;
+    const spec = {
+      id: "mount-default",
+      version: 0,
+      ops: [{ op: "insertHTML", selector: "#host", position: "append", html: "<span>Hi</span>" }],
+    };
+    expect(applyPatchSpec(spec).ok).toBe(true);
+    expect(applyPatchSpec(spec).ok).toBe(true);
+    expect(document.querySelectorAll("[data-lift-mount]")).toHaveLength(1);
+  });
+
+  it("rolls back the whole spec when a required selector misses", () => {
     document.body.innerHTML = `<p id="keep">old</p>`;
     const result = applyPatchSpec({
       id: "skip-missing",
       version: 0,
       ops: [
-        { op: "setText", selector: "#missing", text: "nope" },
         { op: "setText", selector: "#keep", text: "new" },
+        { op: "setText", selector: "#missing", text: "nope" },
       ],
     });
-    expect(result.ok).toBe(true);
-    expect(document.getElementById("keep")?.textContent).toBe("new");
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toContain("selector did not match");
+    expect(document.getElementById("keep")?.textContent).toBe("old");
   });
 
   it("does not touch the page when the spec is invalid", () => {

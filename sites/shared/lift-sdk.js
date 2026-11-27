@@ -87,6 +87,7 @@ async function initFromFlagsmith(config) {
 }
 
 async function main() {
+  resolveVisitorId(browserIdentityEnv());
   const mock = params().get("lift_variant");
   const config = await loadConfig();
   const allowMock = Boolean(config?.allowMock);

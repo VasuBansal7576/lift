@@ -17,11 +17,10 @@ import type { BootstrapState } from "../../agent/src/bootstrap.ts";
 import { FlagsmithAdmin, type ExperimentRecord } from "../../agent/src/flagsmith-admin.ts";
 import { mixSeed, mulberry32 } from "../../shared/rng.ts";
 import { pickPersona } from "../../shared/mix.ts";
+import { identityFor } from "./identity.ts";
 import { runPersona } from "./personas.ts";
 
-function identityFor(runId: string, seed: number, index: number): string {
-  return `lift-sim-${runId}-${seed}-${String(index).padStart(4, "0")}`;
-}
+export { identityFor };
 
 export function applyBaselineDropout(
   converted: boolean,

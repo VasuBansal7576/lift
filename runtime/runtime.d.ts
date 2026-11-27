@@ -1,14 +1,27 @@
 import type { PatchSpec } from "../shared/patch-spec.ts";
 
-export function isAllowedAttributeName(name: string): boolean;
-export function isSafeAttributeValue(name: string, value: string): boolean;
-export function isSafeInsertHtml(html: string): boolean;
+export {
+  isAllowedAttributeName,
+  isSafeAttributeValue,
+  isSafeCss,
+  isSafeHref,
+  isSafeInsertHtml,
+  isSafeMountId,
+  parsePatchSpec,
+} from "./patch-rules.js";
 
 export function validatePatchSpec(
   input: unknown,
 ): { ok: true; spec: PatchSpec } | { ok: false; error: string };
 
+export interface ApplyOpStatus {
+  op: string;
+  status: "applied" | "noop";
+}
+
 export function applyPatchSpec(
   input: unknown,
   root?: ParentNode | Document,
-): { ok: true } | { ok: false; error: string };
+):
+  | { ok: true; ops: ApplyOpStatus[] }
+  | { ok: false; error: string; ops: ApplyOpStatus[] };

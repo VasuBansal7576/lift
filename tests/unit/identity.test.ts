@@ -9,6 +9,7 @@ import {
   resolveVisitorId,
   type IdentityEnv,
 } from "../../sites/shared/identity.js";
+import { identityFor } from "../../traffic/src/identity.ts";
 
 function makeEnv(init: {
   search?: string;
@@ -125,5 +126,18 @@ describe("cookie stickiness", () => {
   it("skips a poisoned cookie and uses storage instead", () => {
     const env = makeEnv({ cookie: "lift_vid=bad,comma", storage: "safe-store" });
     expect(resolveVisitorId(env)).toBe("safe-store");
+  });
+});
+
+describe("traffic identityFor", () => {
+  it("always produces an identity the cookie layer accepts", () => {
+    const samples = [
+      identityFor("20261127010101", 20261126, 0),
+      identityFor("run", 1, 12),
+      identityFor("abc", 0, 9999),
+    ];
+    for (const id of samples) {
+      expect(isUsableIdentity(id), id).toBe(true);
+    }
   });
 });

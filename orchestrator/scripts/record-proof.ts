@@ -371,8 +371,26 @@ function orchCommand(args: string[]): string {
   return `cd ${REPO_ROOT} && npx tsx orchestrator/src/cli.ts ${args.join(" ")} 2>&1 | tee /tmp/lift-orch.log`;
 }
 
+function closeOurXterms(): void {
+  for (const title of ["lift-t2", "lift-t2b", "lift-t1", "lift-l2", "lift-l2a", "lift-l2b", "lift-approve"]) {
+    try {
+      const ids = execFileSync("xdotool", ["search", "--name", title], {
+        env: DISPLAY_ENV,
+        encoding: "utf8",
+      })
+        .trim()
+        .split("\n")
+        .filter(Boolean);
+      for (const id of ids) xdo(["windowkill", id]);
+    } catch {
+      /* none */
+    }
+  }
+}
+
 async function main() {
   mkdirSync(OUT, { recursive: true });
+  closeOurXterms();
   writeFileSync("/tmp/lift-orch.log", "");
   writeFileSync(LIVE_PATH, "{}\n");
   process.env.LIFT_ORCH_TRAFFIC_CONCURRENCY = process.env.LIFT_ORCH_TRAFFIC_CONCURRENCY || "16";

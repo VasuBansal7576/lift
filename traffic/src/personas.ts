@@ -264,7 +264,7 @@ export async function runLowVision(page: Page): Promise<AttemptResult> {
     };
   }
 
-  const contrast = await page.locator("#terms-copy, label[for=terms], .terms").first().evaluate(
+  const contrast = await page.locator("#terms-copy, label[for=terms]").first().evaluate(
     (el) => {
       const style = getComputedStyle(el);
       const parent = el.parentElement ? getComputedStyle(el.parentElement) : style;

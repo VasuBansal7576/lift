@@ -46,6 +46,16 @@ function allFixes(on) {
   };
 }
 
+function applyDisableAutofill(config) {
+  if (config?.disableAutofill !== true) return;
+  const form = document.getElementById("checkout-form");
+  if (!form) return;
+  form.setAttribute("autocomplete", "off");
+  for (const el of form.querySelectorAll("input, select, textarea")) {
+    el.setAttribute("autocomplete", "off");
+  }
+}
+
 function applyFixes(fixes, sourceLabel) {
   document.body.classList.toggle("fix-hover", Boolean(fixes.hover_menu));
   document.body.classList.toggle("fix-labels", Boolean(fixes.missing_labels));
@@ -239,6 +249,7 @@ async function initFromFlagsmith(config, identity) {
 async function main() {
   const mock = params().get("lift_variant");
   const config = await loadConfig();
+  applyDisableAutofill(config);
   const identity = resolveVisitorId(
     browserIdentityEnv({ allowBotOverride: config?.allowBotOverride === true }),
   );

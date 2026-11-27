@@ -28,6 +28,7 @@ function overlaySiteConfig(
   const extra: Record<string, unknown> = {};
   if (opts.allowMock) extra.allowMock = true;
   if (process.env.LIFT_ALLOW_BOT_OVERRIDE === "true") extra.allowBotOverride = true;
+  if (process.env.LIFT_DISABLE_AUTOFILL === "true") extra.disableAutofill = true;
   return JSON.stringify({ ...parsed, ...extra });
 }
 

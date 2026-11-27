@@ -9,7 +9,8 @@
  * without --allow-mock, Flagsmith identity tab available.
  *
  * Required env: FLAGSMITH_ENVIRONMENT_KEY, FLAGSMITH_IDENTITY_URL,
- * FLAGSMITH_FEATURE_ID, FLAGSMITH_ADMIN_API_TOKEN (for clip 01 override).
+ * FLAGSMITH_FEATURE_ID, FLAGSMITH_ADMIN_API_TOKEN (for clip 01 override),
+ * LIFT_DISABLE_AUTOFILL=true on the demo server.
  *
  *   node scripts/record-phase-a.mjs
  *   node scripts/record-phase-a.mjs 01 02
@@ -248,29 +249,33 @@ function isFlagsmithTitle(title) {
   return /Flagsmith/i.test(title);
 }
 
-async function clickCheckoutTab() {
-  if (isCheckoutTitle(chromeTitle())) return;
+const TAB_DX = { checkout: null, flagsmith: null };
+
+async function clickTabUntil(pred, label, key) {
+  if (pred(chromeTitle())) return;
   xdo(["windowactivate", "--sync", WIN.id]);
-  const offsets = [240, 220, 260, 200];
+  const offsets = [];
+  if (TAB_DX[key] != null) offsets.push(TAB_DX[key]);
+  for (let dx = 140; dx <= 560; dx += 36) {
+    if (!offsets.includes(dx)) offsets.push(dx);
+  }
   for (const dx of offsets) {
     await xMoveClick(WIN.x + dx, WIN.y + 16);
-    await sleep(220);
-    const title = chromeTitle();
-    if (isCheckoutTitle(title)) return;
+    await sleep(160);
+    if (pred(chromeTitle())) {
+      TAB_DX[key] = dx;
+      return;
+    }
   }
-  throw new Error(`checkout tab click did not select Northline (title=${chromeTitle()})`);
+  throw new Error(`${label} tab click did not select (title=${chromeTitle()})`);
+}
+
+async function clickCheckoutTab() {
+  await clickTabUntil(isCheckoutTitle, "checkout", "checkout");
 }
 
 async function clickFlagsmithTab() {
-  if (isFlagsmithTitle(chromeTitle())) return;
-  xdo(["windowactivate", "--sync", WIN.id]);
-  const offsets = [420, 430, 440, 450, 410];
-  for (const dx of offsets) {
-    await xMoveClick(WIN.x + dx, WIN.y + 16);
-    await sleep(220);
-    if (isFlagsmithTitle(chromeTitle())) return;
-  }
-  throw new Error(`Flagsmith tab click did not select Flagsmith (title=${chromeTitle()})`);
+  await clickTabUntil(isFlagsmithTitle, "Flagsmith", "flagsmith");
 }
 
 function clickReload() {
@@ -299,17 +304,26 @@ async function reloadVisible(page, tab) {
   if (afterUrl !== beforeUrl) {
     throw new Error(`reload changed url ${beforeUrl} -> ${afterUrl}`);
   }
+  const navType = await page.evaluate(() => {
+    const entry = performance.getEntriesByType("navigation")[0];
+    return entry && "type" in entry ? entry.type : "";
+  });
+  if (navType !== "reload") {
+    throw new Error(`navigation type was ${navType || "missing"}, want reload`);
+  }
   await sleep(250);
 }
 
 async function liveDevtools(page, hint) {
   const context = page.context();
-  const candidates = [];
-  if (hint && !hint.isClosed()) candidates.push(hint);
+  const origin = await page.evaluate(() => ({ sx: window.screenX, sy: window.screenY }));
+  const dts = [];
+  if (hint && !hint.isClosed() && hint.url().startsWith("devtools://")) dts.push(hint);
   for (const p of context.pages()) {
-    if (p.url().startsWith("devtools://") && !candidates.includes(p)) candidates.push(p);
+    if (p.url().startsWith("devtools://") && !dts.includes(p)) dts.push(p);
   }
-  for (const dt of candidates) {
+  const scored = [];
+  for (const dt of dts) {
     const ok = await dt
       .locator("#tab-console")
       .waitFor({ state: "visible", timeout: 2500 })
@@ -317,8 +331,13 @@ async function liveDevtools(page, hint) {
         () => true,
         () => false,
       );
-    if (ok) return dt;
+    if (!ok) continue;
+    const pos = await dt.evaluate(() => ({ sx: window.screenX, sy: window.screenY }));
+    const dist = Math.abs(pos.sx - origin.sx) + Math.abs(pos.sy - origin.sy);
+    scored.push({ dt, dist });
   }
+  scored.sort((a, b) => a.dist - b.dist);
+  if (scored[0]) return scored[0].dt;
   throw new Error("no live DevTools Console tab");
 }
 
@@ -368,8 +387,20 @@ async function waitFlagsmith(page, timeout = 8000) {
       const v = document.body.getAttribute("data-variant");
       return v === "control" || v === "treatment";
     },
+    null,
     { timeout },
   );
+}
+
+async function seedVisitorCookie(page) {
+  await page.context().addCookies([
+    {
+      name: "lift_vid",
+      value: VID,
+      url: `${BASE}/checkout/`,
+      sameSite: "Lax",
+    },
+  ]);
 }
 
 async function waitEdgeValue(wanted, tries = 8) {
@@ -428,26 +459,46 @@ async function showFlagsmith(page) {
   return fm;
 }
 
-async function ensureCheckoutForm(page, dt) {
+async function openCheckoutViaLink(page) {
   await clickCheckoutTab();
-  const visible = await page
-    .locator("#checkout")
-    .isVisible()
-    .catch(() => false);
-  if (visible) return;
-  if (dt) {
-    await typeConsole(
-      dt,
-      "c=document.getElementById('checkout');c.hidden=false;c.scrollIntoView({block:'start'})",
-    );
-  } else {
-    await page.evaluate(() => {
-      const el = document.getElementById("checkout");
-      if (!el) throw new Error("checkout missing");
-      el.hidden = false;
-    });
+  const shop = page.locator("#shop-trigger");
+  await shop.waitFor({ state: "visible", timeout: 4000 });
+  const shopPos = await screenBox(page, shop);
+  await xMoveTo(shopPos.x, shopPos.y);
+  await sleep(320);
+  const link = page.locator("#checkout-link");
+  let shown = await link.isVisible().catch(() => false);
+  if (!shown) {
+    xdo(["click", "1"]);
+    await sleep(280);
+    shown = await link.isVisible().catch(() => false);
   }
+  if (!shown) throw new Error("#checkout-link did not appear after hovering Shop");
+  const linkBox = await link.boundingBox({ timeout: 2000 });
+  if (!linkBox) throw new Error("#checkout-link has no box");
+  const inner = await page.evaluate(() => ({
+    screenX: window.screenX,
+    screenY: window.screenY,
+  }));
+  const linkY = inner.screenY + TOP_CHROME + linkBox.y + linkBox.height / 2;
+  const downX = shopPos.x;
+  const downY = Math.max(shopPos.y + 28, linkY);
+  console.log(`checkout-link click down ${downX.toFixed(0)},${downY.toFixed(0)} shop=${shopPos.x.toFixed(0)},${shopPos.y.toFixed(0)}`);
+  await xMoveTo(downX, downY);
+  await sleep(200);
+  if (!(await link.isVisible().catch(() => false))) {
+    throw new Error("#checkout-link hid before click (hover lost)");
+  }
+  xdo(["click", "1"]);
+  await sleep(220);
   await page.locator("#checkout").waitFor({ state: "visible", timeout: 4000 });
+}
+
+async function assertFocusedId(page, id) {
+  const active = await page.evaluate(() => document.activeElement?.id || "");
+  if (active !== id) {
+    throw new Error(`activeElement.id=${active || "(none)"} want=${id}`);
+  }
 }
 
 function runOverride(cmd) {
@@ -496,7 +547,7 @@ async function resetFlagsmithIdentity(page) {
   );
   await xClickLocator(fm, confirm);
   await confirm.waitFor({ state: "hidden", timeout: 8000 });
-  await fm.getByText(/environment defaults/i).first().waitFor({ timeout: 8000 }).catch(() => {});
+  await fm.getByText(/environment defaults/i).first().waitFor({ timeout: 8000 });
 }
 
 async function holdFlagsmithView(ms) {
@@ -518,6 +569,7 @@ async function runAxeAndAssert(page, dt, expected) {
   if (!got || got.join() !== want.join()) {
     throw new Error(`axe ids ${JSON.stringify(got)} want ${JSON.stringify(want)}`);
   }
+  await sleep(3200);
 }
 
 async function xClickDtBox(dt, box) {
@@ -622,6 +674,13 @@ async function assertNotAllowMock(page) {
   if (/URL override/i.test(after.status) || (after.variant === probe && after.variant !== live)) {
     throw new Error(`server appears to be in --allow-mock (status=${after.status} variant=${after.variant})`);
   }
+  const cfg = await page.evaluate(async () => {
+    const res = await fetch("./config.json", { cache: "no-store" });
+    return res.json();
+  });
+  if (cfg.disableAutofill !== true) {
+    throw new Error("config.disableAutofill is not true; start serve-site with LIFT_DISABLE_AUTOFILL=true");
+  }
   await page.goto(`${BASE}/checkout/`, { waitUntil: "domcontentloaded" });
   await waitFlagsmith(page);
 }
@@ -635,12 +694,14 @@ const clips = {
       if (!fm) throw new Error("Flagsmith tab missing");
       await fm.goto(FM_IDENTITY, { waitUntil: "domcontentloaded" });
       await fm.getByText("Identifier:", { exact: false }).first().waitFor({ timeout: 20000 });
+      await seedVisitorCookie(page);
       await page.goto(`${BASE}/checkout/`, { waitUntil: "domcontentloaded" });
       await waitFlagsmith(page);
-      await page.waitForFunction(() => document.body.getAttribute("data-variant") === "control", {
-        timeout: 15000,
-      });
-      await ensureCheckoutForm(page);
+      await page.waitForFunction(
+        () => document.body.getAttribute("data-variant") === "control",
+        null,
+        { timeout: 15000 },
+      );
       dt = await ensureCheckoutDevtools(page, dt);
       await clickDevToolsTab(dt, "Console");
       await clickFlagsmithTab();
@@ -651,10 +712,8 @@ const clips = {
       await holdFlagsmithView(2000);
       await showCheckout();
       dt = await ensureCheckoutDevtools(page, dt);
-      await typeConsole(dt, "document.getElementById('flag-status')?.scrollIntoView({block:'end'})");
-      await sleep(1100);
-      await ensureCheckoutForm(page, dt);
-      await typeConsole(dt, "document.getElementById('place-order')?.scrollIntoView({block:'center'})");
+      await openCheckoutViaLink(page);
+      dt = await liveDevtools(page, dt);
       await sleep(400);
       await runAxeAndAssert(page, dt, CONTROL_AXE);
       await resetFlagsmithIdentity(page);
@@ -663,7 +722,9 @@ const clips = {
       await reloadVisible(page, "checkout");
       await waitVariantShort(page, "treatment");
       dt = await liveDevtools(page, dt);
-      await ensureCheckoutForm(page, dt);
+      await openCheckoutViaLink(page);
+      dt = await liveDevtools(page, dt);
+      await sleep(400);
       await runAxeAndAssert(page, dt, TREATMENT_AXE);
     },
   },
@@ -672,37 +733,46 @@ const clips = {
     async setup(page) {
       runOverride("clear");
       await waitEdgeValue("treatment");
+      await seedVisitorCookie(page);
       await page.goto(`${BASE}/checkout/`, { waitUntil: "domcontentloaded" });
       await waitFlagsmith(page);
-      await page.waitForFunction(() => document.body.getAttribute("data-variant") === "treatment", {
-        timeout: 15000,
-      });
-      await ensureCheckoutForm(page);
+      await page.waitForFunction(
+        () => document.body.getAttribute("data-variant") === "treatment",
+        null,
+        { timeout: 15000 },
+      );
     },
     async run(page, dt) {
       await showCheckout();
       dt = await ensureCheckoutDevtools(page, dt);
-      await ensureCheckoutForm(page, dt);
+      await openCheckoutViaLink(page);
+      dt = await liveDevtools(page, dt);
       await typeConsole(
         dt,
         "window.clicks = 0; document.getElementById('place-order')?.addEventListener('click', () => { window.clicks += 1 })",
       );
       await xClickLocator(page, page.locator("#email"));
+      await assertFocusedId(page, "email");
       await page.keyboard.type("ada@northline.test", { delay: 40 });
       xdo(["key", "Tab"]);
       await sleep(160);
+      await assertFocusedId(page, "card-name");
       await page.keyboard.type("Ada Lovelace", { delay: 32 });
       xdo(["key", "Tab"]);
       await sleep(120);
+      await assertFocusedId(page, "card-number");
       await page.keyboard.type("0000", { delay: 40 });
       xdo(["key", "Tab"]);
       await sleep(120);
+      await assertFocusedId(page, "card-exp");
       await page.keyboard.type("12/28", { delay: 36 });
       xdo(["key", "Tab"]);
       await sleep(120);
+      await assertFocusedId(page, "card-cvc");
       await page.keyboard.type("123", { delay: 36 });
       xdo(["key", "Tab"]);
       await sleep(160);
+      await assertFocusedId(page, "terms");
       xdo(["key", "space"]);
       await sleep(160);
       xdo(["key", "Tab"]);
@@ -866,6 +936,7 @@ let dt = context.pages().find((p) => p.url().startsWith("devtools://"));
 }
 console.log("chrome window", WIN.x, WIN.y, WIN.w, WIN.h);
 await clickCheckoutTab();
+await seedVisitorCookie(page);
 console.log("checking server is not --allow-mock");
 await assertNotAllowMock(page);
 

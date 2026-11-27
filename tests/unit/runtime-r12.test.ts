@@ -236,6 +236,32 @@ describe("R12 P4 Enter is once", () => {
   });
 });
 
+describe("R13 document-level keydown click is once", () => {
+  it("defers Lift's click until after a document handler calls target.click", async () => {
+    document.body.innerHTML = `<div id="h" style="cursor:pointer">Pay</div>`;
+    const host = document.getElementById("h");
+    let clicks = 0;
+    const onDoc = (event: Event) => {
+      if (event.target === host) (host as HTMLElement).click();
+    };
+    document.addEventListener("keydown", onDoc);
+    host?.addEventListener("click", () => {
+      clicks += 1;
+    });
+    expect(
+      applyPatchSpec({
+        id: "r13-doc",
+        version: 0,
+        ops: [{ op: "promoteToControl", selector: "#h", as: "button" }],
+      }).ok,
+    ).toBe(true);
+    key(host, "keydown", "Enter");
+    await wait(0);
+    expect(clicks).toBe(1);
+    document.removeEventListener("keydown", onDoc);
+  });
+});
+
 describe("R12 loop still stays quiet", () => {
   it("page #eee on a min-width spec does not undo", async () => {
     document.body.innerHTML = `<a id="hit" href="#x" style="color:#111;background-color:#fff">Go</a>`;

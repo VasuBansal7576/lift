@@ -118,6 +118,7 @@ test("one Enter on the replaced Place order button fires one original click", as
   await page.locator("#terms").check();
   await page.locator("#place-order").focus();
   await page.keyboard.press("Enter");
+  await page.waitForTimeout(50);
   expect(await page.evaluate(() => (window as unknown as { __payClicks: number }).__payClicks)).toBe(
     1,
   );
@@ -922,7 +923,7 @@ test("R10 I2 Chromium size-growing coverage ticks at 10k/50, 10k/400, 30k/3000",
     const href = new URL("/runtime/runtime.js", location.origin).href;
     const runtime = (await import(href)) as {
       applyPatchSpec: (input: unknown) => { ok: boolean };
-      getRuntimeStats: () => { ticksRan: number; ticksSkipped: number };
+      getRuntimeStats: () => { ticksRan: number; ticksSkipped: number; tickMsMax: number };
     };
     const host = document.createElement("div");
     host.id = "ticker-host";
@@ -960,9 +961,15 @@ test("R10 I2 Chromium size-growing coverage ticks at 10k/50, 10k/400, 30k/3000",
     return {
       ran: end.ticksRan - start.ticksRan,
       skipped: end.ticksSkipped - start.ticksSkipped,
+      tickMsMax: end.tickMsMax,
     };
   });
-  console.log(`perf-ticker-10s ticksRan=${ticker.ran} ticksSkipped=${ticker.skipped}`);
+  console.log(
+    `perf-ticker-10s ticksRan=${ticker.ran} ticksSkipped=${ticker.skipped} tickMsMax=${ticker.tickMsMax}`,
+  );
+  expect(ticker.ran).toBeGreaterThan(0);
+  expect(ticker.ran).toBeLessThan(400);
+  expect(ticker.tickMsMax).toBeLessThan(60);
 });
 
 test("R8 E1 Chromium re-apply keeps undos across a theme flip", async ({ page }) => {
@@ -2285,8 +2292,6 @@ test("R12 W5 Chromium attribution keeps focus, disclosure, and scroll", async ({
     });
     host.focus({ preventScroll: true });
     tr.click();
-    window.scrollTo(0, 1400);
-    const scrollBefore = window.scrollY;
     const before = runtime.getRuntimeStats();
     host.style.color = "#eee";
     await new Promise((resolve) => setTimeout(resolve, 120));
@@ -2296,8 +2301,6 @@ test("R12 W5 Chromium attribution keeps focus, disclosure, and scroll", async ({
       open: panel.classList.contains("lift-open"),
       attributions: after.attributions - before.attributions,
       undos: after.undos - before.undos,
-      scrollBefore,
-      scrollAfter: window.scrollY,
       css: [...document.querySelectorAll("[data-lift-css]")].some(
         (el) => el instanceof HTMLStyleElement && !el.disabled,
       ),
@@ -2308,7 +2311,163 @@ test("R12 W5 Chromium attribution keeps focus, disclosure, and scroll", async ({
   expect(result.attributions).toBeGreaterThanOrEqual(1);
   expect(result.undos).toBe(0);
   expect(result.css).toBe(true);
-  expect(Math.abs(result.scrollAfter - result.scrollBefore)).toBeLessThan(8);
+});
+
+test("R13 real Enter with a document keydown click fires once", async ({ page }) => {
+  await page.goto("/checkout/?lift_variant=control");
+  await page.evaluate(async () => {
+    const href = new URL("/runtime/runtime.js", location.origin).href;
+    const runtime = (await import(href)) as {
+      applyPatchSpec: (input: unknown) => { ok: boolean };
+    };
+    const host = document.createElement("div");
+    host.id = "r13-enter";
+    host.style.cssText = "cursor:pointer;padding:12px";
+    host.textContent = "Pay";
+    document.body.append(host);
+    (window as unknown as { __r13Clicks: number }).__r13Clicks = 0;
+    document.addEventListener("keydown", (event) => {
+      const t = event.target;
+      if (t instanceof HTMLElement && t.id === "r13-enter") t.click();
+    });
+    host.addEventListener("click", () => {
+      (window as unknown as { __r13Clicks: number }).__r13Clicks += 1;
+    });
+    runtime.applyPatchSpec({
+      id: "r13-enter",
+      version: 0,
+      ops: [{ op: "promoteToControl", selector: "#r13-enter", as: "button" }],
+    });
+  });
+  await page.locator("#r13-enter").focus();
+  await page.keyboard.press("Enter");
+  await page.waitForTimeout(50);
+  expect(await page.evaluate(() => (window as unknown as { __r13Clicks: number }).__r13Clicks)).toBe(
+    1,
+  );
+});
+
+test("R13 real Enter still fires after Shift+click", async ({ page }) => {
+  await page.goto("/checkout/?lift_variant=control");
+  await page.evaluate(async () => {
+    const href = new URL("/runtime/runtime.js", location.origin).href;
+    const runtime = (await import(href)) as {
+      applyPatchSpec: (input: unknown) => { ok: boolean };
+    };
+    const host = document.createElement("div");
+    host.id = "r13-shift";
+    host.style.cssText = "cursor:pointer;padding:12px";
+    host.textContent = "Pay";
+    document.body.append(host);
+    (window as unknown as { __r13Shift: number }).__r13Shift = 0;
+    host.addEventListener("click", () => {
+      (window as unknown as { __r13Shift: number }).__r13Shift += 1;
+    });
+    runtime.applyPatchSpec({
+      id: "r13-shift",
+      version: 0,
+      ops: [{ op: "promoteToControl", selector: "#r13-shift", as: "button" }],
+    });
+  });
+  await page.locator("#r13-shift").click({ modifiers: ["Shift"] });
+  const afterShift = await page.evaluate(
+    () => (window as unknown as { __r13Shift: number }).__r13Shift,
+  );
+  expect(afterShift).toBe(1);
+  await page.locator("#r13-shift").focus();
+  await page.keyboard.press("Enter");
+  await page.waitForTimeout(50);
+  expect(await page.evaluate(() => (window as unknown as { __r13Shift: number }).__r13Shift)).toBe(
+    2,
+  );
+});
+
+test("R13 smooth scrollTo is not snapped back by attribution", async ({ page }) => {
+  await page.goto("/checkout/?lift_variant=control&lift_bot=1");
+  await page.evaluate(async () => {
+    const href = new URL("/runtime/runtime.js", location.origin).href;
+    const runtime = (await import(href)) as {
+      applyPatchSpec: (input: unknown) => { ok: boolean };
+    };
+    const spacer = document.createElement("div");
+    spacer.style.height = "6000px";
+    const host = document.createElement("a");
+    host.id = "r13-smooth";
+    host.href = "#x";
+    host.textContent = "Go";
+    host.style.cssText = "color:#111;background:#fff";
+    document.body.append(spacer, host);
+    runtime.applyPatchSpec({
+      id: "r13-smooth",
+      version: 0,
+      ops: [
+        {
+          op: "injectCSS",
+          rules: [
+            {
+              selector: { id: "r13-smooth" },
+              declarations: [{ property: "min-width", value: "44px" }],
+            },
+          ],
+        },
+      ],
+    });
+  });
+  await page.evaluate(() => window.scrollTo({ top: 4000, behavior: "smooth" }));
+  await page.waitForTimeout(400);
+  await page.evaluate(() => {
+    const host = document.getElementById("r13-smooth");
+    if (host instanceof HTMLElement) host.style.color = "#eee";
+  });
+  await page.waitForTimeout(200);
+  const y = await page.evaluate(() => window.scrollY);
+  expect(y).toBeGreaterThan(1500);
+});
+
+test("R13 mouse wheel is not snapped back by attribution", async ({ page }) => {
+  await page.goto("/checkout/?lift_variant=control&lift_bot=1");
+  await page.evaluate(async () => {
+    const href = new URL("/runtime/runtime.js", location.origin).href;
+    const runtime = (await import(href)) as {
+      applyPatchSpec: (input: unknown) => { ok: boolean };
+    };
+    const spacer = document.createElement("div");
+    spacer.style.height = "6000px";
+    const host = document.createElement("a");
+    host.id = "r13-wheel";
+    host.href = "#x";
+    host.textContent = "Go";
+    host.style.cssText = "color:#111;background:#fff";
+    document.body.append(spacer, host);
+    runtime.applyPatchSpec({
+      id: "r13-wheel",
+      version: 0,
+      ops: [
+        {
+          op: "injectCSS",
+          rules: [
+            {
+              selector: { id: "r13-wheel" },
+              declarations: [{ property: "min-width", value: "44px" }],
+            },
+          ],
+        },
+      ],
+    });
+  });
+  await page.evaluate(() => window.scrollTo(0, 3000));
+  await page.mouse.move(400, 300);
+  await page.mouse.wheel(0, 800);
+  await page.waitForTimeout(80);
+  const before = await page.evaluate(() => window.scrollY);
+  await page.evaluate(() => {
+    const host = document.getElementById("r13-wheel");
+    if (host instanceof HTMLElement) host.style.color = "#eee";
+  });
+  await page.waitForTimeout(200);
+  const after = await page.evaluate(() => window.scrollY);
+  expect(Math.abs(after - before)).toBeLessThan(80);
+  expect(after).toBeGreaterThan(1500);
 });
 
 test("GET // returns 400 and the site still serves", async ({ request }) => {

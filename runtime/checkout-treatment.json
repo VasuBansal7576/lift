@@ -12,14 +12,17 @@
             { "property": "color", "value": "#111" },
             { "property": "background-color", "value": "#fff" }
           ]
+        },
+        {
+          "selector": { "id": "shop-trigger" },
+          "declarations": [{ "property": "cursor", "value": "pointer" }]
         }
       ]
     },
     {
       "op": "promoteToControl",
       "selector": "#shop-trigger",
-      "as": "button",
-      "hasClickAffordance": true
+      "as": "button"
     },
     {
       "op": "setAttribute",
@@ -76,8 +79,7 @@
     {
       "op": "promoteToControl",
       "selector": "#place-order",
-      "as": "button",
-      "hasClickAffordance": true
+      "as": "button"
     }
   ]
 }

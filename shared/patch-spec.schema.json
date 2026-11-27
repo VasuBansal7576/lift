@@ -363,8 +363,7 @@
                 { "$ref": "#/$defs/forbiddenHostSelector" }
               ]
             },
-            "as": { "enum": ["button", "link"] },
-            "hasClickAffordance": { "type": "boolean" }
+            "as": { "enum": ["button", "link"] }
           }
         },
         {

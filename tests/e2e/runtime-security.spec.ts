@@ -393,6 +393,7 @@ test("bindEnterToClick on a non-native replacement forwards one click", async ({
     };
     const host = document.createElement("div");
     host.id = "lift-enter-once";
+    host.style.cursor = "pointer";
     host.textContent = "Pay";
     document.body.append(host);
     let clicks = 0;
@@ -406,7 +407,7 @@ test("bindEnterToClick on a non-native replacement forwards one click", async ({
     runtime.applyPatchSpec({
       id: "enter-once",
       version: 0,
-      ops: [{ op: "promoteToControl", selector: "#lift-enter-once", as: "button", hasClickAffordance: true }],
+      ops: [{ op: "promoteToControl", selector: "#lift-enter-once", as: "button" }],
     });
     document
       .getElementById("lift-enter-once")
@@ -714,6 +715,9 @@ test("R7 W3 Chromium guard runs within 250ms under continuous mutations", async 
     const runtime = (await import(href)) as {
       applyPatchSpec: (input: unknown) => { ok: boolean };
     };
+    const theme = document.createElement("style");
+    theme.textContent = ".slot { color: #fff; background-color: #111; }";
+    document.head.append(theme);
     const slot = document.createElement("span");
     slot.className = "slot";
     slot.textContent = "ok";
@@ -727,7 +731,10 @@ test("R7 W3 Chromium guard runs within 250ms under continuous mutations", async 
           rules: [
             {
               selector: { classes: ["slot"] },
-              declarations: [{ property: "color", value: "#111" }],
+              declarations: [
+                { property: "color", value: "#111" },
+                { property: "background-color", value: "#fff" },
+              ],
             },
           ],
         },
@@ -738,7 +745,10 @@ test("R7 W3 Chromium guard runs within 250ms under continuous mutations", async 
       document.body.classList.toggle("busy");
       document.body.setAttribute("data-tick", String(Date.now()));
     }, 10);
-    document.body.setAttribute("style", "background:#000");
+    const ghost = document.createElement("span");
+    ghost.style.color = "#fff";
+    ghost.textContent = "hid";
+    slot.append(ghost);
     await new Promise((resolve) => {
       const check = () => {
         if (!document.querySelector("[data-lift-css]")) {
@@ -765,33 +775,39 @@ test("R7 W3 Chromium guard runs within 250ms under continuous mutations", async 
   expect(result.ms).toBeLessThan(300);
 });
 
-test("R8 I1 Chromium 10k-node apply stays within 3x baseline or 150ms and guard tick ≤10ms", async ({
-  page,
-}) => {
-  test.setTimeout(30_000);
-  await page.goto("/checkout/?lift_variant=control&lift_bot=1");
-  const result = await page.evaluate(async () => {
+async function measureGuardTick(
+  page: import("@playwright/test").Page,
+  nodeCount: number,
+  linkCount: number,
+) {
+  return page.evaluate(async ({ nodes, links }) => {
     const href = new URL("/runtime/runtime.js", location.origin).href;
     const runtime = (await import(href)) as {
       applyPatchSpec: (input: unknown) => { ok: boolean };
       setTestBackstopsPaused: (paused: boolean) => boolean;
     };
     const host = document.createElement("div");
-    host.id = "perf-host";
+    host.id = `perf-host-${nodes}`;
     const probe = document.createElement("span");
     probe.className = "probe";
     probe.textContent = "x";
     host.appendChild(probe);
     const chunk = document.createDocumentFragment();
-    for (let i = 0; i < 10_000; i += 1) {
+    for (let i = 0; i < nodes; i += 1) {
       const node = document.createElement("span");
       node.textContent = "n";
       chunk.appendChild(node);
     }
+    for (let i = 0; i < links; i += 1) {
+      const a = document.createElement("a");
+      a.href = `#n${i}`;
+      a.textContent = "go";
+      chunk.appendChild(a);
+    }
     host.appendChild(chunk);
     document.body.appendChild(host);
     const spec = {
-      id: "perf-10k",
+      id: `perf-${nodes}`,
       version: 0,
       ops: [
         {
@@ -819,19 +835,32 @@ test("R8 I1 Chromium 10k-node apply stays within 3x baseline or 150ms and guard 
     const applyMs = performance.now() - t0;
     runtime.setTestBackstopsPaused(true);
     document.body.classList.add("tick");
-    document.body.setAttribute("data-perf", "1");
+    document.body.setAttribute("data-perf", String(nodes));
     await new Promise((resolve) => setTimeout(resolve, 0));
     const t1 = performance.now();
     runtime.setTestBackstopsPaused(false);
     const guardMs = performance.now() - t1;
     return { ok: applied.ok, applyMs, guardMs, baselineMs };
-  });
+  }, { nodes: nodeCount, links: linkCount });
+}
+
+test("R9 I2 Chromium 10k/200 and 30k/3000 guard ticks", async ({ page }) => {
+  test.setTimeout(60_000);
+  await page.goto("/checkout/?lift_variant=control&lift_bot=1");
+  const small = await measureGuardTick(page, 10_000, 200);
   console.log(
-    `perf-10k applyMs=${result.applyMs.toFixed(2)} guardMs=${result.guardMs.toFixed(2)} baselineMs=${result.baselineMs.toFixed(2)}`,
+    `perf-10k/200 applyMs=${small.applyMs.toFixed(2)} guardMs=${small.guardMs.toFixed(2)} baselineMs=${small.baselineMs.toFixed(2)}`,
   );
-  expect(result.ok).toBe(true);
-  expect(result.applyMs).toBeLessThanOrEqual(Math.max(150, result.baselineMs * 3));
-  expect(result.guardMs).toBeLessThanOrEqual(10);
+  expect(small.ok).toBe(true);
+  expect(small.applyMs).toBeLessThanOrEqual(Math.max(150, small.baselineMs * 3));
+  expect(small.guardMs).toBeLessThanOrEqual(10);
+  const large = await measureGuardTick(page, 30_000, 3000);
+  console.log(
+    `perf-30k/3000 applyMs=${large.applyMs.toFixed(2)} guardMs=${large.guardMs.toFixed(2)} baselineMs=${large.baselineMs.toFixed(2)}`,
+  );
+  expect(large.ok).toBe(true);
+  expect(large.applyMs).toBeLessThanOrEqual(Math.max(400, large.baselineMs * 3));
+  expect(large.guardMs).toBeLessThanOrEqual(16);
 });
 
 test("R8 E1 Chromium re-apply keeps undos across a theme flip", async ({ page }) => {
@@ -842,7 +871,7 @@ test("R8 E1 Chromium re-apply keeps undos across a theme flip", async ({ page })
       applyPatchSpec: (input: unknown) => { ok: boolean };
     };
     const style = document.createElement("style");
-    style.textContent = ".panel.dark { color: #fff; background: #fff; }";
+    style.textContent = ".panel { color: #fff; background-color: #111; }";
     document.head.append(style);
     const panel = document.createElement("div");
     panel.id = "panel";
@@ -869,7 +898,10 @@ test("R8 E1 Chromium re-apply keeps undos across a theme flip", async ({ page })
     };
     const first = runtime.applyPatchSpec(spec);
     const second = runtime.applyPatchSpec(spec);
-    panel.classList.add("dark");
+    const ghost = document.createElement("span");
+    ghost.style.color = "#fff";
+    ghost.textContent = "hid";
+    panel.append(ghost);
     await new Promise((resolve) => setTimeout(resolve, 80));
     return {
       first: first.ok,
@@ -891,10 +923,10 @@ test("R8 E2 Chromium two-rule guard continues after the first selector vanishes"
     const runtime = (await import(href)) as {
       applyPatchSpec: (input: unknown) => { ok: boolean };
     };
-    document.body.insertAdjacentHTML(
-      "beforeend",
-      `<span id="gone">A</span><span class="keep">B</span>`,
-    );
+    const pageStyle = document.createElement("style");
+    pageStyle.textContent = ".keep { color: #fff; background-color: #111; }";
+    document.head.append(pageStyle);
+    document.body.insertAdjacentHTML("beforeend", `<span id="gone">A</span><span class="keep">B</span>`);
     const applied = runtime.applyPatchSpec({
       id: "two-rules",
       version: 0,
@@ -922,10 +954,10 @@ test("R8 E2 Chromium two-rule guard continues after the first selector vanishes"
     });
     document.getElementById("gone")?.remove();
     const keep = document.querySelector(".keep");
-    if (keep instanceof HTMLElement) {
-      keep.style.color = "#fff";
-      keep.style.backgroundColor = "#fff";
-    }
+    const ghost = document.createElement("span");
+    ghost.style.color = "#fff";
+    ghost.textContent = "hid";
+    keep?.append(ghost);
     await new Promise((resolve) => setTimeout(resolve, 80));
     return { ok: applied.ok, css: Boolean(document.querySelector("[data-lift-css]")) };
   });
@@ -1112,7 +1144,406 @@ test("R8 I5 Chromium guard covers a newly added focusable under an overlay", asy
     return { paused: applied.ok, css: Boolean(document.querySelector("[data-lift-css]")) };
   });
   expect(result.paused).toBe(true);
+  expect(result.css).toBe(true);
+});
+
+test("R9 W1 Chromium host Enter handler activates once", async ({ page }) => {
+  await page.goto("/checkout/?lift_variant=control");
+  const result = await page.evaluate(async () => {
+    const href = new URL("/runtime/runtime.js", location.origin).href;
+    const runtime = (await import(href)) as {
+      applyPatchSpec: (input: unknown) => { ok: boolean };
+    };
+    const host = document.createElement("div");
+    host.id = "no-double";
+    host.style.cursor = "pointer";
+    host.textContent = "Pay";
+    document.body.append(host);
+    const log: string[] = [];
+    host.addEventListener("keydown", (event) => {
+      log.push("ownkey");
+      event.preventDefault();
+      host.click();
+    });
+    host.addEventListener("click", () => {
+      log.push("click");
+    });
+    runtime.applyPatchSpec({
+      id: "no-double",
+      version: 0,
+      ops: [{ op: "promoteToControl", selector: "#no-double", as: "button" }],
+    });
+    host.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+    const space = document.createElement("div");
+    space.id = "space-once";
+    space.style.cursor = "pointer";
+    space.textContent = "Go";
+    document.body.append(space);
+    let spaceClicks = 0;
+    space.addEventListener("click", () => {
+      spaceClicks += 1;
+    });
+    runtime.applyPatchSpec({
+      id: "space-once",
+      version: 0,
+      ops: [{ op: "promoteToControl", selector: "#space-once", as: "button" }],
+    });
+    space.dispatchEvent(new KeyboardEvent("keydown", { key: " ", bubbles: true, cancelable: true }));
+    space.dispatchEvent(new KeyboardEvent("keydown", { key: " ", bubbles: true, cancelable: true, repeat: true }));
+    space.dispatchEvent(new KeyboardEvent("keydown", { key: " ", bubbles: true, cancelable: true, repeat: true }));
+    space.dispatchEvent(new KeyboardEvent("keydown", { key: " ", bubbles: true, cancelable: true, repeat: true }));
+    space.dispatchEvent(new KeyboardEvent("keyup", { key: " ", bubbles: true, cancelable: true }));
+    return { log, clicks: log.filter((x) => x === "click").length, spaceClicks };
+  });
+  expect(result.log).toEqual(["ownkey", "click"]);
+  expect(result.clicks).toBe(1);
+  expect(result.spaceClicks).toBe(1);
+});
+
+test("R9 W2 Chromium promote gates reject hidden/inert/empty/contenteditable", async ({ page }) => {
+  await page.goto("/checkout/?lift_variant=control");
+  const result = await page.evaluate(async () => {
+    const href = new URL("/runtime/runtime.js", location.origin).href;
+    const runtime = (await import(href)) as {
+      applyPatchSpec: (input: unknown) => { ok: boolean };
+    };
+    document.body.insertAdjacentHTML(
+      "beforeend",
+      `<div aria-hidden="true"><div id="hid" style="cursor:pointer">Go</div></div>
+       <div inert><div id="inert" style="cursor:pointer">Go</div></div>
+       <div id="ce" contenteditable="true" style="cursor:pointer">Go</div>
+       <div id="empty" style="cursor:pointer"></div>
+       <div id="ok" style="cursor:pointer">Go</div>
+       <div id="neg" tabindex="-1" style="cursor:pointer">Go</div>`,
+    );
+    const hid = runtime.applyPatchSpec({
+      id: "hid",
+      version: 0,
+      ops: [{ op: "promoteToControl", selector: "#hid", as: "button" }],
+    });
+    const inert = runtime.applyPatchSpec({
+      id: "inert",
+      version: 0,
+      ops: [{ op: "promoteToControl", selector: "#inert", as: "button" }],
+    });
+    const ce = runtime.applyPatchSpec({
+      id: "ce",
+      version: 0,
+      ops: [{ op: "promoteToControl", selector: "#ce", as: "button" }],
+    });
+    const empty = runtime.applyPatchSpec({
+      id: "empty",
+      version: 0,
+      ops: [{ op: "promoteToControl", selector: "#empty", as: "button" }],
+    });
+    const ok = runtime.applyPatchSpec({
+      id: "ok",
+      version: 0,
+      ops: [{ op: "promoteToControl", selector: "#ok", as: "button" }],
+    });
+    const neg = runtime.applyPatchSpec({
+      id: "neg",
+      version: 0,
+      ops: [{ op: "promoteToControl", selector: "#neg", as: "button" }],
+    });
+    return {
+      hid: hid.ok,
+      inert: inert.ok,
+      ce: ce.ok,
+      empty: empty.ok,
+      ok: ok.ok,
+      negTab: document.getElementById("neg")?.tabIndex ?? -99,
+    };
+  });
+  expect(result.hid).toBe(false);
+  expect(result.inert).toBe(false);
+  expect(result.ce).toBe(false);
+  expect(result.empty).toBe(false);
+  expect(result.ok).toBe(true);
+  expect(result.negTab).toBe(0);
+});
+
+test("R9 W3 Chromium page-caused modal keeps the fix and spec-caused still undoes", async ({
+  page,
+}) => {
+  await page.goto("/checkout/?lift_variant=control&lift_bot=1");
+  const result = await page.evaluate(async () => {
+    const href = new URL("/runtime/runtime.js", location.origin).href;
+    const runtime = (await import(href)) as {
+      applyPatchSpec: (input: unknown) => { ok: boolean };
+    };
+    const keep = document.createElement("button");
+    keep.type = "button";
+    keep.className = "keep";
+    keep.textContent = "Keep";
+    document.body.append(keep);
+    const modalApplied = runtime.applyPatchSpec({
+      id: "page-modal",
+      version: 0,
+      ops: [
+        {
+          op: "injectCSS",
+          rules: [
+            {
+              selector: { classes: ["keep"] },
+              declarations: [
+                { property: "color", value: "#111" },
+                { property: "background-color", value: "#fff" },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+    keep.hidden = true;
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    const modalCss = Boolean(document.querySelector("[data-lift-css]"));
+    const pageStyle = document.createElement("style");
+    pageStyle.textContent = ".panel { color: #fff; background-color: #111; }";
+    document.head.append(pageStyle);
+    const panel = document.createElement("div");
+    panel.className = "panel";
+    panel.textContent = "Hello";
+    document.body.append(panel);
+    const specApplied = runtime.applyPatchSpec({
+      id: "spec-caused",
+      version: 0,
+      ops: [
+        {
+          op: "injectCSS",
+          rules: [
+            {
+              selector: { classes: ["panel"] },
+              declarations: [
+                { property: "color", value: "#111" },
+                { property: "background-color", value: "#fff" },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+    const ghost = document.createElement("span");
+    ghost.style.color = "#fff";
+    ghost.textContent = "hid";
+    panel.append(ghost);
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    return {
+      modalApplied: modalApplied.ok,
+      modalCss,
+      specApplied: specApplied.ok,
+      specCss: Boolean(document.querySelector('#spec-caused, [data-lift-css]')),
+      panelCss: Boolean(
+        [...document.querySelectorAll("[data-lift-css]")].some((el) =>
+          (el.textContent || "").includes(".panel"),
+        ),
+      ),
+    };
+  });
+  expect(result.modalApplied).toBe(true);
+  expect(result.modalCss).toBe(true);
+  expect(result.specApplied).toBe(true);
+  expect(result.panelCss).toBe(false);
+});
+
+test("R9 W3 Chromium insertRule on open checkout undoes after pause", async ({ page }) => {
+  await page.goto("/checkout/?lift_variant=control&lift_bot=1");
+  await page.locator(".hover-nav").hover();
+  await page.locator("#checkout-link").click();
+  await page.locator("#checkout").waitFor({ state: "visible" });
+  const result = await page.evaluate(async () => {
+    const href = new URL("/runtime/runtime.js", location.origin).href;
+    const runtime = (await import(href)) as {
+      applyPatchSpec: (input: unknown) => { ok: boolean };
+      setTestBackstopsPaused: (paused: boolean) => boolean;
+    };
+    const pageStyle = document.createElement("style");
+    pageStyle.textContent = ".slot { color: #16181d; background-color: #fff; }";
+    document.head.append(pageStyle);
+    const checkout = document.getElementById("checkout") || document.body;
+    const slot = document.createElement("span");
+    slot.className = "slot";
+    slot.textContent = "CSSOM slot";
+    checkout.append(slot);
+    const applied = runtime.applyPatchSpec({
+      id: "cssom-checkout",
+      version: 0,
+      ops: [
+        {
+          op: "injectCSS",
+          rules: [
+            {
+              selector: { classes: ["slot"] },
+              declarations: [
+                { property: "color", value: "#111" },
+                { property: "background-color", value: "#fff" },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+    runtime.setTestBackstopsPaused(true);
+    const banner = document.createElement("div");
+    banner.style.cssText =
+      "position:fixed;top:0;left:0;right:0;z-index:2147483647;padding:14px;background:#111;color:#fff";
+    banner.textContent = "evidence banner";
+    document.body.prepend(banner);
+    const sheet = (document.querySelector("[data-lift-css]") as HTMLStyleElement | null)?.sheet;
+    sheet?.insertRule(".slot { color: rgb(255, 255, 255); }", sheet.cssRules.length);
+    slot.style.outline = "3px dashed #f00";
+    slot.style.outlineOffset = "2px";
+    const range = document.createRange();
+    range.selectNodeContents(slot);
+    window.getSelection()?.removeAllRanges();
+    window.getSelection()?.addRange(range);
+    runtime.setTestBackstopsPaused(false);
+    window.dispatchEvent(new Event("resize"));
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    return {
+      ok: applied.ok,
+      css: Boolean(document.querySelector("[data-lift-css]")),
+      color: getComputedStyle(slot).color,
+      attr: (window as unknown as { __LIFT_ATTR__?: unknown }).__LIFT_ATTR__ ?? null,
+      failOpen: (window as unknown as { __LIFT_FAIL_OPEN__?: unknown }).__LIFT_FAIL_OPEN__ ?? null,
+    };
+  });
+  expect(result, JSON.stringify(result)).toMatchObject({ ok: true, css: false });
+});
+
+test("R9 W3 Chromium insertRule contrast undoes even with a covering banner", async ({ page }) => {
+  await page.goto("/checkout/?lift_variant=control&lift_bot=1");
+  const result = await page.evaluate(async () => {
+    const href = new URL("/runtime/runtime.js", location.origin).href;
+    const runtime = (await import(href)) as {
+      applyPatchSpec: (input: unknown) => { ok: boolean };
+      setTestBackstopsPaused: (paused: boolean) => boolean;
+    };
+    const pageStyle = document.createElement("style");
+    pageStyle.textContent = ".slot { color: #16181d; background-color: #fff; }";
+    document.head.append(pageStyle);
+    const slot = document.createElement("span");
+    slot.className = "slot";
+    slot.textContent = "CSSOM slot";
+    document.body.append(slot);
+    const applied = runtime.applyPatchSpec({
+      id: "cssom-banner",
+      version: 0,
+      ops: [
+        {
+          op: "injectCSS",
+          rules: [
+            {
+              selector: { classes: ["slot"] },
+              declarations: [
+                { property: "color", value: "#111" },
+                { property: "background-color", value: "#fff" },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+    runtime.setTestBackstopsPaused(true);
+    const banner = document.createElement("div");
+    banner.style.cssText =
+      "position:fixed;top:0;left:0;right:0;z-index:2147483647;padding:14px;background:#111;color:#fff";
+    banner.textContent = "evidence banner";
+    document.body.prepend(banner);
+    const sheet = (document.querySelector("[data-lift-css]") as HTMLStyleElement | null)?.sheet;
+    sheet?.insertRule(".slot { color: rgb(255, 255, 255); }", sheet.cssRules.length);
+    runtime.setTestBackstopsPaused(false);
+    window.dispatchEvent(new Event("resize"));
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    return {
+      ok: applied.ok,
+      css: Boolean(document.querySelector("[data-lift-css]")),
+      color: getComputedStyle(slot).color,
+    };
+  });
+  expect(result.ok).toBe(true);
   expect(result.css).toBe(false);
+});
+
+test("R9 I1 Chromium allows min-height on a link in a sticky header", async ({ page }) => {
+  await page.goto("/checkout/?lift_variant=control");
+  const result = await page.evaluate(async () => {
+    const href = new URL("/runtime/runtime.js", location.origin).href;
+    const runtime = (await import(href)) as {
+      applyPatchSpec: (input: unknown) => { ok: boolean; error?: string };
+    };
+    const header = document.createElement("div");
+    header.style.cssText =
+      "position:sticky;top:0;height:80px;background-color:#fff;display:flex;align-items:center";
+    const link = document.createElement("a");
+    link.id = "hit";
+    link.href = "#x";
+    link.textContent = "Go";
+    link.style.cssText = "color:#111;background-color:#fff;min-height:44px;display:inline-flex;align-items:center";
+    header.append(link);
+    document.body.prepend(header);
+    return runtime.applyPatchSpec({
+      id: "sticky-hit",
+      version: 0,
+      ops: [
+        {
+          op: "injectCSS",
+          rules: [
+            {
+              selector: { id: "hit" },
+              declarations: [{ property: "min-height", value: "44px" }],
+            },
+          ],
+        },
+      ],
+    });
+  });
+  expect(result.ok, result.error).toBe(true);
+});
+
+test("R9 W4 Chromium color fix survives a dropdown overlay", async ({ page }) => {
+  await page.goto("/checkout/?lift_variant=control&lift_bot=1");
+  const result = await page.evaluate(async () => {
+    const href = new URL("/runtime/runtime.js", location.origin).href;
+    const runtime = (await import(href)) as {
+      applyPatchSpec: (input: unknown) => { ok: boolean };
+    };
+    const nav = document.createElement("div");
+    nav.className = "nav";
+    nav.style.cssText = "position:relative;background:#fff;color:#111";
+    nav.textContent = "Shop";
+    const buy = document.createElement("button");
+    buy.type = "button";
+    buy.textContent = "Buy";
+    document.body.append(nav, buy);
+    const applied = runtime.applyPatchSpec({
+      id: "nav-color",
+      version: 0,
+      ops: [
+        {
+          op: "injectCSS",
+          rules: [
+            {
+              selector: { classes: ["nav"] },
+              declarations: [
+                { property: "color", value: "#111" },
+                { property: "background-color", value: "#fff" },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+    const menu = document.createElement("div");
+    menu.style.cssText =
+      "position:absolute;top:0;left:0;width:240px;height:120px;background:#111;color:#fff;z-index:9";
+    menu.textContent = "Checkout";
+    nav.append(menu);
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    return { ok: applied.ok, css: Boolean(document.querySelector("[data-lift-css]")) };
+  });
+  expect(result.ok).toBe(true);
+  expect(result.css).toBe(true);
 });
 
 test("GET // returns 400 and the site still serves", async ({ request }) => {

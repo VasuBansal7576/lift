@@ -84,7 +84,6 @@ describe("parsePatchSpec", () => {
         op: "promoteToControl",
         selector: "#x",
         as: "button",
-        hasClickAffordance: true,
       },
       insertHTML: {
         op: "insertHTML",

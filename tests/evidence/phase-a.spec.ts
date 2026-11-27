@@ -209,12 +209,22 @@ async function setBackstopsPaused(page: Page, paused: boolean) {
   expect(ok, "loopback lift_bot=1 pause hook").toBe(true);
 }
 
-async function showGhostReadout(page: Page, selector: string, caption: string) {
+async function paintContrastReadout(
+  page: Page,
+  selector: string,
+  caption: string,
+  kind: "bad" | "restored",
+) {
   await page.evaluate(
-    ({ sel, cap }) => {
+    ({ sel, cap, restored }) => {
       const parseRgb = (value: string) => {
         const m = String(value).match(/rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/i);
         return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
+      };
+      const alphaOf = (value: string) => {
+        const m = String(value).match(/rgba\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*,\s*([0-9.]+)\s*\)/i);
+        if (m) return Number(m[1]);
+        return /rgba/i.test(value) ? 0 : 1;
       };
       const lin = (c: number) => {
         const n = c / 255;
@@ -231,26 +241,29 @@ async function showGhostReadout(page: Page, selector: string, caption: string) {
       const effectiveBg = (el: HTMLElement) => {
         let node: HTMLElement | null = el;
         while (node) {
-          const parsed = parseRgb(getComputedStyle(node).backgroundColor);
-          if (parsed) {
-            const raw = getComputedStyle(node).backgroundColor;
-            const alpha = /rgba/i.test(raw) ? Number(raw.split(",")[3]) : 1;
-            if (Number.isFinite(alpha) && alpha >= 0.99) return parsed;
-            if (!/rgba/i.test(raw)) return parsed;
-          }
+          const raw = getComputedStyle(node).backgroundColor;
+          const parsed = parseRgb(raw);
+          const alpha = alphaOf(raw);
+          if (parsed && Number.isFinite(alpha) && alpha >= 0.99) return parsed;
           node = node.parentElement;
         }
         return [255, 255, 255];
       };
       const el = document.querySelector(sel);
       if (!(el instanceof HTMLElement)) return;
-      el.style.outline = "3px dashed #f00";
-      el.style.outlineOffset = "2px";
-      const range = document.createRange();
-      range.selectNodeContents(el);
-      const selection = window.getSelection();
-      selection?.removeAllRanges();
-      selection?.addRange(range);
+      if (!restored) {
+        el.style.outline = "3px dashed #f00";
+        el.style.outlineOffset = "2px";
+        const range = document.createRange();
+        range.selectNodeContents(el);
+        const selection = window.getSelection();
+        selection?.removeAllRanges();
+        selection?.addRange(range);
+      } else {
+        window.getSelection()?.removeAllRanges();
+        el.style.outline = "";
+        el.style.outlineOffset = "";
+      }
       const color = getComputedStyle(el).color;
       const fg = parseRgb(color) || [255, 255, 255];
       const bg = effectiveBg(el);
@@ -261,63 +274,24 @@ async function showGhostReadout(page: Page, selector: string, caption: string) {
         capEl = document.createElement("div");
         capEl.id = "lift-bad-state";
         capEl.setAttribute("data-evidence", "1");
-        capEl.style.cssText =
-          "position:fixed;bottom:16px;left:16px;right:16px;z-index:2147483647;padding:12px 16px;font:600 16px/1.4 ui-monospace,monospace;background:#7f1d1d;color:#fff;border:4px dashed #f00";
         document.body.append(capEl);
       }
+      capEl.style.cssText = restored
+        ? "position:fixed;bottom:16px;left:16px;right:16px;z-index:2147483647;padding:12px 16px;font:600 16px/1.4 ui-monospace,monospace;background:#14532d;color:#fff;border:4px solid #22c55e"
+        : "position:fixed;bottom:16px;left:16px;right:16px;z-index:2147483647;padding:12px 16px;font:600 16px/1.4 ui-monospace,monospace;background:#7f1d1d;color:#fff;border:4px dashed #f00";
       capEl.textContent = `${cap}\n${color} on ${bgCss} = ${n.toFixed(2)}:1`;
     },
-    { sel: selector, cap: caption },
+    { sel: selector, cap: caption, restored: kind === "restored" },
   );
   await pause(page, 1500);
 }
 
+async function showGhostReadout(page: Page, selector: string, caption: string) {
+  await paintContrastReadout(page, selector, caption, "bad");
+}
+
 async function showRestoredReadout(page: Page, selector: string, caption: string) {
-  await page.evaluate(
-    ({ sel, cap }) => {
-      const parseRgb = (value: string) => {
-        const m = String(value).match(/rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/i);
-        return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
-      };
-      const lin = (c: number) => {
-        const n = c / 255;
-        return n <= 0.03928 ? n / 12.92 : ((n + 0.055) / 1.055) ** 2.4;
-      };
-      const lum = (rgb: number[]) => 0.2126 * lin(rgb[0]) + 0.7152 * lin(rgb[1]) + 0.0722 * lin(rgb[2]);
-      const ratio = (fg: number[], bg: number[]) => {
-        const a = lum(fg);
-        const b = lum(bg);
-        const hi = Math.max(a, b);
-        const lo = Math.min(a, b);
-        return (hi + 0.05) / (lo + 0.05);
-      };
-      window.getSelection()?.removeAllRanges();
-      const el = document.querySelector(sel);
-      const color = el instanceof HTMLElement ? getComputedStyle(el).color : "n/a";
-      const bg =
-        el instanceof HTMLElement ? getComputedStyle(el.parentElement || el).backgroundColor : "n/a";
-      const fg = el instanceof HTMLElement ? parseRgb(getComputedStyle(el).color) : [17, 17, 17];
-      const bgRgb =
-        el instanceof HTMLElement
-          ? parseRgb(getComputedStyle(el.parentElement || el).backgroundColor) || [255, 255, 255]
-          : [255, 255, 255];
-      const n = ratio(fg || [17, 17, 17], bgRgb);
-      let capEl = document.getElementById("lift-bad-state");
-      if (!capEl) {
-        capEl = document.createElement("div");
-        capEl.id = "lift-bad-state";
-        capEl.setAttribute("data-evidence", "1");
-        capEl.style.cssText =
-          "position:fixed;bottom:16px;left:16px;right:16px;z-index:2147483647;padding:12px 16px;font:600 16px/1.4 ui-monospace,monospace;background:#14532d;color:#fff;border:4px solid #22c55e";
-        document.body.append(capEl);
-      }
-      capEl.style.background = "#14532d";
-      capEl.style.border = "4px solid #22c55e";
-      capEl.textContent = `${cap}\n${color} on ${bg} = ${n.toFixed(2)}:1`;
-    },
-    { sel: selector, cap: caption },
-  );
-  await pause(page, 1500);
+  await paintContrastReadout(page, selector, caption, "restored");
 }
 
 async function markBadState(page: Page, selector: string, caption: string) {
@@ -850,7 +824,7 @@ test("04-covered-control", async ({ page }) => {
 test("04-reapply-guard", async ({ page }) => {
   await page.goto("/checkout/?lift_variant=control&lift_bot=1");
   await openCheckoutWithHover(page);
-  await showBanner(page, "E1 — apply the same spec twice, then flip .dark; undos must still fire");
+  await showBanner(page, "E1 — apply the same spec twice, then a spec-caused ghost; undos must still fire");
   const applied = await page.evaluate(async () => {
     const href = new URL("/runtime/runtime.js", location.origin).href;
     const runtime = (await import(href)) as {
@@ -858,7 +832,7 @@ test("04-reapply-guard", async ({ page }) => {
     };
     const checkout = document.getElementById("checkout") || document.body;
     const theme = document.createElement("style");
-    theme.textContent = ".panel.dark { color: #fff; background: #fff; }";
+    theme.textContent = ".panel { color: #fff; background-color: #111; }";
     document.head.append(theme);
     const panel = document.createElement("div");
     panel.id = "panel";
@@ -893,13 +867,19 @@ test("04-reapply-guard", async ({ page }) => {
   expect(applied.second).toBe(true);
   await setBackstopsPaused(page, true);
   await page.evaluate(() => {
-    document.getElementById("panel")?.classList.add("dark");
+    const ghost = document.createElement("span");
+    ghost.className = "lift-ghost";
+    ghost.textContent = "WHITE ON WHITE";
+    ghost.style.cssText =
+      "display:block;margin-top:6px;font:14px/1.4 system-ui,sans-serif;color:#fff;padding:4px";
+    document.getElementById("panel")?.append(ghost);
   });
-  await showGhostReadout(page, "#panel", "BAD STATE: re-apply left undos, then .dark made white-on-white");
+  await showGhostReadout(page, ".lift-ghost", "BAD STATE: white-on-white after re-apply left undos");
   await setBackstopsPaused(page, false);
   await page.waitForTimeout(80);
   expect(await page.evaluate(() => Boolean(document.querySelector("[data-lift-css]")))).toBe(false);
-  await showRestoredReadout(page, "#panel", "UNDONE after theme flip — cumulative undos still ran");
+  await expect(page.locator("#panel")).toContainText("Theme panel");
+  await showRestoredReadout(page, "#panel", "UNDONE — Theme panel is readable again (effective background)");
   await clearBadState(page);
   await pause(page, 800);
 });
@@ -913,6 +893,9 @@ test("04-cssom-insertRule", async ({ page }) => {
     const runtime = (await import(href)) as {
       applyPatchSpec: (input: unknown) => { ok: boolean; error?: string };
     };
+    const pageStyle = document.createElement("style");
+    pageStyle.textContent = ".slot { color: #16181d; background-color: #fff; }";
+    document.head.append(pageStyle);
     const checkout = document.getElementById("checkout") || document.body;
     const slot = document.createElement("span");
     slot.className = "slot";
@@ -941,17 +924,260 @@ test("04-cssom-insertRule", async ({ page }) => {
   });
   expect(applied.ok).toBe(true);
   await setBackstopsPaused(page, true);
-  await page.evaluate(() => {
-    const sheet = (document.querySelector("[data-lift-css]") as HTMLStyleElement | null)?.sheet;
-    sheet?.insertRule(".slot { color: rgb(255, 255, 255); }", sheet.cssRules.length);
+  const inserted = await page.evaluate(() => {
+    const style = document.querySelector("[data-lift-css]") as HTMLStyleElement | null;
+    const sheet = style?.sheet;
+    const idx = sheet?.insertRule(".slot { color: rgb(255, 255, 255); }", sheet.cssRules.length);
+    const el = document.querySelector(".slot");
+    return {
+      idx,
+      rules: sheet ? [...sheet.cssRules].map((r) => r.cssText) : [],
+      color: el instanceof HTMLElement ? getComputedStyle(el).color : "",
+      bg: el instanceof HTMLElement ? getComputedStyle(el).backgroundColor : "",
+    };
   });
+  expect(inserted.color, JSON.stringify(inserted)).toMatch(/255,\s*255,\s*255/);
   await showGhostReadout(page, ".slot", "BAD STATE: insertRule made white-on-white");
-  await setBackstopsPaused(page, false);
-  await page.waitForTimeout(80);
-  expect(await page.evaluate(() => Boolean(document.querySelector("[data-lift-css]")))).toBe(false);
+  const after = await page.evaluate(async () => {
+    const href = new URL("/runtime/runtime.js", location.origin).href;
+    const runtime = (await import(href)) as {
+      setTestBackstopsPaused: (paused: boolean) => boolean;
+    };
+    runtime.setTestBackstopsPaused(false);
+    window.dispatchEvent(new Event("resize"));
+    document.body.setAttribute("data-cssom-kick", "1");
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    const el = document.querySelector(".slot");
+    return {
+      hasCss: Boolean(document.querySelector("[data-lift-css]")),
+      color: el instanceof HTMLElement ? getComputedStyle(el).color : "",
+      bg: el instanceof HTMLElement ? getComputedStyle(el).backgroundColor : "",
+    };
+  });
+  expect(after.hasCss, JSON.stringify(after)).toBe(false);
   await showRestoredReadout(page, ".slot", "UNDONE CSSOM insertRule — injected stylesheet removed");
   await clearBadState(page);
   await pause(page, 800);
+});
+
+test("04-promote-no-double", async ({ page }) => {
+  await page.goto("/checkout/?lift_variant=control");
+  await openCheckoutWithHover(page);
+  await showBanner(page, "W1 — host preventDefault()+click on Enter must activate exactly once");
+  const setup = await page.evaluate(async () => {
+    const href = new URL("/runtime/runtime.js", location.origin).href;
+    const runtime = (await import(href)) as {
+      applyPatchSpec: (input: unknown) => { ok: boolean; error?: string };
+    };
+    const checkout = document.getElementById("checkout") || document.body;
+    const host = document.createElement("div");
+    host.id = "no-double";
+    host.style.cssText =
+      "display:inline-block;margin:12px 0;padding:10px 16px;background:#111;color:#fff;cursor:pointer;font:700 18px/1.3 system-ui";
+    host.textContent = "Activate";
+    const counter = document.createElement("div");
+    counter.id = "activation-count";
+    counter.style.cssText = "font:700 28px/1.2 ui-monospace,monospace;margin:8px 0";
+    counter.textContent = "activations: 0";
+    let clicks = 0;
+    host.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter") return;
+      event.preventDefault();
+      host.click();
+    });
+    host.addEventListener("click", () => {
+      clicks += 1;
+      counter.textContent = `activations: ${clicks}`;
+    });
+    checkout.append(host, counter);
+    return runtime.applyPatchSpec({
+      id: "no-double",
+      version: 0,
+      ops: [{ op: "promoteToControl", selector: "#no-double", as: "button" }],
+    });
+  });
+  expect(setup.ok).toBe(true);
+  await page.locator("#no-double").focus();
+  await page.keyboard.press("Enter");
+  await expect(page.locator("#activation-count")).toHaveText("activations: 1");
+  await showBanner(page, "activations: 1 — host Enter handler plus bridge did not double-fire");
+  await pause(page, 2000);
+});
+
+test("04-guard-page-modal", async ({ page }) => {
+  await page.goto("/checkout/?lift_variant=control&lift_bot=1");
+  await openCheckoutWithHover(page);
+  await showBanner(page, "W3 — a page modal appears; the spec did not cause it, so the fix STAYS");
+  const applied = await page.evaluate(async () => {
+    const href = new URL("/runtime/runtime.js", location.origin).href;
+    const runtime = (await import(href)) as {
+      applyPatchSpec: (input: unknown) => { ok: boolean; error?: string };
+    };
+    const checkout = document.getElementById("checkout") || document.body;
+    const keep = document.createElement("button");
+    keep.type = "button";
+    keep.id = "keep-fix";
+    keep.className = "keep";
+    keep.textContent = "Keep this contrast fix";
+    keep.style.cssText = "display:block;margin:12px 0;padding:10px 16px;font:700 18px/1.3 system-ui";
+    checkout.append(keep);
+    return runtime.applyPatchSpec({
+      id: "page-modal",
+      version: 0,
+      ops: [
+        {
+          op: "injectCSS",
+          rules: [
+            {
+              selector: { classes: ["keep"] },
+              declarations: [
+                { property: "color", value: "#111" },
+                { property: "background-color", value: "#fff" },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+  });
+  expect(applied.ok).toBe(true);
+  await setBackstopsPaused(page, true);
+  await page.evaluate(() => {
+    const keep = document.getElementById("keep-fix");
+    if (keep instanceof HTMLElement) keep.hidden = true;
+    const modal = document.createElement("div");
+    modal.id = "page-modal";
+    modal.textContent = "Modal dialog";
+    modal.style.cssText =
+      "position:fixed;inset:20% 15%;z-index:20;background:#fff;color:#111;border:4px solid #111;padding:24px;font:700 22px/1.3 system-ui;box-shadow:0 12px 40px rgba(0,0,0,.4)";
+    document.body.append(modal);
+  });
+  await showBanner(page, "page-caused, fix kept");
+  await setBackstopsPaused(page, false);
+  await page.waitForTimeout(80);
+  const stayed = await page.evaluate(() => Boolean(document.querySelector("[data-lift-css]")));
+  expect(stayed).toBe(true);
+  await expect(page.locator("#page-modal")).toBeVisible();
+  await showBanner(page, "page-caused, fix kept — injected CSS still present after the modal");
+  await pause(page, 2000);
+});
+
+test("04-guard-spec-caused", async ({ page }) => {
+  await page.goto("/checkout/?lift_variant=control&lift_bot=1");
+  await openCheckoutWithHover(page);
+  await showBanner(page, "W3 — a spec-caused white-on-white descendant is still undone");
+  const applied = await page.evaluate(async () => {
+    const href = new URL("/runtime/runtime.js", location.origin).href;
+    const runtime = (await import(href)) as {
+      applyPatchSpec: (input: unknown) => { ok: boolean; error?: string };
+    };
+    const checkout = document.getElementById("checkout") || document.body;
+    const theme = document.createElement("style");
+    theme.textContent = ".panel { color: #fff; background-color: #111; }";
+    document.head.append(theme);
+    const panel = document.createElement("div");
+    panel.className = "panel";
+    panel.id = "spec-panel";
+    panel.textContent = "Theme panel";
+    panel.style.cssText =
+      "margin:12px 0;padding:8px 10px;border:1px dashed #888;font:14px/1.4 system-ui";
+    checkout.append(panel);
+    return runtime.applyPatchSpec({
+      id: "spec-caused",
+      version: 0,
+      ops: [
+        {
+          op: "injectCSS",
+          rules: [
+            {
+              selector: { classes: ["panel"] },
+              declarations: [
+                { property: "color", value: "#111" },
+                { property: "background-color", value: "#fff" },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+  });
+  expect(applied.ok).toBe(true);
+  await setBackstopsPaused(page, true);
+  await page.evaluate(() => {
+    const ghost = document.createElement("span");
+    ghost.className = "lift-ghost";
+    ghost.textContent = "WHITE ON WHITE";
+    ghost.style.cssText =
+      "display:block;margin-top:6px;font:14px/1.4 system-ui,sans-serif;color:#fff;padding:4px";
+    document.getElementById("spec-panel")?.append(ghost);
+  });
+  await showGhostReadout(page, ".lift-ghost", "BAD STATE: spec-caused white-on-white");
+  await setBackstopsPaused(page, false);
+  await page.waitForTimeout(80);
+  expect(await page.evaluate(() => Boolean(document.querySelector("[data-lift-css]")))).toBe(false);
+  await showRestoredReadout(page, "#spec-panel", "UNDONE spec-caused regression — panel readable again");
+  await clearBadState(page);
+  await pause(page, 800);
+});
+
+test("04-dropdown-keeps-fix", async ({ page }) => {
+  await page.goto("/checkout/?lift_variant=control&lift_bot=1");
+  await openCheckoutWithHover(page);
+  await showBanner(page, "W4 — color fix on a nav; opening a submenu must not undo it");
+  const applied = await page.evaluate(async () => {
+    const href = new URL("/runtime/runtime.js", location.origin).href;
+    const runtime = (await import(href)) as {
+      applyPatchSpec: (input: unknown) => { ok: boolean; error?: string };
+    };
+    const checkout = document.getElementById("checkout") || document.body;
+    const nav = document.createElement("div");
+    nav.id = "color-nav";
+    nav.className = "nav";
+    nav.style.cssText =
+      "position:relative;display:inline-block;padding:8px 14px;background:#fff;color:#111;font:700 18px/1.3 system-ui;border:1px solid #ccc";
+    nav.textContent = "Shop";
+    const buy = document.createElement("button");
+    buy.type = "button";
+    buy.id = "under-menu";
+    buy.textContent = "Buy";
+    buy.style.cssText = "display:block;margin-top:8px;padding:10px 18px;font:700 16px/1.2 system-ui";
+    checkout.append(nav, buy);
+    return runtime.applyPatchSpec({
+      id: "nav-color",
+      version: 0,
+      ops: [
+        {
+          op: "injectCSS",
+          rules: [
+            {
+              selector: { classes: ["nav"] },
+              declarations: [
+                { property: "color", value: "#111" },
+                { property: "background-color", value: "#fff" },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+  });
+  expect(applied.ok).toBe(true);
+  await setBackstopsPaused(page, true);
+  await page.evaluate(() => {
+    const menu = document.createElement("div");
+    menu.id = "nav-submenu";
+    menu.textContent = "Checkout";
+    menu.style.cssText =
+      "position:absolute;top:100%;left:0;width:240px;height:80px;background:#111;color:#fff;z-index:9;padding:12px;font:600 16px/1.3 system-ui";
+    document.getElementById("color-nav")?.append(menu);
+  });
+  await showBanner(page, "submenu open over Buy — color fix kept");
+  await setBackstopsPaused(page, false);
+  await page.waitForTimeout(80);
+  expect(await page.evaluate(() => Boolean(document.querySelector("[data-lift-css]")))).toBe(true);
+  await expect(page.locator("#nav-submenu")).toBeVisible();
+  await showBanner(page, "FIX KEPT — dropdown overlay was page-caused, not the spec");
+  await pause(page, 2000);
 });
 
 test("05-sticky-identity", async ({ page }) => {

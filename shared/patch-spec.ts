@@ -125,7 +125,6 @@ export interface PromoteToControlOp {
   op: "promoteToControl";
   selector: string;
   as: PromoteAs;
-  hasClickAffordance?: boolean;
 }
 
 export interface InsertHtmlOp {

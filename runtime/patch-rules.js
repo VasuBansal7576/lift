@@ -290,7 +290,7 @@ const OP_KEYS = {
   wrapLabel: new Set(["op", "selector", "text"]),
   makeFocusable: new Set(["op", "selector"]),
   bindEnterToClick: new Set(["op", "selector"]),
-  promoteToControl: new Set(["op", "selector", "as", "hasClickAffordance"]),
+  promoteToControl: new Set(["op", "selector", "as"]),
   insertHTML: new Set(["op", "selector", "position", "html", "mountId"]),
   toggleDisclosure: new Set(["op", "trigger", "panel"]),
 };
@@ -771,15 +771,10 @@ function parseOp(raw, index, doc) {
       if (typeof raw.as !== "string" || !PROMOTE_AS_SET.has(raw.as)) {
         return { error: `ops[${index}] as must be button|link` };
       }
-      if (raw.hasClickAffordance !== undefined && typeof raw.hasClickAffordance !== "boolean") {
-        return { error: `ops[${index}] hasClickAffordance must be a boolean` };
-      }
       if (selectorTargetsForbiddenHost(raw.selector)) {
         return { error: `ops[${index}] target is not allowlisted` };
       }
-      return raw.hasClickAffordance === undefined
-        ? { op, selector: raw.selector, as: raw.as }
-        : { op, selector: raw.selector, as: raw.as, hasClickAffordance: raw.hasClickAffordance };
+      return { op, selector: raw.selector, as: raw.as };
     }
     case "insertHTML": {
       if (!isNonEmptyString(raw.selector)) return { error: `ops[${index}] selector required` };

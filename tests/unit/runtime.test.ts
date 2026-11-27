@@ -9,7 +9,7 @@ import { applyPatchSpec, resetRuntimeGuards, validatePatchSpec } from "../../run
 const CHECKOUT_HTML = `
   <header>
     <div class="hover-nav">
-      <span class="hover-trigger" id="shop-trigger">Shop</span>
+      <span class="hover-trigger" id="shop-trigger" style="cursor:pointer">Shop</span>
       <div class="hover-menu" id="shop-menu"><a href="#checkout" id="checkout-link">Checkout</a></div>
     </div>
     <button type="button" id="cart-icon" class="icon-btn"></button>
@@ -39,7 +39,7 @@ const CHECKOUT_HTML = `
       <span class="visible-hint" id="terms-copy">I agree to the terms of sale and understand this order is final.</span>
       <input id="terms" type="checkbox">
     </p>
-    <div id="place-order" class="div-pay" data-barrier="div_button" style="color: red">💳</div>
+    <div id="place-order" class="div-pay" data-barrier="div_button" style="color: red; cursor: pointer">💳</div>
   </form>
 `;
 
@@ -450,7 +450,7 @@ describe("applyPatchSpec ops", () => {
       applyPatchSpec({
         id: "wrap-input",
         version: 0,
-        ops: [{ op: "promoteToControl", selector: "#wrap", as: "button", hasClickAffordance: true }],
+        ops: [{ op: "promoteToControl", selector: "#wrap", as: "button" }],
       }).ok,
     ).toBe(false);
     expect(document.getElementById("wrap")?.tagName).toBe("DIV");
@@ -469,7 +469,7 @@ describe("applyPatchSpec ops", () => {
   });
 
   it("does not forward keydown when bindEnterToClick is on the replacement", () => {
-    document.body.innerHTML = `<div id="pay">Pay</div>`;
+    document.body.innerHTML = `<div id="pay" style="cursor:pointer">Pay</div>`;
     let clicks = 0;
     let keys = 0;
     document.getElementById("pay")?.addEventListener("click", () => {
@@ -483,7 +483,7 @@ describe("applyPatchSpec ops", () => {
         id: "enter-once",
         version: 0,
         ops: [
-          { op: "promoteToControl", selector: "#pay", as: "button", hasClickAffordance: true },
+          { op: "promoteToControl", selector: "#pay", as: "button" },
         ],
       }).ok,
     ).toBe(true);
@@ -695,7 +695,7 @@ describe("applyPatchSpec ops", () => {
       applyPatchSpec({
         id: "rt-a",
         version: 0,
-        ops: [{ op: "promoteToControl", selector: "#wrap", as: "button", hasClickAffordance: true }],
+        ops: [{ op: "promoteToControl", selector: "#wrap", as: "button" }],
       }).ok,
     ).toBe(false);
     document.body.innerHTML = `<div id="wrap"><span contenteditable="true">x</span></div>`;
@@ -703,7 +703,7 @@ describe("applyPatchSpec ops", () => {
       applyPatchSpec({
         id: "rt-ce",
         version: 0,
-        ops: [{ op: "promoteToControl", selector: "#wrap", as: "button", hasClickAffordance: true }],
+        ops: [{ op: "promoteToControl", selector: "#wrap", as: "button" }],
       }).ok,
     ).toBe(false);
   });

@@ -24,6 +24,10 @@ const NAMES = [
   "04-covered-control",
   "04-reapply-guard",
   "04-cssom-insertRule",
+  "04-promote-no-double",
+  "04-guard-page-modal",
+  "04-guard-spec-caused",
+  "04-dropdown-keeps-fix",
   "05-sticky-identity",
 ];
 

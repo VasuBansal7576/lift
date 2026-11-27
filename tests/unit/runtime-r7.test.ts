@@ -53,7 +53,7 @@ describe("R7 E1 replaceTag hosts and submit buttons", () => {
       <label id="lab">L</label>
       <a id="link" href="#x">Go</a>
       <input id="in">
-      <span id="ok">Go</span>
+      <span id="ok" style="cursor:pointer">Go</span>
     `;
     for (const id of ["h", "list", "item", "lab", "link", "in"]) {
       expect(
@@ -69,7 +69,7 @@ describe("R7 E1 replaceTag hosts and submit buttons", () => {
       applyPatchSpec({
         id: "rt-ok",
         version: 0,
-        ops: [{ op: "promoteToControl", selector: "#ok", as: "button", hasClickAffordance: true }],
+        ops: [{ op: "promoteToControl", selector: "#ok", as: "button" }],
       }).ok,
     ).toBe(true);
     expect(document.getElementById("ok")?.tagName).toBe("SPAN");
@@ -77,13 +77,13 @@ describe("R7 E1 replaceTag hosts and submit buttons", () => {
   });
 
   it("promotes a div in place without swapping the node", () => {
-    document.body.innerHTML = `<div id="pay">Pay</div>`;
+    document.body.innerHTML = `<div id="pay" style="cursor:pointer">Pay</div>`;
     const original = document.getElementById("pay");
     expect(
       applyPatchSpec({
         id: "new-btn",
         version: 0,
-        ops: [{ op: "promoteToControl", selector: "#pay", as: "button", hasClickAffordance: true }],
+        ops: [{ op: "promoteToControl", selector: "#pay", as: "button" }],
       }).ok,
     ).toBe(true);
     expect(document.getElementById("pay")).toBe(original);
@@ -256,7 +256,7 @@ describe("R7 W8 interactive ancestor and structural roles", () => {
       applyPatchSpec({
         id: "nested",
         version: 0,
-        ops: [{ op: "promoteToControl", selector: "#inner", as: "button", hasClickAffordance: true }],
+        ops: [{ op: "promoteToControl", selector: "#inner", as: "button" }],
       }).ok,
     ).toBe(false);
     expect(document.getElementById("inner")?.tagName).toBe("SPAN");
@@ -288,8 +288,8 @@ describe("R7 I1 guard dedupe", () => {
 });
 
 describe("R7 W4 attribute and style mutations", () => {
-  it("undoes when a data-theme or body style change breaks contrast", async () => {
-    document.body.innerHTML = `<span class="slot">ok</span>`;
+  it("keeps the fix when a page theme change would otherwise look like a spec regression", async () => {
+    document.body.innerHTML = `<span class="slot" style="color:#111">ok</span>`;
     expect(
       applyPatchSpec({
         id: "theme",
@@ -304,10 +304,10 @@ describe("R7 W4 attribute and style mutations", () => {
         ],
       }).ok,
     ).toBe(true);
-    document.body.setAttribute("style", "background:#000");
+    document.body.setAttribute("style", "background-color:#000");
     document.documentElement.setAttribute("data-theme", "dark");
     await wait(80);
-    expect(document.querySelector("[data-lift-css]")).toBeNull();
+    expect(document.querySelector("[data-lift-css]")).not.toBeNull();
   });
 });
 

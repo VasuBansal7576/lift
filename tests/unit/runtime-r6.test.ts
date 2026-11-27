@@ -25,7 +25,7 @@ describe("R6 #1 replaceTag interactive hosts", () => {
       <a id="link" href="#x">Go</a>
       <input id="in">
       <div id="role" role="button">Go</div>
-      <span id="plain">Go</span>
+      <span id="plain" style="cursor:pointer">Go</span>
     `;
     expect(
       applyPatchSpec({
@@ -62,7 +62,7 @@ describe("R6 #1 replaceTag interactive hosts", () => {
       applyPatchSpec({
         id: "rt-plain",
         version: 0,
-        ops: [{ op: "promoteToControl", selector: "#plain", as: "button", hasClickAffordance: true }],
+        ops: [{ op: "promoteToControl", selector: "#plain", as: "button" }],
       }).ok,
     ).toBe(true);
     expect(document.getElementById("plain")?.tagName).toBe("SPAN");
@@ -277,6 +277,10 @@ describe("R6 #5 / S2(c,d) zero matches and MutationObserver", () => {
   });
 
   it("undoes the spec and records fail-open when late content breaks contrast", async () => {
+    document.head.insertAdjacentHTML(
+      "beforeend",
+      `<style>.slot { color: #fff; background-color: #111; }</style>`,
+    );
     document.body.innerHTML = `<div class="slot">ok</div>`;
     expect(
       applyPatchSpec({
@@ -392,7 +396,7 @@ describe("R6 #8 roles", () => {
 
 describe("R6 #9 replaceTag to button forces type=button", () => {
   it("sets type=button and rejects type in attributes", () => {
-    document.body.innerHTML = `<div id="pay">Pay</div>`;
+    document.body.innerHTML = `<div id="pay" style="cursor:pointer">Pay</div>`;
     expect(
       parsePatchSpec({
         id: "type-attr",
@@ -404,7 +408,7 @@ describe("R6 #9 replaceTag to button forces type=button", () => {
       applyPatchSpec({
         id: "to-btn",
         version: 0,
-        ops: [{ op: "promoteToControl", selector: "#pay", as: "button", hasClickAffordance: true }],
+        ops: [{ op: "promoteToControl", selector: "#pay", as: "button" }],
       }).ok,
     ).toBe(true);
     expect(document.getElementById("pay")?.getAttribute("role")).toBe("button");

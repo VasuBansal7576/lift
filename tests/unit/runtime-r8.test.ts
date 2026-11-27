@@ -19,11 +19,12 @@ function css(rules: object[]) {
 }
 
 describe("R8 E1 cumulative undos survive a noop re-apply", () => {
-  it("keeps the first apply's undos when the second apply is a noop, then undoes after .dark", async () => {
-    document.body.innerHTML = `
-      <style>.panel.dark { color: #fff; background: #fff; }</style>
-      <div id="panel" class="panel">Hello</div>
-    `;
+  it("keeps the first apply's undos when the second apply is a noop, then undoes a spec-caused ghost", async () => {
+    document.head.insertAdjacentHTML(
+      "beforeend",
+      `<style>.panel { color: #fff; background-color: #111; }</style>`,
+    );
+    document.body.innerHTML = `<div id="panel" class="panel">Hello</div>`;
     const spec = {
       id: "reapply-guard",
       version: 0,
@@ -42,7 +43,11 @@ describe("R8 E1 cumulative undos survive a noop re-apply", () => {
     expect(applyPatchSpec(spec).ok).toBe(true);
     expect(applyPatchSpec(spec).ok).toBe(true);
     expect(document.querySelector("[data-lift-css]")).not.toBeNull();
-    document.getElementById("panel")?.classList.add("dark");
+    const ghost = document.createElement("span");
+    ghost.className = "lift-ghost";
+    ghost.style.color = "#fff";
+    ghost.textContent = "hid";
+    document.getElementById("panel")?.append(ghost);
     await wait(80);
     expect(document.querySelector("[data-lift-css]")).toBeNull();
   });
@@ -50,6 +55,10 @@ describe("R8 E1 cumulative undos survive a noop re-apply", () => {
 
 describe("R8 E2 guard continues when the first selector vanished", () => {
   it("still checks a later rule after the first match is gone", async () => {
+    document.head.insertAdjacentHTML(
+      "beforeend",
+      `<style>.keep { color: #fff; background-color: #111; }</style>`,
+    );
     document.body.innerHTML = `<span id="gone">A</span><span class="keep">B</span>`;
     expect(
       applyPatchSpec({
@@ -77,10 +86,10 @@ describe("R8 E2 guard continues when the first selector vanished", () => {
     ).toBe(true);
     document.getElementById("gone")?.remove();
     const keep = document.querySelector(".keep");
-    if (keep instanceof HTMLElement) {
-      keep.style.color = "#fff";
-      keep.style.backgroundColor = "#fff";
-    }
+    const ghost = document.createElement("span");
+    ghost.style.color = "#fff";
+    ghost.textContent = "hid";
+    keep?.append(ghost);
     await wait(80);
     expect(document.querySelector("[data-lift-css]")).toBeNull();
   });
@@ -120,7 +129,7 @@ describe("R8 W2 CSSOM and media watch", () => {
   it("keeps the CSSOM watch after insertRule/resize so a later contrast break still undoes", async () => {
     document.head.insertAdjacentHTML(
       "beforeend",
-      `<style>.slot.dark { color: #fff; background: #fff; }</style>`,
+      `<style>.slot { color: #fff; background-color: #111; }</style>`,
     );
     document.body.innerHTML = `<span class="slot">ok</span>`;
     expect(
@@ -148,7 +157,10 @@ describe("R8 W2 CSSOM and media watch", () => {
     document.dispatchEvent(new Event("visibilitychange"));
     await wait(80);
     expect(document.querySelector("[data-lift-css]")).not.toBeNull();
-    document.querySelector(".slot")?.classList.add("dark");
+    const ghost = document.createElement("span");
+    ghost.style.color = "#fff";
+    ghost.textContent = "hid";
+    document.querySelector(".slot")?.append(ghost);
     await wait(80);
     expect(document.querySelector("[data-lift-css]")).toBeNull();
   });
@@ -237,7 +249,7 @@ describe("R8 promoteToControl hosts", () => {
       applyPatchSpec({
         id: "h",
         version: 0,
-        ops: [{ op: "promoteToControl", selector: "#h", as: "button", hasClickAffordance: true }],
+        ops: [{ op: "promoteToControl", selector: "#h", as: "button" }],
       }).ok,
     ).toBe(false);
     expect(
@@ -251,7 +263,7 @@ describe("R8 promoteToControl hosts", () => {
       applyPatchSpec({
         id: "nested",
         version: 0,
-        ops: [{ op: "promoteToControl", selector: "#nested", as: "button", hasClickAffordance: true }],
+        ops: [{ op: "promoteToControl", selector: "#nested", as: "button" }],
       }).ok,
     ).toBe(false);
     expect(
@@ -286,8 +298,9 @@ describe("R8 promoteToControl hosts", () => {
       }).ok,
     ).toBe(true);
     host?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    host?.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
-    host?.dispatchEvent(new KeyboardEvent("keydown", { key: " ", bubbles: true }));
+    host?.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+    host?.dispatchEvent(new KeyboardEvent("keydown", { key: " ", bubbles: true, cancelable: true }));
+    host?.dispatchEvent(new KeyboardEvent("keyup", { key: " ", bubbles: true, cancelable: true }));
     expect(clicks).toBe(3);
     expect(host?.tagName).toBe("DIV");
   });

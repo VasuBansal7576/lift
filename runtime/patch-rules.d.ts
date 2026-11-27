@@ -35,6 +35,7 @@ export function isNativeInteractiveHost(el: Element): boolean;
 export function isFormControl(el: Element): boolean;
 export function replaceTagHostAllowed(el: Element): boolean;
 export function promoteHostAllowed(el: Element): boolean;
+export function isContentEditableHost(el: Element): boolean;
 export function hasBlockPromoteChild(el: Element): boolean;
 export function elementOrAncestorInteractive(el: Element): boolean;
 export function roleAllowedOnElement(el: Element, value: string): boolean;

@@ -25,8 +25,12 @@ That runs `tests/evidence/phase-a.spec.ts` against the real checkout page on `ht
 | `04-promote-keeps-handlers.webm` + `.trace.zip` | A `div` is promoted in place. The original click handler fires on mouse and keyboard (an accordion opens). The real checkout form still submits once and shows the order confirmation. No stray Pay now control. |
 | `04-focus-within-color.webm` + `.trace.zip` | Typed `focus-within { color }` is rejected. State rules may set only `outline-*` and `text-decoration-*`. |
 | `04-covered-control.webm` + `.trace.zip` | A fixed cookie bar grown with font-size/padding/min-height/line-height **visibly overlaps** Buy (Buy outlined in red) during **BAD STATE**, then the spec is undone so Buy is hittable again. |
-| `04-reapply-guard.webm` + `.trace.zip` | The same spec id is applied twice (second apply is a noop). Adding `.dark` still undoes the injected style — cumulative undos are kept. |
-| `04-cssom-insertRule.webm` + `.trace.zip` | A legal injectCSS spec is applied, then `CSSStyleSheet.insertRule` paints white-on-white. The guard sees the CSSOM change and undoes. |
+| `04-reapply-guard.webm` + `.trace.zip` | The same spec id is applied twice (second apply is a noop). A spec-caused white-on-white descendant is selected with a contrast readout against the **effective** (ancestor-composited) background. The guard undoes; Theme panel is readable again. |
+| `04-cssom-insertRule.webm` + `.trace.zip` | A legal injectCSS spec is applied, then `CSSStyleSheet.insertRule` paints white-on-white. The guard sees the CSSOM change and undoes. The restored readout uses the effective background (≈17:1 on white), not `rgba(0,0,0,0)`. |
+| `04-promote-no-double.webm` + `.trace.zip` | A host with its own Enter `preventDefault()` + `click()` handler is promoted. The on-screen counter shows **activations: 1**. |
+| `04-guard-page-modal.webm` + `.trace.zip` | A contrast fix is applied, then a page modal appears. Banner: **page-caused, fix kept**. The injected CSS stays. |
+| `04-guard-spec-caused.webm` + `.trace.zip` | A spec-caused white-on-white descendant still undoes the injected CSS. |
+| `04-dropdown-keeps-fix.webm` + `.trace.zip` | A color-only fix on a nav whose submenu opens over a control keeps the fix. |
 | `05-sticky-identity.webm` + `.trace.zip` | The page itself renders `document.cookie` (including `lift_vid=...`) plus `data-variant` / `#flag-status` before and after reload. The cookie string is read from the page, not injected by the runner. **Variant stability is only meaningful with a live Flagsmith environment key.** When that key is present and Flagsmith assigns a variant, it stays the same across reload; without it the spec falls back to `?lift_variant=control`. |
 
 The on-page banner is injected only by this evidence spec (`#lift-evidence-banner`). The cookie readout (`#lift-cookie-readout`) is also evidence-only. Neither is part of the product runtime.

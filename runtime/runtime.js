@@ -30,6 +30,7 @@ import {
   mountKeyFor,
   parsePatchSpec,
   hasBlockPromoteChild,
+  isContentEditableHost,
   promoteHostAllowed,
   roleAllowedOnElement,
   sanitizeInsertHtml,
@@ -49,6 +50,25 @@ export {
 export function validatePatchSpec(input) {
   return parsePatchSpec(input);
 }
+
+const clickListenerHosts = new WeakSet();
+(function watchClickListeners() {
+  const patch = (proto) => {
+    if (!proto || typeof proto.addEventListener !== "function") return;
+    const native = proto.addEventListener;
+    if (native.__liftClickWatch) return;
+    function addEventListenerLifted(type, listener, options) {
+      if (type === "click" && this && this.nodeType === 1) clickListenerHosts.add(this);
+      return native.call(this, type, listener, options);
+    }
+    addEventListenerLifted.__liftClickWatch = true;
+    proto.addEventListener = addEventListenerLifted;
+  };
+  if (typeof EventTarget !== "undefined") patch(EventTarget.prototype);
+  if (typeof Node !== "undefined") patch(Node.prototype);
+  if (typeof Element !== "undefined") patch(Element.prototype);
+  if (typeof HTMLElement !== "undefined") patch(HTMLElement.prototype);
+})();
 
 function docOf(root) {
   return root.nodeType === 9 ? root : root.ownerDocument;
@@ -273,13 +293,43 @@ function colorValueFromRule(rule, property) {
 }
 
 function hostOrAncestorIsOutOfFlow(el) {
+  return Boolean(outOfFlowAncestor(el));
+}
+
+function outOfFlowAncestor(el) {
   let node = el;
   while (node && node.nodeType === 1) {
     const pos = String(getComputedStyle(node).position || "").toLowerCase();
-    if (pos === "fixed" || pos === "sticky" || pos === "absolute") return true;
+    if (pos === "fixed" || pos === "sticky" || pos === "absolute") return node;
     node = node.parentElement;
   }
-  return false;
+  return null;
+}
+
+function isInlineControl(el) {
+  const tag = localTagName(el);
+  if (tag === "a" || tag === "button") return true;
+  const display = String(getComputedStyle(el).display || "").toLowerCase();
+  return display === "inline" || display === "inline-block" || display === "inline-flex";
+}
+
+function isHitTargetOnlyDecls(decls) {
+  let hit = false;
+  for (const d of decls || []) {
+    if (!SIZE_GROWING_PROPS.has(d.property)) continue;
+    if (d.property !== "min-height" && d.property !== "min-width") return false;
+    hit = true;
+  }
+  return hit;
+}
+
+function ancestorGrewPast(el, beforeRects, px) {
+  const anc = outOfFlowAncestor(el);
+  if (!anc) return false;
+  const before = beforeRects && beforeRects.get(anc);
+  if (!before) return true;
+  const after = cachedRect(anc);
+  return Math.abs(after.width - before.width) > px || Math.abs(after.height - before.height) > px;
 }
 
 function decorationIncludesLineThrough(el) {
@@ -306,10 +356,9 @@ function pxFromDeclOrStyle(decls, property, styleValue) {
   return Number.isFinite(n) ? n : 0;
 }
 
-function outlineBudgetExceeded(decls, el) {
-  const style = el ? getComputedStyle(el) : null;
-  const width = pxFromDeclOrStyle(decls, "outline-width", style?.outlineWidth);
-  const offset = pxFromDeclOrStyle(decls, "outline-offset", style?.outlineOffset);
+function outlineBudgetExceeded(decls) {
+  const width = pxFromDeclOrStyle(decls, "outline-width", "0");
+  const offset = pxFromDeclOrStyle(decls, "outline-offset", "0");
   return width + offset > 4;
 }
 
@@ -324,7 +373,7 @@ function hostHasFixedHeightAndHiddenOverflow(el) {
   return Number.isFinite(px) && px > 0;
 }
 
-function cssMatchesViolateHostsOrContrast(root, op, mode) {
+function cssMatchesViolateHostsOrContrast(root, op, mode, beforeRects) {
   const scope = "querySelectorAll" in root ? root : docOf(root);
   const guard = mode === "guard";
   for (const rule of op.rules || []) {
@@ -338,12 +387,16 @@ function cssMatchesViolateHostsOrContrast(root, op, mode) {
       if (guard) continue;
       return "selector matched nothing";
     }
-    if (matches.length > CSS_MATCH_LIMIT) return "too many matches";
+    if (matches.length > CSS_MATCH_LIMIT) {
+      if (guard) continue;
+      return "too many matches";
+    }
     const decls = rule.declarations || [];
     const changesPaint = decls.some(
       (d) => d.property === "color" || d.property === "background-color",
     );
     const grows = decls.some((d) => SIZE_GROWING_PROPS.has(d.property));
+    const hitOnly = isHitTargetOnlyDecls(decls);
     const setsUnderline = decls.some(
       (d) => d.property === "text-decoration-line" && String(d.value) === "underline",
     );
@@ -354,16 +407,26 @@ function cssMatchesViolateHostsOrContrast(root, op, mode) {
       if (elementIsPageContainer(el) || elementForbiddenAsTextOrTagHost(el)) {
         return "target is not allowlisted";
       }
-      if (grows && (hostOrAncestorIsOutOfFlow(el) || hostHasFixedHeightAndHiddenOverflow(el))) {
+      if (grows && hostHasFixedHeightAndHiddenOverflow(el)) {
         return "size change is not allowlisted";
+      }
+      if (grows && hostOrAncestorIsOutOfFlow(el)) {
+        const allowHit =
+          hitOnly &&
+          isInlineControl(el) &&
+          (guard || !beforeRects || !ancestorGrewPast(el, beforeRects, 8));
+        if (!allowHit) return "size change is not allowlisted";
       }
       if (setsUnderline && decorationIncludesLineThrough(el)) {
         return "text-decoration is not allowlisted";
       }
-      if (outlineBudgetExceeded(decls, el)) return "outline is not allowlisted";
+      if (outlineBudgetExceeded(decls)) return "outline is not allowlisted";
       if (changesPaint && backgroundUnknown(el)) return "background is not allowlisted";
       const nodes = [el, ...el.querySelectorAll("*")];
-      if (nodes.length > TEXT_DESCENDANT_CAP) return "too many descendants";
+      if (nodes.length > TEXT_DESCENDANT_CAP) {
+        if (guard) continue;
+        return "too many descendants";
+      }
       for (const node of nodes) {
         if (node !== el && !isTextBearing(node) && !isFormControl(node)) continue;
         const err = checkNodeContrast(node);
@@ -383,16 +446,35 @@ function cssMatchesViolateHostsOrContrast(root, op, mode) {
   return null;
 }
 
+function snapshotOutOfFlowRects(root, op) {
+  const map = new Map();
+  const scope = "querySelectorAll" in root ? root : docOf(root);
+  for (const rule of op.rules || []) {
+    let matches;
+    try {
+      matches = scope.querySelectorAll(serializeSelectorForQuery(rule.selector));
+    } catch {
+      continue;
+    }
+    for (const el of matches) {
+      const anc = outOfFlowAncestor(el);
+      if (anc && !map.has(anc)) map.set(anc, anc.getBoundingClientRect());
+    }
+  }
+  return map;
+}
+
 function applyInjectCss(root, op, index) {
   const doc = docOf(root);
   const id = cssKey(op);
   const existing = doc.getElementById(id);
+  const beforeRects = snapshotOutOfFlowRects(root, op);
   let undo;
   if (existing && localTagName(existing) === "style") {
     const prev = existing.textContent ?? "";
     if (prev === op.css) {
       if (!backstopsPaused) {
-        const hostErr = cssMatchesViolateHostsOrContrast(root, op, "apply");
+        const hostErr = cssMatchesViolateHostsOrContrast(root, op, "apply", beforeRects);
         if (hostErr) return { status: "miss", error: `ops[${index}] ${hostErr}` };
       }
       return noop();
@@ -413,7 +495,7 @@ function applyInjectCss(root, op, index) {
     };
   }
   if (!backstopsPaused) {
-    const hostErr = cssMatchesViolateHostsOrContrast(root, op, "apply");
+    const hostErr = cssMatchesViolateHostsOrContrast(root, op, "apply", beforeRects);
     if (hostErr) {
       undo();
       return { status: "miss", error: `ops[${index}] ${hostErr}` };
@@ -508,17 +590,10 @@ function applyBindEnterToClick(root, op, index) {
     return { status: "miss", error: `ops[${index}] target is not allowlisted` };
   }
   if (el.getAttribute("data-lift-enter") === "1") return noop();
-  const onKey = (event) => {
-    if (event.target !== el) return;
-    if (event.key === "Enter") {
-      event.preventDefault();
-      el.click();
-    }
-  };
-  el.addEventListener("keydown", onKey);
+  const stop = installActivationBridge(el, { space: false });
   el.setAttribute("data-lift-enter", "1");
   return applied(() => {
-    el.removeEventListener("keydown", onKey);
+    stop();
     el.removeAttribute("data-lift-enter");
   });
 }
@@ -590,11 +665,82 @@ function forwardUiEvents(from, to) {
   };
 }
 
-function hostHasClickAffordance(el, op) {
-  if (op && op.hasClickAffordance === true) return true;
+function isActivationKey(event, space) {
+  if (event.key === "Enter") return "enter";
+  if (space && (event.key === " " || event.key === "Spacebar")) return "space";
+  return null;
+}
+
+function installActivationBridge(el, opts) {
+  const space = Boolean(opts && opts.space);
+  let clickDuringKey = false;
+  let spaceArmed = false;
+  const onClickArm = () => {
+    clickDuringKey = true;
+  };
+  const onKeyDownCapture = (event) => {
+    if (event.target !== el) return;
+    const kind = isActivationKey(event, space);
+    if (!kind) return;
+    if (event.repeat) return;
+    clickDuringKey = false;
+    el.removeEventListener("click", onClickArm, true);
+    el.addEventListener("click", onClickArm, { capture: true, once: true });
+    if (kind === "space") spaceArmed = true;
+  };
+  const onKeyDown = (event) => {
+    if (event.target !== el) return;
+    const kind = isActivationKey(event, space);
+    if (!kind) return;
+    if (event.repeat) return;
+    if (kind === "space") {
+      event.preventDefault();
+      return;
+    }
+    if (event.defaultPrevented || clickDuringKey) return;
+    event.preventDefault();
+    el.click();
+    event.stopPropagation();
+  };
+  const onKeyUp = (event) => {
+    if (event.target !== el) return;
+    if (!space) return;
+    if (event.key !== " " && event.key !== "Spacebar") return;
+    if (!spaceArmed) return;
+    spaceArmed = false;
+    if (event.repeat) return;
+    if (event.defaultPrevented || clickDuringKey) return;
+    event.preventDefault();
+    el.click();
+    event.stopPropagation();
+  };
+  el.addEventListener("keydown", onKeyDownCapture, true);
+  el.addEventListener("keydown", onKeyDown);
+  el.addEventListener("keyup", onKeyUp);
+  return () => {
+    el.removeEventListener("keydown", onKeyDownCapture, true);
+    el.removeEventListener("keydown", onKeyDown);
+    el.removeEventListener("keyup", onKeyUp);
+    el.removeEventListener("click", onClickArm, true);
+  };
+}
+
+function hostHasClickAffordance(el) {
   if (el.hasAttribute && el.hasAttribute("onclick")) return true;
+  if (typeof el.onclick === "function") return true;
+  if (clickListenerHosts.has(el)) return true;
   const cursor = String(getComputedStyle(el).cursor || "").toLowerCase();
   return cursor === "pointer";
+}
+
+function inHiddenOrInertSubtree(el) {
+  let node = el;
+  while (node && node.nodeType === 1) {
+    if (isAriaHiddenChain(node)) return true;
+    if (node.inert === true || (node.hasAttribute && node.hasAttribute("inert"))) return true;
+    node = node.parentElement;
+  }
+  return false;
 }
 
 function applyPromoteToControl(root, op, index) {
@@ -617,8 +763,14 @@ function applyPromoteToControl(root, op, index) {
   if (hasBlockPromoteChild(el)) {
     return { status: "miss", error: `ops[${index}] target is not allowlisted` };
   }
-  if (!hostHasClickAffordance(el, op)) {
+  if (inHiddenOrInertSubtree(el) || isContentEditableHost(el)) {
+    return { status: "miss", error: `ops[${index}] target is not allowlisted` };
+  }
+  if (!hostHasClickAffordance(el)) {
     return { status: "miss", error: `ops[${index}] click affordance required` };
+  }
+  if (!accessibleName(el)) {
+    return { status: "miss", error: `ops[${index}] accessible name required` };
   }
   const role = op.as === "link" ? "link" : "button";
   if (el.getAttribute("data-lift-promoted") === role) return noop();
@@ -629,38 +781,24 @@ function applyPromoteToControl(root, op, index) {
   const hadMark = el.hasAttribute("data-lift-promoted");
   const prevMark = el.getAttribute("data-lift-promoted");
   el.setAttribute("role", role);
-  if (!hadTab) el.tabIndex = 0;
+  el.tabIndex = 0;
   el.setAttribute("data-lift-promoted", role);
-  const onKey = (event) => {
-    if (event.target !== el) return;
-    const isEnter = event.key === "Enter";
-    const isSpace = event.key === " " || event.key === "Spacebar";
-    if (!isEnter && !(role === "button" && isSpace)) return;
-    event.preventDefault();
-    event.stopPropagation();
-    el.click();
+  const stop = installActivationBridge(el, { space: role === "button" });
+  const restore = () => {
+    stop();
+    if (!hadMark) el.removeAttribute("data-lift-promoted");
+    else el.setAttribute("data-lift-promoted", prevMark ?? "");
+    if (!hadTab) el.removeAttribute("tabindex");
+    else el.setAttribute("tabindex", prevTab ?? "0");
+    if (!hadRole) el.removeAttribute("role");
+    else el.setAttribute("role", prevRole ?? "");
   };
-  el.addEventListener("keydown", onKey);
   const contrastErr = checkNodeContrast(el);
   if (contrastErr) {
-    el.removeEventListener("keydown", onKey);
-    if (!hadMark) el.removeAttribute("data-lift-promoted");
-    else el.setAttribute("data-lift-promoted", prevMark ?? "");
-    if (!hadTab) el.removeAttribute("tabindex");
-    else el.setAttribute("tabindex", prevTab ?? "0");
-    if (!hadRole) el.removeAttribute("role");
-    else el.setAttribute("role", prevRole ?? "");
+    restore();
     return { status: "miss", error: `ops[${index}] ${contrastErr}` };
   }
-  return applied(() => {
-    el.removeEventListener("keydown", onKey);
-    if (!hadMark) el.removeAttribute("data-lift-promoted");
-    else el.setAttribute("data-lift-promoted", prevMark ?? "");
-    if (!hadTab) el.removeAttribute("tabindex");
-    else el.setAttribute("tabindex", prevTab ?? "0");
-    if (!hadRole) el.removeAttribute("role");
-    else el.setAttribute("role", prevRole ?? "");
-  });
+  return applied(restore);
 }
 
 function findMount(root, mountId) {
@@ -786,13 +924,24 @@ function applyOp(root, op, index) {
 }
 
 function undoAll(undos) {
-  for (const undo of undos.reverse()) {
+  for (let i = undos.length - 1; i >= 0; i -= 1) {
     try {
-      undo();
+      undos[i]();
     } catch {
       /* fail-open: best-effort undo */
     }
   }
+}
+
+function specStyleElements(root, spec) {
+  const doc = docOf(root);
+  const out = [];
+  for (const op of spec.ops || []) {
+    if (op.op !== "injectCSS") continue;
+    const el = doc.getElementById(cssKey(op));
+    if (el) out.push(el);
+  }
+  return out;
 }
 
 function liveSuccessor(el) {
@@ -1038,6 +1187,29 @@ function snapshotA11y(el) {
   };
 }
 
+let rectCache = null;
+
+function cachedRect(el) {
+  if (!el) return { left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 };
+  if (!rectCache) return el.getBoundingClientRect();
+  let box = rectCache.get(el);
+  if (!box) {
+    box = el.getBoundingClientRect();
+    rectCache.set(el, box);
+  }
+  return box;
+}
+
+function withRectCache(fn) {
+  const prev = rectCache;
+  rectCache = new WeakMap();
+  try {
+    return fn();
+  } finally {
+    rectCache = prev;
+  }
+}
+
 function isPositionedOverlay(el) {
   const pos = String(getComputedStyle(el).position || "").toLowerCase();
   return pos === "fixed" || pos === "sticky" || pos === "absolute";
@@ -1084,42 +1256,46 @@ function rectIntersection(a, b) {
   return { left, top, right, bottom, width, height };
 }
 
-function elementsFromPointAt(doc, x, y) {
-  if (!doc || typeof doc.elementsFromPoint !== "function") return [];
-  const view = doc.defaultView;
+function pointInViewport(doc, x, y) {
+  const view = doc && doc.defaultView;
   const vw = view ? view.innerWidth || 0 : 0;
   const vh = view ? view.innerHeight || 0 : 0;
+  if (!vw && !vh) return true;
+  return x >= 0 && y >= 0 && x <= vw && y <= vh;
+}
+
+function elementsFromPointAt(doc, x, y) {
+  if (!doc || typeof doc.elementsFromPoint !== "function") return [];
+  if (!pointInViewport(doc, x, y)) return [];
   try {
-    if (vw > 0 && vh > 0 && x >= 0 && y >= 0 && x <= vw && y <= vh) {
-      return [...doc.elementsFromPoint(x, y)];
-    }
-    if (!view || typeof view.scrollTo !== "function") return [];
-    const prevX = view.scrollX || 0;
-    const prevY = view.scrollY || 0;
-    view.scrollTo(prevX + x - vw / 2, prevY + y - vh / 2);
-    const adjX = x - ((view.scrollX || 0) - prevX);
-    const adjY = y - ((view.scrollY || 0) - prevY);
-    const hits = [...doc.elementsFromPoint(adjX, adjY)];
-    view.scrollTo(prevX, prevY);
-    return hits;
+    return [...doc.elementsFromPoint(x, y)];
   } catch {
     return [];
   }
 }
 
+function stacksAbove(overlay, control) {
+  const os = getComputedStyle(overlay);
+  const cs = getComputedStyle(control);
+  const oz = Number.parseFloat(os.zIndex);
+  const cz = Number.parseFloat(cs.zIndex);
+  if (Number.isFinite(oz) && Number.isFinite(cz) && oz !== cz) return oz > cz;
+  const oPos = String(os.position || "") !== "static";
+  const cPos = String(cs.position || "") !== "static";
+  if (oPos !== cPos) return oPos;
+  if (typeof overlay.compareDocumentPosition === "function") {
+    return Boolean(overlay.compareDocumentPosition(control) & Node.DOCUMENT_POSITION_FOLLOWING);
+  }
+  return false;
+}
+
 function overlayPaintsAbove(overlay, control, inter) {
   const doc = control.ownerDocument;
-  const hits = elementsFromPointAt(
-    doc,
-    inter.left + inter.width / 2,
-    inter.top + inter.height / 2,
-  );
-  if (hits.length === 0) {
-    const oz = Number.parseFloat(getComputedStyle(overlay).zIndex);
-    const cz = Number.parseFloat(getComputedStyle(control).zIndex);
-    if (Number.isFinite(oz) && Number.isFinite(cz)) return oz > cz;
-    return false;
-  }
+  const x = inter.left + inter.width / 2;
+  const y = inter.top + inter.height / 2;
+  if (!pointInViewport(doc, x, y)) return stacksAbove(overlay, control);
+  const hits = elementsFromPointAt(doc, x, y);
+  if (hits.length === 0) return stacksAbove(overlay, control);
   for (const hit of hits) {
     if (hit === overlay || (overlay.contains && overlay.contains(hit))) return true;
     if (hit === control || (control.contains && control.contains(hit))) return false;
@@ -1128,7 +1304,7 @@ function overlayPaintsAbove(overlay, control, inter) {
 }
 
 function coverageHitsFor(control, overlays) {
-  const crect = control.getBoundingClientRect();
+  const crect = cachedRect(control);
   const area = crect.width * crect.height;
   if (area <= 0) return [];
   const hits = [];
@@ -1136,7 +1312,7 @@ function coverageHitsFor(control, overlays) {
     if (overlay === control) continue;
     if (control.contains && control.contains(overlay)) continue;
     if (overlay.contains && overlay.contains(control)) continue;
-    const inter = rectIntersection(crect, overlay.getBoundingClientRect());
+    const inter = rectIntersection(crect, cachedRect(overlay));
     if (!inter) continue;
     if (inter.width * inter.height / area < 0.25) continue;
     if (!overlayPaintsAbove(overlay, control, inter)) continue;
@@ -1145,9 +1321,31 @@ function coverageHitsFor(control, overlays) {
   return hits;
 }
 
-function overlayCoverageViolation(root, spec, snapshots, extraFocusables) {
+function specGrowsBox(spec) {
+  for (const op of spec.ops || []) {
+    if (op.op !== "injectCSS") continue;
+    for (const rule of op.rules || []) {
+      for (const d of rule.declarations || []) {
+        if (SIZE_GROWING_PROPS.has(d.property)) return true;
+      }
+    }
+  }
+  return false;
+}
+
+function overlayIsRendered(el) {
+  if (!el || !el.isConnected) return false;
+  const style = getComputedStyle(el);
+  if (style.display === "none" || style.visibility === "hidden") return false;
+  const box = cachedRect(el);
+  return box.width > 0 && box.height > 0;
+}
+
+function overlayCoverageViolation(root, spec, snapshots, extraFocusables, mode) {
+  if (!specGrowsBox(spec)) return null;
   const overlays = collectOverlayElements(root, spec);
   if (overlays.length === 0) return null;
+  const renderedAtApply = snapshots.renderedOverlays;
   const items = [];
   const seen = new Set();
   for (const snap of snapshots) {
@@ -1161,16 +1359,20 @@ function overlayCoverageViolation(root, spec, snapshots, extraFocusables) {
     seen.add(el);
     items.push({ el, before: [] });
   }
-  for (const el of collectFocusables(root)) {
-    if (!el || seen.has(el) || !isFocusableSnap(el)) continue;
-    seen.add(el);
-    items.push({ el, before: [] });
+  if (mode !== "guard") {
+    for (const el of collectFocusables(root)) {
+      if (!el || seen.has(el) || !isFocusableSnap(el)) continue;
+      seen.add(el);
+      items.push({ el, before: [] });
+    }
   }
   for (const item of items) {
     const after = coverageHitsFor(item.el, overlays);
     const beforeSet = new Set(item.before);
     for (const overlay of after) {
-      if (!beforeSet.has(overlay)) return "covered control";
+      if (beforeSet.has(overlay)) continue;
+      if (mode === "guard" && renderedAtApply && !renderedAtApply.has(overlay)) continue;
+      return "covered control";
     }
   }
   return null;
@@ -1259,9 +1461,7 @@ function collectWatchElements(root, spec) {
         }
         let anc = el.parentElement;
         while (anc) {
-          for (const child of anc.children || []) {
-            if (isInteractiveElement(child) || isFocusableSnap(child)) watched.add(child);
-          }
+          if (shouldWatch(anc)) watched.add(anc);
           if (watched.size > WATCH_NODE_CAP) {
             return { error: "too many watched nodes" };
           }
@@ -1270,7 +1470,6 @@ function collectWatchElements(root, spec) {
       }
     }
   }
-  for (const el of collectFocusables(scope)) addWatched(watched, el);
   if (watched.size > WATCH_NODE_CAP) return { error: "too many watched nodes" };
   return { elements: [...watched], matches };
 }
@@ -1328,6 +1527,11 @@ function monotonicityViolation(root, snapshots) {
 
 function attachOverlayHits(root, spec, snapshots) {
   const overlays = collectOverlayElements(root, spec);
+  const rendered = new Set();
+  for (const overlay of overlays) {
+    if (overlayIsRendered(overlay)) rendered.add(overlay);
+  }
+  snapshots.renderedOverlays = rendered;
   if (overlays.length === 0) return snapshots;
   for (const snap of snapshots) {
     if (!snap.focusable) continue;
@@ -1481,7 +1685,7 @@ function recordsTouchSnapshots(records, snapshots) {
       }
     }
   }
-  if (related.size === 0) return snapshots;
+  if (related.size === 0) return [];
   return snapshots.filter((snap) => {
     const live = liveSuccessor(snap.el) || (snap.el.isConnected ? snap.el : null);
     if (!live) return true;
@@ -1490,13 +1694,113 @@ function recordsTouchSnapshots(records, snapshots) {
 }
 
 function runGuardCheck(root, spec, snapshots, records) {
-  const contrastErr = specContrastError(root, spec, "guard");
-  if (contrastErr) return contrastErr;
-  const extra = addedFocusablesFromRecords(records);
-  const coverErr = overlayCoverageViolation(root, spec, snapshots, extra);
-  if (coverErr) return coverErr;
-  const subset = recordsTouchSnapshots(records, snapshots);
-  return monotonicityViolation(root, subset);
+  return withRectCache(() => {
+    const contrastErr = specContrastError(root, spec, "guard");
+    if (contrastErr) return contrastErr;
+    const extra = addedFocusablesFromRecords(records);
+    const coverErr = overlayCoverageViolation(root, spec, snapshots, extra, "guard");
+    if (coverErr) return coverErr;
+    const subset = recordsTouchSnapshots(records, snapshots);
+    return monotonicityViolation(root, subset);
+  });
+}
+
+function isCapacityGuardError(err) {
+  return (
+    err === "too many matches" ||
+    err === "too many descendants" ||
+    err === "too many watched nodes"
+  );
+}
+
+function isContrastPredicate(err) {
+  return (
+    err === "contrast is not allowlisted" ||
+    err === "background is not allowlisted" ||
+    err === "target is not allowlisted" ||
+    err === "size change is not allowlisted" ||
+    err === "text-decoration is not allowlisted" ||
+    err === "outline is not allowlisted"
+  );
+}
+
+function recheckGuardPredicate(root, spec, snapshots, records, err) {
+  return withRectCache(() => {
+    if (err === "covered control") {
+      const extra = addedFocusablesFromRecords(records);
+      return overlayCoverageViolation(root, spec, snapshots, extra, "guard");
+    }
+    if (isContrastPredicate(err)) return specContrastError(root, spec, "guard");
+    const subset = recordsTouchSnapshots(records, snapshots);
+    return monotonicityViolation(root, subset);
+  });
+}
+
+function sheetRuleText(el) {
+  try {
+    const rules = el.sheet && el.sheet.cssRules;
+    if (!rules || rules.length === 0) return el.textContent ?? "";
+    return [...rules].map((rule) => rule.cssText).join("\n");
+  } catch {
+    return el.textContent ?? "";
+  }
+}
+
+function rebaselineSnapshots(root, spec, snapshots) {
+  for (const snap of snapshots) {
+    const live = liveSuccessor(snap.el) || (snap.el.isConnected ? snap.el : null);
+    if (!live) {
+      snap.focusable = false;
+      snap.visible = false;
+      snap.hitOk = false;
+      continue;
+    }
+    const next = snapshotA11y(live);
+    Object.assign(snap, next);
+  }
+  attachOverlayHits(root, spec, snapshots);
+}
+
+function attributeGuardViolation(root, spec, snapshots, records, undos, err) {
+  if (isCapacityGuardError(err)) {
+    rebaselineSnapshots(root, spec, snapshots);
+    return "page";
+  }
+  const sheets = specStyleElements(root, spec);
+  const parked = sheets.map((el) => ({
+    el,
+    disabled: el.disabled,
+    media: el.getAttribute("media"),
+    text: sheetRuleText(el),
+  }));
+  for (const { el } of parked) {
+    el.disabled = true;
+    el.setAttribute("media", "not all");
+    el.textContent = "";
+  }
+  let persists = false;
+  try {
+    const doc = docOf(root);
+    if (doc && doc.body) void doc.body.offsetHeight;
+    persists = Boolean(recheckGuardPredicate(root, spec, snapshots, records, err));
+  } catch {
+    persists = true;
+  } finally {
+    for (const { el, disabled, media, text } of parked) {
+      el.textContent = text;
+      el.disabled = disabled;
+      if (media == null) el.removeAttribute("media");
+      else el.setAttribute("media", media);
+    }
+    const doc = docOf(root);
+    if (doc && doc.body) void doc.body.offsetHeight;
+  }
+  if (persists) {
+    rebaselineSnapshots(root, spec, snapshots);
+    return "page";
+  }
+  undoAll(undos);
+  return "spec";
 }
 
 function observeOptions() {
@@ -1527,7 +1831,11 @@ function installMutationGuard(root, spec, snapshots, undos) {
     }
     const err = runGuardCheck(root, spec, snapshots, records);
     if (err) {
-      undoAll(undos);
+      const cause = attributeGuardViolation(root, spec, snapshots, records, undos, err);
+      if (cause === "page") {
+        startObserving();
+        return;
+      }
       recordFailOpen(err, spec.id);
       stop();
       return;
@@ -1624,7 +1932,7 @@ function finishApply(scope, spec, snapshots, undos, opsStatus) {
     undoAll(undos);
     return { ok: false, error: monoErr, ops: opsStatus };
   }
-  const coverErr = overlayCoverageViolation(scope, spec, snapshots);
+  const coverErr = overlayCoverageViolation(scope, spec, snapshots, null, "apply");
   if (coverErr) {
     undoAll(undos);
     return { ok: false, error: coverErr, ops: opsStatus };

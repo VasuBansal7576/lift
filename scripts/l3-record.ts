@@ -287,20 +287,24 @@ function xdo(args: string[]): void {
   }
 }
 
-function visibleReload(win: HeadedWindow): void {
+function visibleReload(win: HeadedWindow, mode: "click" | "f5" = "click"): void {
   pin(win);
-  // Reload sits in the toolbar past the back/forward buttons, not on window controls.
-  const x = win.x + 118;
-  const y = win.y + 52;
-  xdo(["mousemove", "--sync", String(x), String(y)]);
-  xdo(["sleep", "0.35"]);
-  xdo(["click", "1"]);
-  xdo(["key", "--window", win.winId, "F5"]);
+  xdo(["windowactivate", "--sync", win.winId]);
+  if (mode === "f5") {
+    xdo(["key", "--window", win.winId, "F5"]);
+  } else {
+    // Reload sits in the toolbar past the back/forward buttons, not on window controls.
+    const x = win.x + 72;
+    const y = win.y + 82;
+    xdo(["mousemove", "--sync", String(x), String(y)]);
+    xdo(["sleep", "0.35"]);
+    xdo(["click", "1"]);
+  }
   pin(win);
 }
 
 async function refreshIdentity(win: HeadedWindow, others: HeadedWindow[] = []): Promise<void> {
-  visibleReload(win);
+  visibleReload(win, "f5");
   for (const other of others) pin(other);
   await sleep(900);
   await hideFlagsmithSnippets(win.page);
@@ -310,21 +314,236 @@ async function refreshIdentity(win: HeadedWindow, others: HeadedWindow[] = []): 
   for (const other of others) pin(other);
 }
 
-const FLAGSMITH_CONTAINER = "flagsmith-flagsmith-1";
-
-function dockerFlagsmith(action: "stop" | "start"): string {
+async function xType(text: string, delayMs = 55): Promise<void> {
   try {
-    return execFileSync("sudo", ["docker", action, FLAGSMITH_CONTAINER], {
-      encoding: "utf8",
+    execFileSync("xdotool", ["type", "--delay", String(delayMs), "--", text], {
+      env: xenv(),
+      stdio: "ignore",
     });
   } catch {
-    return execFileSync("docker", [action, FLAGSMITH_CONTAINER], {
-      encoding: "utf8",
-    });
+    /* compositor may drop keys */
+  }
+  await sleep(delayMs);
+}
+
+async function visibleDragSlider(page: Page, from01: number, to01: number): Promise<void> {
+  const box = await page.locator("#lift-biometric").evaluate((el) => {
+    const r = el.getBoundingClientRect();
+    const topChrome = Math.max(0, window.outerHeight - window.innerHeight);
+    return {
+      x: Math.round(window.screenX + r.left),
+      y: Math.round(window.screenY + topChrome + r.top + r.height / 2),
+      w: Math.round(r.width),
+    };
+  });
+  const start = box.x + Math.round(box.w * Math.min(1, Math.max(0, from01)));
+  const end = box.x + Math.round(box.w * Math.min(1, Math.max(0, to01)));
+  const y = box.y;
+  xdo(["mousemove", "--sync", String(start), String(y)]);
+  await sleep(120);
+  xdo(["mousedown", "1"]);
+  const steps = 24;
+  for (let i = 1; i <= steps; i += 1) {
+    const x = Math.round(start + ((end - start) * i) / steps);
+    xdo(["mousemove", "--sync", String(x), String(y)]);
+    await sleep(35);
+  }
+  xdo(["mouseup", "1"]);
+  await sleep(200);
+}
+
+async function visiblePointerStress(win: HeadedWindow, page: Page, ms = 4_200): Promise<void> {
+  xdo(["windowactivate", "--sync", win.winId]);
+  // Cookie overlay covers the left of the slider; grab from mid-track instead.
+  await visibleDragSlider(page, 0.55, 1);
+  await sleep(400);
+  const originX = win.x + 220;
+  const originY = win.y + 260;
+  const t0 = Date.now();
+  let n = 0;
+  while (Date.now() - t0 < ms) {
+    const x = originX + (n % 2 === 0 ? -70 : 80) + (n % 5) * 6;
+    const y = originY + (n % 3 === 0 ? -80 : 55) + (n % 4) * 8;
+    xdo(["mousemove", "--sync", String(x), String(y)]);
+    if (n % 7 === 0) {
+      xdo(["click", "1"]);
+      await sleep(40);
+      xdo(["click", "1"]);
+      await sleep(40);
+      xdo(["click", "1"]);
+    }
+    if (n % 5 === 0) {
+      xdo(["click", "5"]);
+      await sleep(30);
+      xdo(["click", "4"]);
+    }
+    await sleep(18);
+    n += 1;
   }
 }
 
-async function launchWindow(x: number, y: number, w: number, h: number): Promise<HeadedWindow> {
+async function assertFlagsmithBlockedFromPage(page: Page): Promise<void> {
+  const blocked = await page.evaluate(async () => {
+    try {
+      const ctrl = new AbortController();
+      const timer = window.setTimeout(() => ctrl.abort(), 2500);
+      const res = await fetch("http://127.0.0.1:8000/api/v1/flags/", {
+        cache: "no-store",
+        signal: ctrl.signal,
+      });
+      window.clearTimeout(timer);
+      return !res.ok;
+    } catch {
+      return true;
+    }
+  });
+  if (!blocked) {
+    throw new Error("Flagsmith still reachable from the L3 app window after request blocking");
+  }
+}
+
+async function assertFlagsmithReachableFromPage(page: Page): Promise<void> {
+  const ok = await page.evaluate(async () => {
+    try {
+      const res = await fetch("/version/", { cache: "no-store" });
+      return res.ok;
+    } catch {
+      return false;
+    }
+  });
+  if (!ok) {
+    throw new Error("Flagsmith window lost connectivity; the shared container must stay up");
+  }
+}
+
+async function persistFlagsmithBlock(page: Page): Promise<void> {
+  await page.unroute("http://127.0.0.1:8000/**").catch(() => {});
+  await page.unroute("http://127.0.0.1:8000").catch(() => {});
+  await page.route("http://127.0.0.1:8000/**", (route) => route.abort());
+  await page.route("http://127.0.0.1:8000", (route) => route.abort());
+  try {
+    const session = await page.context().newCDPSession(page);
+    await session.send("Network.enable");
+    await session.send("Network.setBlockedURLs", {
+      urls: ["*://127.0.0.1:8000/*", "*://127.0.0.1:8000*", "127.0.0.1:8000"],
+    });
+  } catch {
+    /* DevTools UI is the evidence; CDP/route keep the reload blocked */
+  }
+}
+
+async function blockFlagsmithInDevTools(
+  win: HeadedWindow,
+  page: Page,
+  alreadyOpen = false,
+): Promise<void> {
+  xdo(["windowactivate", "--sync", win.winId]);
+  pin(win);
+  await sleep(300);
+  if (!alreadyOpen) {
+    xdo(["key", "--window", win.winId, "F12"]);
+    await sleep(1_100);
+  }
+  pin(win);
+  xdo(["key", "Escape"]);
+  await sleep(200);
+  xdo(["key", "Escape"]);
+  await sleep(200);
+  // DevTools is docked right. Click the panel so Ctrl+Shift+P is the
+  // command palette, not Chrome's print dialog.
+  xdo(["mousemove", "--sync", String(win.x + 720), String(win.y + 260)]);
+  await sleep(280);
+  xdo(["click", "1"]);
+  await sleep(350);
+  xdo(["key", "ctrl+shift+p"]);
+  await sleep(550);
+  await xType("Show Network", 35);
+  await sleep(280);
+  xdo(["key", "Return"]);
+  await sleep(800);
+  xdo(["key", "ctrl+shift+p"]);
+  await sleep(550);
+  await xType("Show Request conditions", 35);
+  await sleep(280);
+  xdo(["key", "Return"]);
+  await sleep(1_000);
+  // "Add rule" in the Request conditions drawer; adding a rule auto-enables blocking.
+  xdo(["mousemove", "--sync", String(win.x + 650), String(win.y + 968)]);
+  await sleep(250);
+  xdo(["click", "1"]);
+  await sleep(600);
+  await xType("*://127.0.0.1:8000/*", 35);
+  await sleep(400);
+  xdo(["key", "Return"]);
+  await sleep(800);
+  await persistFlagsmithBlock(page);
+  await assertFlagsmithBlockedFromPage(page);
+}
+
+async function visibleConsoleForceScore(win: HeadedWindow, page: Page, score = 0.95): Promise<void> {
+  xdo(["windowactivate", "--sync", win.winId]);
+  await sleep(250);
+  xdo(["key", "Escape"]);
+  await sleep(150);
+  xdo(["mousemove", "--sync", String(win.x + 720), String(win.y + 260)]);
+  await sleep(200);
+  xdo(["click", "1"]);
+  await sleep(300);
+  xdo(["mousemove", "--sync", String(win.x + 940), String(win.y + 825)]);
+  await sleep(200);
+  xdo(["click", "1"]);
+  await sleep(300);
+  xdo(["key", "ctrl+shift+p"]);
+  await sleep(500);
+  await xType("Show Console", 35);
+  await sleep(250);
+  xdo(["key", "Return"]);
+  await sleep(800);
+  xdo(["mousemove", "--sync", String(win.x + 430), String(win.y + 168)]);
+  await sleep(200);
+  xdo(["click", "1"]);
+  await sleep(300);
+  await xType(`LiftL3.forceScore(${score})`, 35);
+  await sleep(250);
+  xdo(["key", "Return"]);
+  await page.waitForFunction(
+    (n) => {
+      const hud = document.querySelector("#lift-l3-hud");
+      return Boolean(
+        hud &&
+          (hud.textContent ?? "").includes("(forced)") &&
+          Number(hud.getAttribute("data-score")) >= n - 0.02,
+      );
+    },
+    score,
+    { timeout: 12_000 },
+  );
+}
+
+async function confirmFeatureSegmentsRoute(): Promise<void> {
+  const state = loadState();
+  const api = env("FLAGSMITH_API_URL", `${FLAGSMITH_ORIGIN}/api/v1/`).replace(/\/?$/, "/");
+  const token = env("FLAGSMITH_ADMIN_API_TOKEN");
+  const url = `${api}features/feature-segments/?environment=${encodeURIComponent(state.environmentId)}&feature=${state.flagId}`;
+  const res = await fetch(url, {
+    headers: {
+      Authorization: `Api-Key ${token}`,
+      Accept: "application/json",
+    },
+  });
+  process.stdout.write(`feature-segments GET ${res.status} ${url}\n`);
+  if (res.status !== 200) {
+    throw new Error(`expected /features/feature-segments/?environment= to return 200, got ${res.status}`);
+  }
+}
+
+async function launchWindow(
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  opts: { devtools?: boolean } = {},
+): Promise<HeadedWindow> {
   const before = new Set(chromeWindowIds());
   const browser = await chromium.launch({
     headless: false,
@@ -338,6 +557,7 @@ async function launchWindow(x: number, y: number, w: number, h: number): Promise
       "--disable-features=Translate",
       "--disable-infobars",
       "--disable-session-crashed-bubble",
+      ...(opts.devtools ? ["--auto-open-devtools-for-tabs"] : []),
     ],
     ignoreDefaultArgs: ["--enable-automation", "--hide-scrollbars"],
   });
@@ -399,46 +619,6 @@ async function stopGrab(child: ChildProcess): Promise<void> {
   });
 }
 
-async function spikeLive(page: Page): Promise<void> {
-  await page.locator("#lift-biometric").evaluate((el) => {
-    const input = el as HTMLInputElement;
-    input.value = "100";
-    input.dispatchEvent(new Event("input", { bubbles: true }));
-  });
-  await page.evaluate(() => {
-    const now = Date.now();
-    for (let i = 0; i < 40; i += 1) {
-      window.LiftL3.ingest("mouse", {
-        t: now - 640 + i * 16,
-        x: 100 + (i % 2 === 0 ? -48 : 48) + i,
-        y: 120 + (i % 3 === 0 ? -56 : 56),
-      });
-    }
-    window.LiftL3.ingest("click", { t: now - 240, x: 52, y: 52, detail: 1, pointerType: "mouse" });
-    window.LiftL3.ingest("click", { t: now - 160, x: 54, y: 50, detail: 1, pointerType: "mouse" });
-    window.LiftL3.ingest("click", { t: now - 80, x: 50, y: 55, detail: 1, pointerType: "mouse" });
-    window.LiftL3.ingest("scroll", { t: now - 320, y: 0, dy: 900 });
-    window.LiftL3.ingest("scroll", { t: now - 240, y: 900, dy: -900 });
-    window.LiftL3.ingest("scroll", { t: now - 160, y: 0, dy: 900 });
-    window.LiftL3.ingest("scroll", { t: now - 80, y: 900, dy: -900 });
-    window.LiftL3.ingest("biometric", 100);
-  });
-  const box = await page.locator(".hero h1").boundingBox();
-  const t0 = Date.now();
-  while (Date.now() - t0 < 2_800) {
-    for (let i = 0; i < 10; i += 1) {
-      await page.mouse.move(180 + (i % 2) * 130, 150 + (i % 3) * 60);
-    }
-    if (box) {
-      for (let i = 0; i < 3; i += 1) {
-        await page.mouse.click(box.x + 16, box.y + 12, { delay: 30 });
-      }
-    }
-    await page.mouse.wheel(0, 820);
-    await page.mouse.wheel(0, -820);
-  }
-}
-
 async function driftScore(page: Page, values: number[], holdMs: number): Promise<void> {
   for (const value of values) {
     await page.evaluate((n) => window.LiftL3.forceScore(n), value);
@@ -491,7 +671,7 @@ async function fullLoop(): Promise<void> {
     await sleep(800);
     grab = startGrab(tmp);
     await sleep(1_000);
-    await spikeLive(demo.page);
+    await visiblePointerStress(demo, demo.page, 4_400);
     pin(demo);
     pin(admin);
     await demo.page.waitForSelector("#lift-l3-hud[data-trait='true']", { timeout: 20_000 });
@@ -500,12 +680,16 @@ async function fullLoop(): Promise<void> {
     pin(admin);
     await sleep(2_400);
     await refreshIdentity(admin, [demo]);
+    xdo(["windowactivate", "--sync", admin.winId]);
+    xdo(["mousemove", "--sync", String(admin.x + 480), String(admin.y + 520)]);
+    for (let i = 0; i < 7; i += 1) {
+      xdo(["click", "5"]);
+      await sleep(140);
+    }
+    pin(admin);
+    pin(demo);
     await sleep(2_400);
-    await demo.page.locator("#lift-biometric").evaluate((el) => {
-      const input = el as HTMLInputElement;
-      input.value = "8";
-      input.dispatchEvent(new Event("input", { bubbles: true }));
-    });
+    await visibleDragSlider(demo.page, 1, 0.08);
     await demo.page.waitForFunction(
       () => {
         const hud = document.querySelector("#lift-l3-hud");
@@ -621,12 +805,10 @@ async function segment(): Promise<void> {
 async function failOpenClip(): Promise<void> {
   const state = loadState();
   loadDemoConfig();
-  const demo = await launchWindow(0, 0, TILE.w, TILE.h);
+  const demo = await launchWindow(0, 0, TILE.w, TILE.h, { devtools: true });
   const admin = await launchWindow(960, 0, TILE.w, TILE.h);
-  const term = await launchWindow(0, 1020, 1920, 180);
   const tmp = resolve(ROOT, "test-results/l3-recordings", "l3-fail-open-grab.mp4");
   let grab: ChildProcess | null = null;
-  let stopped = false;
   try {
     await loginFlagsmith(admin.page, state);
     retile(admin);
@@ -640,86 +822,59 @@ async function failOpenClip(): Promise<void> {
     await openIdentity(admin.page, state, FAILOPEN_IDENTITY);
     retile(admin);
     retile(demo);
-    await term.page.setContent(`<!doctype html>
-<html><head><title>terminal</title></head>
-<body style="margin:0;background:#111;color:#d1fae5;font:15px/1.35 ui-monospace,SFMono-Regular,Menlo,monospace">
-<pre id="log" style="margin:8px 12px;white-space:pre-wrap">$ </pre>
-</body></html>`);
-    retile(term);
     grab = startGrab(tmp);
-    await sleep(800);
-    await term.page.evaluate(() => {
-      const log = document.getElementById("log");
-      if (log) {
-        log.textContent = "$ sudo docker stop flagsmith-flagsmith-1\n";
-      }
-    });
-    await sleep(600);
-    const stopOut = dockerFlagsmith("stop");
-    stopped = true;
-    await term.page.evaluate((text) => {
-      const log = document.getElementById("log");
-      if (log) log.textContent += `${text}\nflagsmith-flagsmith-1 stopped. 127.0.0.1:8000 is down.\n`;
-    }, stopOut.trim() || FLAGSMITH_CONTAINER);
-    const downAt = Date.now();
-    while (Date.now() - downAt < 8_000) {
-      try {
-        const res = await fetch(`${FLAGSMITH_ORIGIN}/version/`);
-        if (!res.ok) break;
-      } catch {
-        break;
-      }
-      await sleep(200);
-    }
     await sleep(1_200);
     pin(demo);
     pin(admin);
-    pin(term);
-    visibleReload(admin);
+    await blockFlagsmithInDevTools(demo, demo.page, true);
     pin(demo);
     pin(admin);
-    pin(term);
-    await sleep(2_400);
-    visibleReload(demo);
+    await sleep(800);
+    visibleReload(admin, "click");
     pin(demo);
     pin(admin);
-    pin(term);
+    await admin.page.getByText("Traits", { exact: true }).first().waitFor({ timeout: 15_000 });
+    await assertFlagsmithReachableFromPage(admin.page);
+    await hideFlagsmithSnippets(admin.page);
+    pin(demo);
+    pin(admin);
+    await sleep(1_400);
+    xdo(["windowactivate", "--sync", demo.winId]);
+    xdo(["key", "Escape"]);
+    await sleep(200);
+    const reloaded = demo.page.waitForNavigation({
+      waitUntil: "domcontentloaded",
+      timeout: 15_000,
+    });
+    visibleReload(demo, "f5");
+    await reloaded;
+    pin(demo);
+    pin(admin);
+    await demo.page.waitForSelector("#lift-l3-hud", { timeout: 20_000 });
     await demo.page.waitForSelector("#lift-l3-offline", { timeout: 25_000 });
     await demo.page.waitForFunction(
-      () => (document.querySelector("#lift-l3-hud")?.textContent ?? "").includes(
-        "(default, Flagsmith unreachable)",
-      ),
+      () =>
+        (document.querySelector("#lift-l3-hud")?.textContent ?? "").includes(
+          "(default, Flagsmith unreachable)",
+        ),
       null,
       { timeout: 15_000 },
     );
-    await demo.page.evaluate(() => window.LiftL3.forceScore(0.95));
+    pin(demo);
+    pin(admin);
+    await sleep(900);
+    await visibleConsoleForceScore(demo, demo.page, 0.95);
+    pin(demo);
+    pin(admin);
     await sleep(2_800);
     await demo.page.waitForSelector("html:not(.lift-sensory-safe)");
     await demo.page.waitForSelector("[data-lift-promo]", { state: "visible" });
     await demo.page.waitForSelector("[data-lift-cookie]", { state: "visible" });
-    await sleep(2_000);
+    await sleep(2_200);
   } finally {
     if (grab) await stopGrab(grab);
-    if (stopped) {
-      try {
-        dockerFlagsmith("start");
-      } catch {
-        execFileSync("sudo", ["docker", "start", FLAGSMITH_CONTAINER], { encoding: "utf8" });
-      }
-      const t0 = Date.now();
-      while (Date.now() - t0 < 60_000) {
-        try {
-          const res = await fetch(`${FLAGSMITH_ORIGIN}/version/`);
-          if (res.ok) break;
-        } catch {
-          /* booting */
-        }
-        await sleep(400);
-      }
-    }
     await demo.browser.close().catch(() => {});
     await admin.browser.close().catch(() => {});
-    await term.browser.close().catch(() => {});
   }
   publishMp4(tmp, "l3-fail-open.mp4");
 }
@@ -728,6 +883,11 @@ async function main() {
   let server: ChildProcess | null = null;
   const onlyArg = process.argv.find((arg) => arg.startsWith("--only="));
   const only = onlyArg?.slice("--only=".length) ?? "all";
+  if (process.argv.includes("--allow-stop-shared-flagsmith")) {
+    throw new Error(
+      "Stopping the shared Flagsmith container is disabled and excluded from --only=all. Block 127.0.0.1:8000 in the app window DevTools instead.",
+    );
+  }
   try {
     const up = await fetch(BASE)
       .then((r) => r.ok)
@@ -739,6 +899,7 @@ async function main() {
       });
       await waitForServer();
     }
+    await confirmFeatureSegmentsRoute();
     const jobs: Record<string, () => Promise<void>> = {
       "l3-full-loop": fullLoop,
       "l3-no-flap": noFlap,

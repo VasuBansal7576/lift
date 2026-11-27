@@ -182,6 +182,7 @@ describe("L3 runtime stays aligned with shared constants", () => {
     expect(src).toContain('L3_TRAIT_NAME = "overstimulated"');
     expect(src).toContain("(default, Flagsmith unreachable)");
     expect(src).toContain("scheduleFlagsmithReconnect");
+    expect(src).toMatch(/await initFlagsmith\(config\);\s*if \(!runtime\.started\) return;/);
     expect(src).toContain("flagsmith.setTrait");
     expect(src).toContain("hasFeature(L3_FLAG_NAME)");
     expect(src).toContain("OFFLINE FALLBACK — tests only");
@@ -189,5 +190,30 @@ describe("L3 runtime stays aligned with shared constants", () => {
     expect(src).toContain('setAttribute("aria-hidden", "true")');
     expect(src).not.toContain("innerHTML");
     expect(src).not.toMatch(/applySensorySafe\(\s*(score|runtime\.lastScore)/);
+  });
+});
+
+describe("L3 recorder never stops shared Flagsmith", () => {
+  it("blocks 127.0.0.1:8000 in the app DevTools and reloads with click XOR F5", () => {
+    const src = readFileSync(resolve(ROOT, "scripts/l3-record.ts"), "utf8");
+    expect(src).not.toMatch(/docker\s+stop/);
+    expect(src).not.toContain("flagsmith-flagsmith-1");
+    expect(src).not.toContain("about:blank");
+    expect(src).not.toContain("setContent");
+    expect(src).toContain("Show Request conditions");
+    expect(src).toContain("*://127.0.0.1:8000/*");
+    expect(src).toContain("Network.setBlockedURLs");
+    expect(src).toContain('page.route("http://127.0.0.1:8000/**"');
+    expect(src).toContain("allow-stop-shared-flagsmith");
+    expect(src).toContain("LiftL3.forceScore(");
+    expect(src).toContain("visiblePointerStress");
+    expect(src).toContain("visibleDragSlider");
+    expect(src).toContain('mode: "click" | "f5"');
+    expect(src).not.toMatch(/xdo\(\["click", "1"\]\);\s*xdo\(\["key".*F5/);
+    expect(src).toContain("features/feature-segments/?environment=");
+    expect(src).toContain("&feature=");
+    const html = readFileSync(resolve(ROOT, "demo/l3/index.html"), "utf8");
+    expect(html).toContain('id="lift-l3-offline"');
+    expect(html).toContain("Flagsmith unreachable. Staying in the normal flag-off state.");
   });
 });

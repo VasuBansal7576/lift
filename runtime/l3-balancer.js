@@ -885,6 +885,7 @@ async function recoverFlagsmith() {
   try {
     const config = await loadConfig();
     await initFlagsmith(config);
+    if (!runtime.started) return;
     if (runtime.offline || !runtime.flagsmith) {
       scheduleFlagsmithReconnect();
       return;

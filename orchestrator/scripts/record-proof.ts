@@ -234,13 +234,15 @@ async function openExperimentOnCamera(page: Page, flagName: string, dashboardUrl
   assertNotLogin(page, `experiment ${flagName}`);
 }
 
-async function showRolledOutFeature(page: Page, flagName: string): Promise<void> {
+async function showRolledOutFeature(page: Page, flagName: string, dashboardUrl: string): Promise<void> {
   const features = page.getByRole("link", { name: /^Features$/ });
-  if (!(await features.count())) {
-    throw new Error("Features sidebar link not visible");
+  if (await features.count()) {
+    await features.first().click();
+    await page.waitForTimeout(1500);
+  } else {
+    const featuresUrl = dashboardUrl.replace(/\/experiments\/\d+.*$/, "/features");
+    await typeUrlInOmnibox(page, featuresUrl);
   }
-  await features.first().click();
-  await page.waitForTimeout(1500);
   const row = page.getByText(flagName, { exact: false }).first();
   await row.waitFor({ state: "visible", timeout: 12_000 });
   await row.scrollIntoViewIfNeeded();
@@ -251,7 +253,7 @@ async function showRolledOutFeature(page: Page, flagName: string): Promise<void>
 }
 
 async function typeApproveOnCamera(experimentId: number): Promise<void> {
-  const title = "lift-approve";
+  const title = `lift-approve-${experimentId}`;
   const cmd = [
     `echo "Recording harness typing APPROVE ${experimentId} standing in for the human approver."`,
     "echo",
@@ -373,7 +375,7 @@ async function main() {
       await typeApproveOnCamera(state.flag.experimentId);
       await typeUrlInOmnibox(page, state.flag.dashboardUrl);
       await visibleReload(page);
-      await showRolledOutFeature(page, state.flag.flagName);
+      await showRolledOutFeature(page, state.flag.flagName, state.flag.dashboardUrl);
     } else {
       process.stdout.write("No winner; harness is not typing APPROVE.\n");
       await sleep(2500);
@@ -461,7 +463,7 @@ async function main() {
       await typeApproveOnCamera(gen2.flag.experimentId);
       await typeUrlInOmnibox(page, gen2.flag.dashboardUrl);
       await visibleReload(page);
-      await showRolledOutFeature(page, gen2.flag.flagName);
+      await showRolledOutFeature(page, gen2.flag.flagName, gen2.flag.dashboardUrl);
     } else {
       process.stdout.write(
         "Gen-2 did not beat the champion; keeping the champion. Harness is not typing APPROVE.\n",

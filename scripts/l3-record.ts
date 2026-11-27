@@ -8,7 +8,7 @@ import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
-import { chromium, type Browser, type Page } from "@playwright/test";
+import { chromium, type Browser, type Locator, type Page } from "@playwright/test";
 import { config as loadEnv } from "dotenv";
 import { ROOT } from "../agent/src/config.ts";
 
@@ -275,6 +275,78 @@ async function openIdentity(page: Page, state: L3State, identifier: string): Pro
   await page.waitForTimeout(400);
 }
 
+async function unfocusUrlBar(win: HeadedWindow, dx = 400, dy = 620): Promise<void> {
+  xdo(["windowactivate", "--sync", win.winId]);
+  xdo(["key", "--window", win.winId, "Escape"]);
+  await sleep(120);
+  xdo(["key", "--window", win.winId, "Escape"]);
+  await sleep(80);
+  xdo(["mousemove", "--sync", String(win.x + dx), String(win.y + dy)]);
+  await sleep(160);
+  xdo(["click", "1"]);
+  await sleep(200);
+}
+
+async function clickLocatorVisible(win: HeadedWindow, locator: Locator): Promise<void> {
+  await locator.waitFor({ state: "visible", timeout: 15_000 });
+  const pt = await locator.evaluate((el) => {
+    const r = el.getBoundingClientRect();
+    const delta = Math.max(0, window.outerHeight - window.innerHeight);
+    const topChrome = Math.max(72, delta - 35);
+    return {
+      x: Math.round(window.screenX + r.left + r.width / 2),
+      y: Math.round(window.screenY + topChrome + r.top + r.height / 2),
+    };
+  });
+  xdo(["windowactivate", "--sync", win.winId]);
+  xdo(["mousemove", "--sync", String(pt.x), String(pt.y)]);
+  await sleep(220);
+  xdo(["click", "1"]);
+  await sleep(350);
+}
+
+async function clickUrlBar(win: HeadedWindow): Promise<void> {
+  xdo(["windowactivate", "--sync", win.winId]);
+  // Reload is at y+82 on the omnibox row; the field itself is to its right.
+  xdo(["mousemove", "--sync", String(win.x + 280), String(win.y + 82)]);
+  await sleep(220);
+  xdo(["click", "1"]);
+  await sleep(200);
+  xdo(["key", "--window", win.winId, "ctrl+l"]);
+  await sleep(280);
+}
+
+async function visibleOpenIdentity(
+  win: HeadedWindow,
+  state: L3State,
+  identifier: string,
+): Promise<void> {
+  xdo(["windowactivate", "--sync", win.winId]);
+  await clickUrlBar(win);
+  xdo(["key", "--window", win.winId, "ctrl+a"]);
+  await sleep(100);
+  await xType(identitiesUrl(state), 22);
+  xdo(["key", "--window", win.winId, "Return"]);
+  const search = win.page.getByPlaceholder(/search/i).locator("visible=true").first();
+  const t0 = Date.now();
+  while (Date.now() - t0 < 15_000) {
+    if (await search.isVisible().catch(() => false)) break;
+    await sleep(250);
+  }
+  await hideFlagsmithSnippets(win.page);
+  await search.waitFor({ timeout: 5_000 });
+  await clickLocatorVisible(win, search);
+  xdo(["key", "--window", win.winId, "ctrl+a"]);
+  await sleep(120);
+  await xType(identifier, 40);
+  await sleep(400);
+  const row = win.page.getByText(identifier, { exact: true }).first();
+  await row.waitFor({ timeout: 15_000 });
+  await clickLocatorVisible(win, row);
+  await win.page.getByText("Traits", { exact: true }).first().waitFor({ timeout: 15_000 });
+  await hideFlagsmithSnippets(win.page);
+}
+
 function xenv(): NodeJS.ProcessEnv {
   return { ...process.env, DISPLAY: process.env.DISPLAY || ":1" };
 }
@@ -382,9 +454,6 @@ async function visibleDragSlider(
 ): Promise<void> {
   xdo(["windowactivate", "--sync", win.winId]);
   await page.locator("#lift-biometric").waitFor({ state: "visible" });
-  await page.locator("#lift-biometric").evaluate((el) => {
-    el.scrollIntoView({ block: "center", inline: "nearest" });
-  });
   await revealSlider(win, page);
   const dragOnce = async (yAdjust: number): Promise<number> => {
     const layout = await sliderLayout(page);
@@ -420,13 +489,14 @@ async function visibleDragSlider(
 
 async function visiblePointerJitter(win: HeadedWindow, ms = 4_200): Promise<void> {
   xdo(["windowactivate", "--sync", win.winId]);
-  const originX = win.x + 240;
-  const originY = win.y + 280;
+  // Dense campaign copy: below promo/opt-out/hero, above the cookie sheet, left of the popup.
+  const originX = win.x + 300;
+  const originY = win.y + 560;
   const t0 = Date.now();
   let n = 0;
   while (Date.now() - t0 < ms) {
-    const x = originX + (n % 2 === 0 ? -70 : 80) + (n % 5) * 6;
-    const y = originY + (n % 3 === 0 ? -80 : 55) + (n % 4) * 8;
+    const x = originX + (n % 2 === 0 ? -36 : 40) + (n % 5) * 3;
+    const y = originY + (n % 3 === 0 ? -28 : 22) + (n % 4) * 4;
     xdo(["mousemove", "--sync", String(x), String(y)]);
     if (n % 7 === 0) {
       xdo(["click", "1"]);
@@ -453,23 +523,68 @@ async function visiblePointerStress(win: HeadedWindow, page: Page, ms = 4_200): 
   await visiblePointerJitter(win, ms);
 }
 
-async function assertFlagsmithBlockedFromPage(page: Page): Promise<void> {
-  const blocked = await page.evaluate(async () => {
-    try {
-      const ctrl = new AbortController();
-      const timer = window.setTimeout(() => ctrl.abort(), 2500);
-      const res = await fetch("http://127.0.0.1:8000/api/v1/flags/", {
-        cache: "no-store",
-        signal: ctrl.signal,
-      });
-      window.clearTimeout(timer);
-      return !res.ok;
-    } catch {
-      return true;
+async function hudScore(page: Page): Promise<{ score: number; trait: string }> {
+  const hud = page.locator("#lift-l3-hud");
+  return {
+    score: Number(await hud.getAttribute("data-score")),
+    trait: (await hud.getAttribute("data-trait")) ?? "",
+  };
+}
+
+async function bandPointerWiggle(win: HeadedWindow, ms: number, energetic: boolean): Promise<void> {
+  xdo(["windowactivate", "--sync", win.winId]);
+  const originX = win.x + 300;
+  const originY = win.y + 560;
+  const spanX = energetic ? 90 : 22;
+  const spanY = energetic ? 36 : 14;
+  const t0 = Date.now();
+  let n = 0;
+  while (Date.now() - t0 < ms) {
+    const x = originX + ((n % 4 < 2 ? 1 : -1) * spanX) + (n % 3) * 10;
+    const y = originY + ((n % 6 < 3 ? 1 : -1) * spanY) + (n % 5) * 6;
+    xdo(["mousemove", "--sync", String(x), String(y)]);
+    if (energetic && n % 7 === 0) xdo(["click", "5"]);
+    await sleep(energetic ? 12 : 30);
+    n += 1;
+  }
+}
+
+async function holdScoreInBand(win: HeadedWindow, page: Page, holdMs = 15_000): Promise<void> {
+  await visibleDragSlider(win, page, 0.55, 1);
+  pin(win);
+  const t0 = Date.now();
+  let enteredBand = false;
+  let sawLow = false;
+  let sawHigh = false;
+  while (Date.now() - t0 < holdMs) {
+    const { score, trait } = await hudScore(page);
+    if (trait === "true") {
+      throw new Error(`no-flap flipped trait to true at score=${score}`);
     }
-  });
-  if (!blocked) {
-    throw new Error("Flagsmith still reachable from the L3 app window after request blocking");
+    if (score >= 0.4 && score <= 0.6) enteredBand = true;
+    if (score <= 0.46) sawLow = true;
+    if (score >= 0.54) sawHigh = true;
+    const inCycle = (Date.now() - t0) % 5_500;
+    const wantHigh = inCycle < 2_600;
+    if (score > 0.58) {
+      await sleep(500);
+    } else if (wantHigh || score < 0.42) {
+      await bandPointerWiggle(win, 420, true);
+    } else {
+      await bandPointerWiggle(win, 480, false);
+    }
+  }
+  const last = await hudScore(page);
+  if (last.trait === "true") {
+    throw new Error("no-flap flipped trait to true");
+  }
+  if (!enteredBand) {
+    throw new Error(`no-flap never entered 0.40-0.60 (last score=${last.score})`);
+  }
+  if (!sawLow || !sawHigh) {
+    throw new Error(
+      `no-flap did not visibly cross the band (last=${last.score}, low=${sawLow}, high=${sawHigh})`,
+    );
   }
 }
 
@@ -534,12 +649,6 @@ async function blockFlagsmithInDevTools(
   xdo(["key", "Return"]);
   await sleep(1_000);
   await addRequestConditionRule(win);
-  try {
-    await assertFlagsmithBlockedFromPage(page);
-  } catch {
-    await addRequestConditionRule(win);
-    await assertFlagsmithBlockedFromPage(page);
-  }
 }
 
 async function reloadAppWithBlockedFlagsmith(demo: HeadedWindow): Promise<void> {
@@ -815,34 +924,18 @@ async function noFlap(): Promise<void> {
     });
     retile(demo);
     await openIdentity(admin.page, state, NOFLAP_IDENTITY);
+    await unfocusUrlBar(demo, 400, 620);
+    await unfocusUrlBar(admin, 520, 420);
     retile(admin);
     retile(demo);
     grab = startGrab(tmp);
-    await sleep(1_000);
-    await visibleDragSlider(demo, demo.page, 0.2, 0.5);
-    await sleep(500);
-    const wiggling = [
-      [0.5, 0.42],
-      [0.42, 0.58],
-      [0.58, 0.45],
-      [0.45, 0.6],
-      [0.6, 0.4],
-      [0.4, 0.55],
-      [0.55, 0.48],
-    ] as const;
-    for (const [from, to] of wiggling) {
-      await visibleDragSlider(demo, demo.page, from, to);
-      const hud = demo.page.locator("#lift-l3-hud");
-      if ((await hud.getAttribute("data-trait")) === "true") {
-        throw new Error("no-flap entered Sensory-Safe while hovering the 0.38-0.62 slider band");
-      }
-      await sleep(280);
-    }
+    await sleep(800);
+    await holdScoreInBand(demo, demo.page, 16_000);
     await demo.page.waitForSelector("#lift-l3-hud[data-trait='false']", { timeout: 8_000 });
     await demo.page.waitForSelector("#lift-l3-hud[data-flag='false']", { timeout: 8_000 });
     pin(demo);
     pin(admin);
-    await sleep(2_400);
+    await sleep(1_600);
   } finally {
     if (grab) await stopGrab(grab);
     await demo.browser.close().catch(() => {});
@@ -874,14 +967,23 @@ async function segment(): Promise<void> {
     await admin.page.goto(projectSegmentsUrl(state), { waitUntil: "domcontentloaded" });
     await hideFlagsmithSnippets(admin.page);
     await admin.page.waitForSelector("text=overstimulated", { timeout: 15_000 });
+    await waitForIdentityId(SEGMENT_IDENTITY);
+    xdo(["windowactivate", "--sync", admin.winId]);
+    xdo(["key", "--window", admin.winId, "Escape"]);
+    await sleep(120);
+    const descLabel = admin.page.getByText("Description", { exact: true }).first();
+    if (await descLabel.isVisible().catch(() => false)) {
+      await clickLocatorVisible(admin, descLabel);
+    }
+    await unfocusUrlBar(demo, 400, 620);
     retile(admin);
     retile(demo);
     grab = startGrab(tmp);
-    await sleep(3_200);
-    await openIdentity(admin.page, state, SEGMENT_IDENTITY);
+    await sleep(2_400);
+    await visibleOpenIdentity(admin, state, SEGMENT_IDENTITY);
     retile(admin);
     retile(demo);
-    await sleep(1_200);
+    await sleep(1_000);
     await visiblePointerStress(demo, demo.page, 4_200);
     await demo.page.waitForSelector("#lift-l3-hud[data-trait='true']", { timeout: 20_000 });
     await demo.page.waitForSelector("#lift-l3-hud[data-flag='true']", { timeout: 20_000 });
@@ -926,6 +1028,8 @@ async function failOpenClip(): Promise<void> {
     await demo.page.waitForSelector("#lift-l3-hud[data-flag='false']", { timeout: 20_000 });
     retile(demo);
     await openIdentity(admin.page, state, FAILOPEN_IDENTITY);
+    await unfocusUrlBar(demo, 400, 620);
+    await unfocusUrlBar(admin, 80, 160);
     retile(admin);
     retile(demo);
     grab = startGrab(tmp);

@@ -183,7 +183,9 @@ describe("L3 runtime stays aligned with shared constants", () => {
     expect(src).toContain('L3_TRAIT_NAME = "overstimulated"');
     expect(src).toContain("(default, Flagsmith unreachable)");
     expect(src).toContain("scheduleFlagsmithReconnect");
-    expect(src).toMatch(/await initFlagsmith\(config\);\s*if \(!runtime\.started\) return;/);
+    expect(src).toMatch(
+      /const abandoned = await initFlagsmith\(config\);\s*if \(abandoned \|\| !runtime\.started\) return/,
+    );
     expect(src).toMatch(/const gen = \+\+runtime\.initGen/);
     expect(src).toMatch(/runtime\.initGen \+= 1/);
     expect(src).toMatch(/gen !== runtime\.initGen \|\| !runtime\.started/);
@@ -210,6 +212,17 @@ describe("L3 recorder never stops shared Flagsmith", () => {
     expect(src).not.toContain("setBlockedURLs");
     expect(src).not.toContain("persistFlagsmithBlock");
     expect(src).toContain("reloadAppWithBlockedFlagsmith");
+    expect(src).not.toContain("assertFlagsmithBlockedFromPage");
+    expect(src).not.toContain("/api/v1/flags/");
+    expect(src).not.toMatch(/fetch\(\s*["']http:\/\/127\.0\.0\.1:8000/);
+    const blockCheck = src.match(
+      /async function reloadAppWithBlockedFlagsmith[\s\S]*?\nasync function /,
+    )?.[0];
+    expect(blockCheck).toBeTruthy();
+    expect(blockCheck).not.toContain("!res.ok");
+    const dragFn = src.match(/async function visibleDragSlider[\s\S]*?\nasync function /)?.[0];
+    expect(dragFn).toBeTruthy();
+    expect(dragFn).not.toContain("scrollIntoView");
     expect(src).toContain("allow-stop-shared-flagsmith");
     expect(src).toContain("LiftL3.forceScore(");
     expect(src).toContain("visiblePointerStress");
@@ -224,6 +237,19 @@ describe("L3 recorder never stops shared Flagsmith", () => {
     expect(src).not.toContain("sweepScore");
     expect(src).not.toContain("driftScore");
     expect(src).toContain("visibleFocusReload");
+  });
+
+  it("has no '!res.ok' in its Flagsmith block check and no capture-time probe fetch", () => {
+    const src = readFileSync(resolve(ROOT, "scripts/l3-record.ts"), "utf8");
+    const blockCheck = src.match(
+      /async function reloadAppWithBlockedFlagsmith[\s\S]*?\nasync function /,
+    )?.[0];
+    expect(blockCheck).toBeTruthy();
+    expect(blockCheck).not.toContain("!res.ok");
+    expect(blockCheck).toContain("res.ok()");
+    expect(src).not.toContain("assertFlagsmithBlockedFromPage");
+    expect(src).not.toContain("/api/v1/flags/");
+    expect(src).not.toMatch(/page\.evaluate\([\s\S]*?127\.0\.0\.1:8000[\s\S]*?api\/v1\/flags/);
   });
 });
 

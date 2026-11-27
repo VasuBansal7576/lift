@@ -353,6 +353,8 @@ type TestRuntime = {
   flagsmith: unknown;
   offline: boolean;
   hysteresis: { overstimulated: boolean };
+  reconnectTimer: number;
+  reconnectRetries: number;
   importSdk?: (() => Promise<{ default: unknown }>) | null;
 };
 
@@ -407,6 +409,8 @@ function resetRuntime(
   runtime.importSdk = null;
   runtime.hysteresis = initialHysteresis();
   runtime.started = false;
+  runtime.reconnectTimer = 0;
+  runtime.reconnectRetries = 0;
 }
 
 describe("L3 init generation ignores stale Flagsmith init", () => {
@@ -505,6 +509,81 @@ describe("L3 init generation ignores stale Flagsmith init", () => {
 
     const runtime = getRuntime() as TestRuntime;
     expect(runtime.started).toBe(true);
+    expect(html.classList.contains("lift-sensory-safe")).toBe(false);
+    expect(runtime.hysteresis.overstimulated).toBe(false);
+  });
+
+  it("recoverFlagsmith bails when its init was abandoned", async () => {
+    const { start, stop, recoverFlagsmith, getRuntime, html, initialHysteresis, windowObj } =
+      await loadRuntime();
+    resetRuntime(getRuntime as () => TestRuntime, initialHysteresis);
+    (getRuntime() as TestRuntime).importSdk = async () => ({
+      default: {
+        async init() {
+          throw new Error("Flagsmith down");
+        },
+        getTrait() {
+          return false;
+        },
+        hasFeature() {
+          return false;
+        },
+        getValue() {
+          return "{}";
+        },
+        async setTrait() {},
+        async getFlags() {},
+      },
+    });
+    await start();
+    const afterFail = getRuntime() as TestRuntime;
+    expect(afterFail.started).toBe(true);
+    expect(afterFail.offline).toBe(true);
+    windowObj.clearTimeout(afterFail.reconnectTimer);
+    afterFail.reconnectTimer = 0;
+    const retries = afterFail.reconnectRetries;
+
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let entered = false;
+    (getRuntime() as TestRuntime).importSdk = async () => ({
+      default: {
+        async init() {
+          entered = true;
+          await gate;
+        },
+        getTrait() {
+          return true;
+        },
+        hasFeature() {
+          return true;
+        },
+        getValue() {
+          return "{}";
+        },
+        async setTrait() {},
+        async getFlags() {},
+      },
+    });
+
+    const recovering = recoverFlagsmith();
+    const waitEnter = Date.now();
+    while (!entered && Date.now() - waitEnter < 2_000) {
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    if (!entered) throw new Error("recoverFlagsmith did not enter flagsmith.init");
+
+    stop();
+    (getRuntime() as TestRuntime).started = true;
+    release();
+    await recovering;
+
+    const runtime = getRuntime() as TestRuntime;
+    expect(runtime.flagsmith).toBe(null);
+    expect(runtime.reconnectTimer).toBe(0);
+    expect(runtime.reconnectRetries).toBe(retries);
     expect(html.classList.contains("lift-sensory-safe")).toBe(false);
     expect(runtime.hysteresis.overstimulated).toBe(false);
   });

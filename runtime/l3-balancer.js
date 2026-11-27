@@ -887,8 +887,8 @@ export async function recoverFlagsmith() {
   try {
     const config = await loadConfig();
     if (!runtime.started) return;
-    await initFlagsmith(config);
-    if (!runtime.started) return;
+    const abandoned = await initFlagsmith(config);
+    if (abandoned || !runtime.started) return;
     if (runtime.offline || !runtime.flagsmith) {
       scheduleFlagsmithReconnect();
       return;
@@ -929,9 +929,6 @@ async function applyFromFlagsmith() {
   runtime.flagOn = apply;
   runtime.segmentMember = apply && snapshot.segmentMember;
   applySensorySafe(apply, snapshot.flagConfig);
-  if (apply !== snapshot.flagOn || runtime.trait !== runtime.hysteresis.overstimulated) {
-    /* stale enter or opted-out: keep UI off */
-  }
   renderHud();
 }
 
@@ -1206,18 +1203,18 @@ async function loadFlagsmithSdk() {
 async function initFlagsmith(config) {
   const gen = ++runtime.initGen;
   runtime.identity = stickyIdentity();
-  if (initAbandoned(gen)) return;
+  if (initAbandoned(gen)) return true;
   if (isOfflineFallback()) {
     failOpen("l3_offline");
-    return;
+    return false;
   }
   if (!config?.flagsmithEnvironmentKey) {
     failOpen("missing environment key");
-    return;
+    return false;
   }
   try {
     const { default: flagsmith } = await withTimeout(loadFlagsmithSdk());
-    if (initAbandoned(gen)) return;
+    if (initAbandoned(gen)) return true;
     await withTimeout(
       flagsmith.init({
         environmentID: config.flagsmithEnvironmentKey,
@@ -1225,7 +1222,7 @@ async function initFlagsmith(config) {
         identity: runtime.identity,
       }),
     );
-    if (initAbandoned(gen)) return;
+    if (initAbandoned(gen)) return true;
     runtime.flagsmith = flagsmith;
     runtime.offline = false;
     runtime.reconnectRetries = 0;
@@ -1243,13 +1240,12 @@ async function initFlagsmith(config) {
       runtime.hysteresis.overstimulated = true;
       runtime.hysteresis.cooldownUntil = Date.now() + timingConfig().cooldownMs;
     }
-    if (initAbandoned(gen)) return;
+    if (initAbandoned(gen)) return true;
     await applyFromFlagsmith();
-    if (initAbandoned(gen)) {
-      applySensorySafe(false, runtime.flagConfig);
-    }
+    if (initAbandoned(gen)) return true;
+    return false;
   } catch (err) {
-    if (initAbandoned(gen)) return;
+    if (initAbandoned(gen)) return true;
     throw err;
   }
 }
@@ -1279,7 +1275,8 @@ export async function start() {
     } else if (!isOfflineFallback()) {
       const config = await loadConfig();
       if (!runtime.started) return runtime;
-      await initFlagsmith(config);
+      const abandoned = await initFlagsmith(config);
+      if (abandoned || !runtime.started) return runtime;
     } else {
       failOpen("l3_offline");
     }

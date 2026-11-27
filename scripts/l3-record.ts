@@ -303,8 +303,19 @@ function visibleReload(win: HeadedWindow, mode: "click" | "f5" = "click"): void 
   pin(win);
 }
 
+async function visibleFocusReload(win: HeadedWindow, mode: "click" | "f5" = "f5"): Promise<void> {
+  xdo(["windowactivate", "--sync", win.winId]);
+  const cx = win.x + Math.min(300, Math.floor(win.w * 0.32));
+  const cy = win.y + 260;
+  xdo(["mousemove", "--sync", String(cx), String(cy)]);
+  await sleep(220);
+  xdo(["click", "1"]);
+  await sleep(280);
+  visibleReload(win, mode);
+}
+
 async function refreshIdentity(win: HeadedWindow, others: HeadedWindow[] = []): Promise<void> {
-  visibleReload(win, "f5");
+  await visibleFocusReload(win, "f5");
   for (const other of others) pin(other);
   await sleep(900);
   await hideFlagsmithSnippets(win.page);
@@ -326,39 +337,91 @@ async function xType(text: string, delayMs = 55): Promise<void> {
   await sleep(delayMs);
 }
 
-async function visibleDragSlider(page: Page, from01: number, to01: number): Promise<void> {
-  const box = await page.locator("#lift-biometric").evaluate((el) => {
+async function sliderLayout(page: Page): Promise<{
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  screenX: number;
+  screenY: number;
+  topChrome: number;
+}> {
+  return page.locator("#lift-biometric").evaluate((el) => {
     const r = el.getBoundingClientRect();
-    const topChrome = Math.max(0, window.outerHeight - window.innerHeight);
+    const delta = Math.max(0, window.outerHeight - window.innerHeight);
     return {
-      x: Math.round(window.screenX + r.left),
-      y: Math.round(window.screenY + topChrome + r.top + r.height / 2),
-      w: Math.round(r.width),
+      x: r.left,
+      y: r.top,
+      w: r.width,
+      h: r.height,
+      screenX: window.screenX,
+      screenY: window.screenY,
+      // outerHeight-innerHeight includes bottom frame pixels; tab+omnibox is ~94px here.
+      topChrome: Math.max(72, delta - 35),
     };
   });
-  const start = box.x + Math.round(box.w * Math.min(1, Math.max(0, from01)));
-  const end = box.x + Math.round(box.w * Math.min(1, Math.max(0, to01)));
-  const y = box.y;
-  xdo(["mousemove", "--sync", String(start), String(y)]);
-  await sleep(120);
-  xdo(["mousedown", "1"]);
-  const steps = 24;
-  for (let i = 1; i <= steps; i += 1) {
-    const x = Math.round(start + ((end - start) * i) / steps);
-    xdo(["mousemove", "--sync", String(x), String(y)]);
-    await sleep(35);
-  }
-  xdo(["mouseup", "1"]);
-  await sleep(200);
 }
 
-async function visiblePointerStress(win: HeadedWindow, page: Page, ms = 4_200): Promise<void> {
+async function revealSlider(win: HeadedWindow, page: Page): Promise<void> {
   xdo(["windowactivate", "--sync", win.winId]);
-  // Cookie overlay covers the left of the slider; grab from mid-track instead.
-  await visibleDragSlider(page, 0.55, 1);
-  await sleep(400);
-  const originX = win.x + 220;
-  const originY = win.y + 260;
+  xdo(["mousemove", "--sync", String(win.x + 300), String(win.y + 380)]);
+  await sleep(120);
+  for (let i = 0; i < 24; i += 1) {
+    const y = await page.locator("#lift-biometric").evaluate((el) => el.getBoundingClientRect().top);
+    if (y >= 240 && y <= 520) return;
+    xdo(["click", "--repeat", "3", "--delay", "40", y < 240 ? "4" : "5"]);
+    await sleep(90);
+  }
+}
+
+async function visibleDragSlider(
+  win: HeadedWindow,
+  page: Page,
+  from01: number,
+  to01: number,
+): Promise<void> {
+  xdo(["windowactivate", "--sync", win.winId]);
+  await page.locator("#lift-biometric").waitFor({ state: "visible" });
+  await page.locator("#lift-biometric").evaluate((el) => {
+    el.scrollIntoView({ block: "center", inline: "nearest" });
+  });
+  await revealSlider(win, page);
+  const dragOnce = async (yAdjust: number): Promise<number> => {
+    const layout = await sliderLayout(page);
+    if (layout.y > 560) {
+      throw new Error(`slider still under the cookie sheet (top=${layout.y})`);
+    }
+    const from = Math.min(0.98, Math.max(0.12, from01));
+    const to = Math.min(1, Math.max(0.02, to01));
+    const y = Math.round(layout.screenY + layout.topChrome + layout.y + layout.h / 2 + yAdjust);
+    const start = Math.round(layout.screenX + layout.x + layout.w * from);
+    const end = Math.round(layout.screenX + layout.x + layout.w * to);
+    xdo(["mousemove", "--sync", String(start), String(y)]);
+    await sleep(160);
+    xdo(["mousedown", "1"]);
+    const steps = 36;
+    for (let i = 1; i <= steps; i += 1) {
+      const x = Math.round(start + ((end - start) * i) / steps);
+      xdo(["mousemove", "--sync", String(x), String(y)]);
+      await sleep(38);
+    }
+    xdo(["mouseup", "1"]);
+    await sleep(220);
+    return Number(await page.locator("#lift-biometric").inputValue());
+  };
+  const expected = Math.round(Math.min(1, Math.max(0, to01)) * 100);
+  let value = await dragOnce(0);
+  if (Math.abs(value - expected) > 18) value = await dragOnce(10);
+  if (Math.abs(value - expected) > 18) value = await dragOnce(-10);
+  if (Math.abs(value - expected) > 18) {
+    throw new Error(`slider drag missed (value=${value}, expected≈${expected})`);
+  }
+}
+
+async function visiblePointerJitter(win: HeadedWindow, ms = 4_200): Promise<void> {
+  xdo(["windowactivate", "--sync", win.winId]);
+  const originX = win.x + 240;
+  const originY = win.y + 280;
   const t0 = Date.now();
   let n = 0;
   while (Date.now() - t0 < ms) {
@@ -380,6 +443,14 @@ async function visiblePointerStress(win: HeadedWindow, page: Page, ms = 4_200): 
     await sleep(18);
     n += 1;
   }
+}
+
+async function visiblePointerStress(win: HeadedWindow, page: Page, ms = 4_200): Promise<void> {
+  xdo(["windowactivate", "--sync", win.winId]);
+  const current = Number(await page.locator("#lift-biometric").inputValue()) / 100;
+  await visibleDragSlider(win, page, Math.max(current, 0.55), 1);
+  await sleep(350);
+  await visiblePointerJitter(win, ms);
 }
 
 async function assertFlagsmithBlockedFromPage(page: Page): Promise<void> {
@@ -416,20 +487,15 @@ async function assertFlagsmithReachableFromPage(page: Page): Promise<void> {
   }
 }
 
-async function persistFlagsmithBlock(page: Page): Promise<void> {
-  await page.unroute("http://127.0.0.1:8000/**").catch(() => {});
-  await page.unroute("http://127.0.0.1:8000").catch(() => {});
-  await page.route("http://127.0.0.1:8000/**", (route) => route.abort());
-  await page.route("http://127.0.0.1:8000", (route) => route.abort());
-  try {
-    const session = await page.context().newCDPSession(page);
-    await session.send("Network.enable");
-    await session.send("Network.setBlockedURLs", {
-      urls: ["*://127.0.0.1:8000/*", "*://127.0.0.1:8000*", "127.0.0.1:8000"],
-    });
-  } catch {
-    /* DevTools UI is the evidence; CDP/route keep the reload blocked */
-  }
+async function addRequestConditionRule(win: HeadedWindow): Promise<void> {
+  xdo(["mousemove", "--sync", String(win.x + 650), String(win.y + 968)]);
+  await sleep(250);
+  xdo(["click", "1"]);
+  await sleep(500);
+  await xType("*://127.0.0.1:8000/*", 35);
+  await sleep(350);
+  xdo(["key", "Return"]);
+  await sleep(700);
 }
 
 async function blockFlagsmithInDevTools(
@@ -467,17 +533,46 @@ async function blockFlagsmithInDevTools(
   await sleep(280);
   xdo(["key", "Return"]);
   await sleep(1_000);
-  // "Add rule" in the Request conditions drawer; adding a rule auto-enables blocking.
-  xdo(["mousemove", "--sync", String(win.x + 650), String(win.y + 968)]);
-  await sleep(250);
-  xdo(["click", "1"]);
-  await sleep(600);
-  await xType("*://127.0.0.1:8000/*", 35);
-  await sleep(400);
-  xdo(["key", "Return"]);
-  await sleep(800);
-  await persistFlagsmithBlock(page);
-  await assertFlagsmithBlockedFromPage(page);
+  await addRequestConditionRule(win);
+  try {
+    await assertFlagsmithBlockedFromPage(page);
+  } catch {
+    await addRequestConditionRule(win);
+    await assertFlagsmithBlockedFromPage(page);
+  }
+}
+
+async function reloadAppWithBlockedFlagsmith(demo: HeadedWindow): Promise<void> {
+  const failed: string[] = [];
+  const succeeded: string[] = [];
+  const onFail = (req: { url: () => string }) => {
+    if (req.url().includes("127.0.0.1:8000")) failed.push(req.url());
+  };
+  const onRes = (res: { url: () => string; ok: () => boolean }) => {
+    if (res.url().includes("127.0.0.1:8000") && res.ok()) succeeded.push(res.url());
+  };
+  demo.page.on("requestfailed", onFail);
+  demo.page.on("response", onRes);
+  try {
+    const reloaded = demo.page.waitForNavigation({
+      waitUntil: "domcontentloaded",
+      timeout: 15_000,
+    });
+    await visibleFocusReload(demo, "f5");
+    await reloaded;
+    await sleep(900);
+    if (succeeded.length > 0) {
+      throw new Error(
+        `reload reached Flagsmith (${succeeded.length} ok responses); visible request blocking did not persist`,
+      );
+    }
+    if (failed.length === 0) {
+      throw new Error("reload did not fail a Flagsmith fetch; visible request blocking did not persist");
+    }
+  } finally {
+    demo.page.off("requestfailed", onFail);
+    demo.page.off("response", onRes);
+  }
 }
 
 async function visibleConsoleForceScore(win: HeadedWindow, page: Page, score = 0.95): Promise<void> {
@@ -619,25 +714,6 @@ async function stopGrab(child: ChildProcess): Promise<void> {
   });
 }
 
-async function driftScore(page: Page, values: number[], holdMs: number): Promise<void> {
-  for (const value of values) {
-    await page.evaluate((n) => window.LiftL3.forceScore(n), value);
-    await sleep(holdMs);
-  }
-}
-
-async function sweepScore(page: Page, from: number, to: number, stepMs = 320): Promise<void> {
-  const delta = to >= from ? 0.02 : -0.02;
-  const values: number[] = [];
-  if (delta > 0) {
-    for (let n = from; n <= to + 1e-9; n += delta) values.push(Number(n.toFixed(2)));
-  } else {
-    for (let n = from; n >= to - 1e-9; n += delta) values.push(Number(n.toFixed(2)));
-  }
-  if (values[values.length - 1] !== Number(to.toFixed(2))) values.push(Number(to.toFixed(2)));
-  await driftScore(page, values, stepMs);
-}
-
 async function waitUntilCalm(page: Page): Promise<void> {
   const on = await page.locator("html").evaluate((el) => el.classList.contains("lift-sensory-safe"));
   if (!on) return;
@@ -664,6 +740,9 @@ async function fullLoop(): Promise<void> {
     await demo.page.waitForSelector("#lift-l3-hud", { timeout: 20_000 });
     await waitUntilCalm(demo.page);
     await demo.page.waitForSelector("#lift-l3-hud[data-flag='false']", { timeout: 20_000 });
+    await demo.page.locator("#lift-biometric").evaluate((el) => {
+      el.scrollIntoView({ block: "center", inline: "nearest" });
+    });
     retile(demo);
     await openIdentity(admin.page, state, RECORD_IDENTITY);
     retile(admin);
@@ -678,18 +757,21 @@ async function fullLoop(): Promise<void> {
     await demo.page.waitForSelector("#lift-l3-hud[data-flag='true']", { timeout: 20_000 });
     pin(demo);
     pin(admin);
-    await sleep(2_400);
+    await sleep(1_800);
     await refreshIdentity(admin, [demo]);
     xdo(["windowactivate", "--sync", admin.winId]);
     xdo(["mousemove", "--sync", String(admin.x + 480), String(admin.y + 520)]);
+    await sleep(200);
+    xdo(["click", "1"]);
+    await sleep(250);
     for (let i = 0; i < 7; i += 1) {
       xdo(["click", "5"]);
       await sleep(140);
     }
     pin(admin);
     pin(demo);
-    await sleep(2_400);
-    await visibleDragSlider(demo.page, 1, 0.08);
+    await sleep(1_600);
+    await visibleDragSlider(demo, demo.page, 1, 0.08);
     await demo.page.waitForFunction(
       () => {
         const hud = document.querySelector("#lift-l3-hud");
@@ -703,7 +785,7 @@ async function fullLoop(): Promise<void> {
     await demo.page.waitForSelector("#lift-l3-hud[data-trait='false']", { timeout: 40_000 });
     await sleep(2_200);
     await refreshIdentity(admin, [demo]);
-    await sleep(2_800);
+    await sleep(2_200);
   } finally {
     if (grab) await stopGrab(grab);
     await demo.browser.close().catch(() => {});
@@ -728,27 +810,38 @@ async function noFlap(): Promise<void> {
     await demo.page.waitForSelector("#lift-l3-hud", { timeout: 20_000 });
     await waitUntilCalm(demo.page);
     await demo.page.waitForSelector("#lift-l3-hud[data-flag='false']", { timeout: 20_000 });
+    await demo.page.locator("#lift-biometric").evaluate((el) => {
+      el.scrollIntoView({ block: "center", inline: "nearest" });
+    });
     retile(demo);
     await openIdentity(admin.page, state, NOFLAP_IDENTITY);
     retile(admin);
     retile(demo);
     grab = startGrab(tmp);
-    await sleep(1_200);
-    await sweepScore(demo.page, 0.48, 0.6, 320);
-    await sweepScore(demo.page, 0.6, 0.5, 320);
-    for (let i = 0; i < 5; i += 1) {
-      await sweepScore(demo.page, 0.54, 0.64, 180);
-      await sweepScore(demo.page, 0.64, 0.54, 180);
-    }
     await sleep(1_000);
-    await sweepScore(demo.page, 0.54, 0.9, 260);
-    await demo.page.waitForSelector("#lift-l3-hud[data-trait='true']", { timeout: 20_000 });
-    await sleep(2_000);
-    await refreshIdentity(admin, [demo]);
-    await sleep(2_800);
-    await sweepScore(demo.page, 0.9, 0.45, 420);
-    await sleep(1_600);
-    await sweepScore(demo.page, 0.45, 0.4, 500);
+    await visibleDragSlider(demo, demo.page, 0.2, 0.5);
+    await sleep(500);
+    const wiggling = [
+      [0.5, 0.42],
+      [0.42, 0.58],
+      [0.58, 0.45],
+      [0.45, 0.6],
+      [0.6, 0.4],
+      [0.4, 0.55],
+      [0.55, 0.48],
+    ] as const;
+    for (const [from, to] of wiggling) {
+      await visibleDragSlider(demo, demo.page, from, to);
+      const hud = demo.page.locator("#lift-l3-hud");
+      if ((await hud.getAttribute("data-trait")) === "true") {
+        throw new Error("no-flap entered Sensory-Safe while hovering the 0.38-0.62 slider band");
+      }
+      await sleep(280);
+    }
+    await demo.page.waitForSelector("#lift-l3-hud[data-trait='false']", { timeout: 8_000 });
+    await demo.page.waitForSelector("#lift-l3-hud[data-flag='false']", { timeout: 8_000 });
+    pin(demo);
+    pin(admin);
     await sleep(2_400);
   } finally {
     if (grab) await stopGrab(grab);
@@ -774,6 +867,9 @@ async function segment(): Promise<void> {
     await demo.page.waitForSelector("#lift-l3-hud", { timeout: 20_000 });
     await waitUntilCalm(demo.page);
     await demo.page.waitForSelector("#lift-l3-hud[data-trait='false']", { timeout: 20_000 });
+    await demo.page.locator("#lift-biometric").evaluate((el) => {
+      el.scrollIntoView({ block: "center", inline: "nearest" });
+    });
     retile(demo);
     await admin.page.goto(projectSegmentsUrl(state), { waitUntil: "domcontentloaded" });
     await hideFlagsmithSnippets(admin.page);
@@ -781,19 +877,29 @@ async function segment(): Promise<void> {
     retile(admin);
     retile(demo);
     grab = startGrab(tmp);
-    await sleep(4_000);
-    await openIdentity(admin.page, state, SEGMENT_IDENTITY);
-    await sleep(2_800);
-    await sweepScore(demo.page, 0.2, 0.95, 280);
-    await demo.page.waitForSelector("#lift-l3-hud[data-trait='true']", { timeout: 20_000 });
-    await sleep(1_800);
-    await refreshIdentity(admin, [demo]);
-    await sleep(3_000);
-    await sweepScore(demo.page, 0.95, 0.1, 380);
-    await demo.page.waitForSelector("#lift-l3-hud[data-trait='false']", { timeout: 25_000 });
-    await sleep(1_600);
-    await refreshIdentity(admin, [demo]);
     await sleep(3_200);
+    await openIdentity(admin.page, state, SEGMENT_IDENTITY);
+    retile(admin);
+    retile(demo);
+    await sleep(1_200);
+    await visiblePointerStress(demo, demo.page, 4_200);
+    await demo.page.waitForSelector("#lift-l3-hud[data-trait='true']", { timeout: 20_000 });
+    await demo.page.waitForSelector("#lift-l3-hud[data-flag='true']", { timeout: 20_000 });
+    pin(demo);
+    pin(admin);
+    await sleep(1_400);
+    await refreshIdentity(admin, [demo]);
+    xdo(["windowactivate", "--sync", admin.winId]);
+    xdo(["mousemove", "--sync", String(admin.x + 480), String(admin.y + 500)]);
+    await sleep(200);
+    xdo(["click", "1"]);
+    for (let i = 0; i < 6; i += 1) {
+      xdo(["click", "5"]);
+      await sleep(140);
+    }
+    pin(admin);
+    pin(demo);
+    await sleep(3_000);
   } finally {
     if (grab) await stopGrab(grab);
     await demo.browser.close().catch(() => {});
@@ -830,24 +936,12 @@ async function failOpenClip(): Promise<void> {
     pin(demo);
     pin(admin);
     await sleep(800);
-    visibleReload(admin, "click");
-    pin(demo);
-    pin(admin);
-    await admin.page.getByText("Traits", { exact: true }).first().waitFor({ timeout: 15_000 });
     await assertFlagsmithReachableFromPage(admin.page);
     await hideFlagsmithSnippets(admin.page);
     pin(demo);
     pin(admin);
-    await sleep(1_400);
-    xdo(["windowactivate", "--sync", demo.winId]);
-    xdo(["key", "Escape"]);
-    await sleep(200);
-    const reloaded = demo.page.waitForNavigation({
-      waitUntil: "domcontentloaded",
-      timeout: 15_000,
-    });
-    visibleReload(demo, "f5");
-    await reloaded;
+    await sleep(1_000);
+    await reloadAppWithBlockedFlagsmith(demo);
     pin(demo);
     pin(admin);
     await demo.page.waitForSelector("#lift-l3-hud", { timeout: 20_000 });

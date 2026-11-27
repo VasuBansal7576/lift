@@ -535,6 +535,8 @@ const runtime = {
   scrollRaf: 0,
   cursorEl: null,
   started: false,
+  initGen: 0,
+  importSdk: null,
   unsubscribers: [],
   lastAnnounced: "",
 };
@@ -880,10 +882,11 @@ function scheduleFlagsmithReconnect() {
   }, delay);
 }
 
-async function recoverFlagsmith() {
+export async function recoverFlagsmith() {
   if (!runtime.started || isOfflineFallback() || !runtime.offline) return;
   try {
     const config = await loadConfig();
+    if (!runtime.started) return;
     await initFlagsmith(config);
     if (!runtime.started) return;
     if (runtime.offline || !runtime.flagsmith) {
@@ -894,11 +897,13 @@ async function recoverFlagsmith() {
     void pushTrait(latestDesiredTrait());
     renderHud();
   } catch {
+    if (!runtime.started) return;
     scheduleFlagsmithReconnect();
   }
 }
 
 async function applyFromFlagsmith() {
+  if (!runtime.started) return;
   if (runtime.offline) {
     runtime.flagOn = false;
     runtime.segmentMember = false;
@@ -1189,8 +1194,19 @@ async function loadConfig() {
   }
 }
 
+function initAbandoned(gen) {
+  return gen !== runtime.initGen || !runtime.started;
+}
+
+async function loadFlagsmithSdk() {
+  const loader = typeof runtime.importSdk === "function" ? runtime.importSdk : () => import(L3_SDK_URL);
+  return loader();
+}
+
 async function initFlagsmith(config) {
+  const gen = ++runtime.initGen;
   runtime.identity = stickyIdentity();
+  if (initAbandoned(gen)) return;
   if (isOfflineFallback()) {
     failOpen("l3_offline");
     return;
@@ -1199,32 +1215,43 @@ async function initFlagsmith(config) {
     failOpen("missing environment key");
     return;
   }
-  const { default: flagsmith } = await withTimeout(import(L3_SDK_URL));
-  await withTimeout(
-    flagsmith.init({
-      environmentID: config.flagsmithEnvironmentKey,
-      api: config.flagsmithApiUrl,
-      identity: runtime.identity,
-    }),
-  );
-  runtime.flagsmith = flagsmith;
-  runtime.offline = false;
-  runtime.reconnectRetries = 0;
-  window.clearTimeout(runtime.reconnectTimer);
-  runtime.reconnectTimer = 0;
-  const banner = document.getElementById("lift-l3-offline");
-  if (banner) banner.hidden = true;
-  const snapshot = readFlagsmithState(flagsmith);
-  runtime.trait = snapshot.trait;
-  runtime.flagConfig = snapshot.flagConfig;
-  if (runtime.optedOut && snapshot.trait) {
-    void pushTrait(false);
-  } else if (snapshot.trait) {
-    runtime.desiredTrait = true;
-    runtime.hysteresis.overstimulated = true;
-    runtime.hysteresis.cooldownUntil = Date.now() + timingConfig().cooldownMs;
+  try {
+    const { default: flagsmith } = await withTimeout(loadFlagsmithSdk());
+    if (initAbandoned(gen)) return;
+    await withTimeout(
+      flagsmith.init({
+        environmentID: config.flagsmithEnvironmentKey,
+        api: config.flagsmithApiUrl,
+        identity: runtime.identity,
+      }),
+    );
+    if (initAbandoned(gen)) return;
+    runtime.flagsmith = flagsmith;
+    runtime.offline = false;
+    runtime.reconnectRetries = 0;
+    window.clearTimeout(runtime.reconnectTimer);
+    runtime.reconnectTimer = 0;
+    const banner = document.getElementById("lift-l3-offline");
+    if (banner) banner.hidden = true;
+    const snapshot = readFlagsmithState(flagsmith);
+    runtime.trait = snapshot.trait;
+    runtime.flagConfig = snapshot.flagConfig;
+    if (runtime.optedOut && snapshot.trait) {
+      void pushTrait(false);
+    } else if (snapshot.trait) {
+      runtime.desiredTrait = true;
+      runtime.hysteresis.overstimulated = true;
+      runtime.hysteresis.cooldownUntil = Date.now() + timingConfig().cooldownMs;
+    }
+    if (initAbandoned(gen)) return;
+    await applyFromFlagsmith();
+    if (initAbandoned(gen)) {
+      applySensorySafe(false, runtime.flagConfig);
+    }
+  } catch (err) {
+    if (initAbandoned(gen)) return;
+    throw err;
   }
-  await applyFromFlagsmith();
 }
 
 function bindAll() {
@@ -1251,19 +1278,24 @@ export async function start() {
       void pushTrait(latestDesiredTrait());
     } else if (!isOfflineFallback()) {
       const config = await loadConfig();
+      if (!runtime.started) return runtime;
       await initFlagsmith(config);
     } else {
       failOpen("l3_offline");
     }
   } catch (err) {
+    if (!runtime.started) return runtime;
     failOpen(err instanceof Error ? err.message : String(err));
   }
+  if (!runtime.started) return runtime;
   runtime.timer = window.setInterval(tick, 120);
   tick();
   return runtime;
 }
 
 export function stop() {
+  runtime.initGen += 1;
+  runtime.started = false;
   window.clearInterval(runtime.timer);
   window.clearTimeout(runtime.traitRetryTimer);
   window.clearTimeout(runtime.reconnectTimer);
@@ -1291,7 +1323,6 @@ export function stop() {
   });
   if (runtime.cursorEl?.parentNode) runtime.cursorEl.parentNode.removeChild(runtime.cursorEl);
   runtime.cursorEl = null;
-  runtime.started = false;
 }
 
 export function getRuntime() {
@@ -1330,6 +1361,7 @@ export const LiftL3 = {
   pushTrait,
   start,
   stop,
+  recoverFlagsmith,
   getRuntime,
   forceScore(n) {
     runtime.forceScore = n == null ? null : clamp01(Number(n));

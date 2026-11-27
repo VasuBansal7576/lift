@@ -21,6 +21,7 @@ import {
   namedSegmentsSearchPath,
   originFromApiUrl,
   parseL3Args,
+  pickCanonicalSegment,
   segmentCreatePayload,
   segmentOverridePatch,
   segmentUsesTrait,
@@ -183,6 +184,9 @@ describe("L3 runtime stays aligned with shared constants", () => {
     expect(src).toContain("(default, Flagsmith unreachable)");
     expect(src).toContain("scheduleFlagsmithReconnect");
     expect(src).toMatch(/await initFlagsmith\(config\);\s*if \(!runtime\.started\) return;/);
+    expect(src).toMatch(/const gen = \+\+runtime\.initGen/);
+    expect(src).toMatch(/runtime\.initGen \+= 1/);
+    expect(src).toMatch(/gen !== runtime\.initGen \|\| !runtime\.started/);
     expect(src).toContain("flagsmith.setTrait");
     expect(src).toContain("hasFeature(L3_FLAG_NAME)");
     expect(src).toContain("OFFLINE FALLBACK — tests only");
@@ -202,8 +206,10 @@ describe("L3 recorder never stops shared Flagsmith", () => {
     expect(src).not.toContain("setContent");
     expect(src).toContain("Show Request conditions");
     expect(src).toContain("*://127.0.0.1:8000/*");
-    expect(src).toContain("Network.setBlockedURLs");
-    expect(src).toContain('page.route("http://127.0.0.1:8000/**"');
+    expect(src).not.toContain("page.route(");
+    expect(src).not.toContain("setBlockedURLs");
+    expect(src).not.toContain("persistFlagsmithBlock");
+    expect(src).toContain("reloadAppWithBlockedFlagsmith");
     expect(src).toContain("allow-stop-shared-flagsmith");
     expect(src).toContain("LiftL3.forceScore(");
     expect(src).toContain("visiblePointerStress");
@@ -215,5 +221,28 @@ describe("L3 recorder never stops shared Flagsmith", () => {
     const html = readFileSync(resolve(ROOT, "demo/l3/index.html"), "utf8");
     expect(html).toContain('id="lift-l3-offline"');
     expect(html).toContain("Flagsmith unreachable. Staying in the normal flag-off state.");
+    expect(src).not.toContain("sweepScore");
+    expect(src).not.toContain("driftScore");
+    expect(src).toContain("visibleFocusReload");
+  });
+});
+
+describe("L3 bootstrap keeps the lowest duplicate sensory_safe segment", () => {
+  it("writes rules to the lowest id and warns about extras without deleting them", () => {
+    const extras = pickCanonicalSegment([
+      { id: 9, name: "sensory_safe" },
+      { id: 3, name: "sensory_safe" },
+      { id: 12, name: "sensory_safe" },
+    ]);
+    expect(extras.chosen.id).toBe(3);
+    expect(extras.extras.map((row) => row.id)).toEqual([9, 12]);
+
+    const src = readFileSync(resolve(ROOT, "scripts/l3-bootstrap.ts"), "utf8");
+    expect(src).toContain("pickCanonicalSegment(existing)");
+    expect(src).toContain("warnDuplicateSegments(chosen, extras)");
+    expect(src).toContain("using lowest id=");
+    expect(src).toContain("(not deleted)");
+    expect(src).not.toMatch(/adminRequest<[^>]+>\(\s*apiUrl,\s*token,\s*"DELETE"/);
+    expect(src).not.toMatch(/for \(const row of existing\) \{\s*chosen = await writeSegmentRules/);
   });
 });

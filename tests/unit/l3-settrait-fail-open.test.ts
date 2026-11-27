@@ -45,6 +45,7 @@ type FakeNode = {
     replaceChildren: (...nodes: FakeNode[]) => void;
     append: (...nodes: Array<FakeNode | string>) => void;
   contains: (other: FakeNode) => boolean;
+  removeChild: (child: FakeNode) => FakeNode;
   closest: (sel: string) => FakeNode | null;
   addEventListener: () => void;
   removeEventListener: () => void;
@@ -95,6 +96,11 @@ function fakeEl(tag = "div", id = ""): FakeNode {
     appendChild(child: FakeNode) {
       this.children.push(child);
       child.parentNode = this;
+      return child;
+    },
+    removeChild(child: FakeNode) {
+      this.children = this.children.filter((node) => node !== child);
+      child.parentNode = null;
       return child;
     },
     replaceChildren(...nodes: FakeNode[]) {
@@ -262,17 +268,34 @@ async function loadRuntime() {
     },
   };
 
+  const fetchStub = async (input: unknown) => {
+    if (String(input).includes("config.json")) {
+      return {
+        ok: true,
+        async json() {
+          return {
+            flagsmithEnvironmentKey: "test-env-key",
+            flagsmithApiUrl: "http://127.0.0.1:8000/api/v1/",
+          };
+        },
+      };
+    }
+    return { ok: false, async json() { return {}; } };
+  };
+
   Object.assign(globalThis, {
     window: windowObj,
     document,
     location: windowObj.location,
     sessionStorage: windowObj.sessionStorage,
     CustomEvent: windowObj.CustomEvent,
+    fetch: fetchStub,
     __LIFT_L3_NO_AUTO__: true,
   });
+  (windowObj as { fetch?: typeof fetchStub }).fetch = fetchStub;
 
   const mod = await import("../../runtime/l3-balancer.js");
-  return { ...mod, html, hud };
+  return { ...mod, html, hud, windowObj };
 }
 
 describe("L3 setTrait reject fail-open", () => {
@@ -321,5 +344,168 @@ describe("L3 setTrait reject fail-open", () => {
     await pushTrait(true);
     expect(html.classList.contains("lift-sensory-safe")).toBe(false);
     expect(runtime.offline).toBe(false);
+  });
+});
+
+type TestRuntime = {
+  started: boolean;
+  initGen: number;
+  flagsmith: unknown;
+  offline: boolean;
+  hysteresis: { overstimulated: boolean };
+  importSdk?: (() => Promise<{ default: unknown }>) | null;
+};
+
+async function waitForInitGen(
+  getRuntime: () => TestRuntime,
+  min: number,
+  ms = 2_000,
+): Promise<void> {
+  const t0 = Date.now();
+  while (Date.now() - t0 < ms) {
+    if (getRuntime().initGen >= min) return;
+    await new Promise((r) => setTimeout(r, 10));
+  }
+  throw new Error(`initGen stayed at ${getRuntime().initGen}, expected >= ${min}`);
+}
+
+function gatedSdk(gate: Promise<void>, traitOn: boolean) {
+  return async () => ({
+    default: {
+      async init() {
+        await gate;
+      },
+      getTrait() {
+        return traitOn;
+      },
+      hasFeature() {
+        return traitOn;
+      },
+      getValue() {
+        return JSON.stringify({
+          pauseMedia: true,
+          pauseMotion: true,
+          softenContrast: true,
+          showSummaries: true,
+          hideMarketing: true,
+        });
+      },
+      async setTrait() {},
+      async getFlags() {},
+    },
+  });
+}
+
+function resetRuntime(
+  getRuntime: () => TestRuntime,
+  initialHysteresis: () => { overstimulated: boolean },
+) {
+  const runtime = getRuntime();
+  runtime.flagsmith = null;
+  runtime.offline = false;
+  runtime.initGen = 0;
+  runtime.importSdk = null;
+  runtime.hysteresis = initialHysteresis();
+  runtime.started = false;
+}
+
+describe("L3 init generation ignores stale Flagsmith init", () => {
+  afterEach(() => {
+    const runtime = (
+      globalThis as { window?: { LiftL3?: { stop?: () => void } } }
+    ).window?.LiftL3;
+    runtime?.stop?.();
+  });
+
+  it("does not mutate after stop() during initFlagsmith", async () => {
+    const { start, stop, getRuntime, html, initialHysteresis } = await loadRuntime();
+    resetRuntime(getRuntime as () => TestRuntime, initialHysteresis);
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    (getRuntime() as TestRuntime).importSdk = gatedSdk(gate, true);
+
+    const starting = start();
+    await waitForInitGen(getRuntime as () => TestRuntime, 1);
+    stop();
+    release();
+    await starting;
+
+    const runtime = getRuntime() as TestRuntime;
+    expect(runtime.started).toBe(false);
+    expect(runtime.flagsmith).toBe(null);
+    expect(runtime.hysteresis.overstimulated).toBe(false);
+    expect(html.classList.contains("lift-sensory-safe")).toBe(false);
+  });
+
+  it("stop/start during recoverFlagsmith does not double-init stale state", async () => {
+    const { start, stop, recoverFlagsmith, getRuntime, html, initialHysteresis } = await loadRuntime();
+    resetRuntime(getRuntime as () => TestRuntime, initialHysteresis);
+    (getRuntime() as TestRuntime).importSdk = async () => ({
+      default: {
+        async init() {
+          throw new Error("Flagsmith down");
+        },
+        getTrait() {
+          return false;
+        },
+        hasFeature() {
+          return false;
+        },
+        getValue() {
+          return "{}";
+        },
+        async setTrait() {},
+        async getFlags() {},
+      },
+    });
+    await start();
+    const afterFail = getRuntime() as TestRuntime;
+    expect(afterFail.started).toBe(true);
+    expect(afterFail.offline).toBe(true);
+
+    let releaseStale = () => {};
+    const staleGate = new Promise<void>((resolve) => {
+      releaseStale = resolve;
+    });
+    let staleInitEntered = false;
+    (getRuntime() as TestRuntime).importSdk = async () => ({
+      default: {
+        async init() {
+          staleInitEntered = true;
+          await staleGate;
+        },
+        getTrait() {
+          return true;
+        },
+        hasFeature() {
+          return true;
+        },
+        getValue() {
+          return "{}";
+        },
+        async setTrait() {},
+        async getFlags() {},
+      },
+    });
+
+    const recovering = recoverFlagsmith();
+    const waitEnter = Date.now();
+    while (!staleInitEntered && Date.now() - waitEnter < 2_000) {
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    if (!staleInitEntered) throw new Error("recoverFlagsmith did not enter flagsmith.init");
+
+    (getRuntime() as TestRuntime).importSdk = gatedSdk(Promise.resolve(), false);
+    stop();
+    await start();
+    releaseStale();
+    await recovering;
+
+    const runtime = getRuntime() as TestRuntime;
+    expect(runtime.started).toBe(true);
+    expect(html.classList.contains("lift-sensory-safe")).toBe(false);
+    expect(runtime.hysteresis.overstimulated).toBe(false);
   });
 });

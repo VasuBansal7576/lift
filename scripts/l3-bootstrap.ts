@@ -499,6 +499,31 @@ export function namedSegmentsSearchPath(projectId: string, name = L3_SEGMENT_NAM
   return `/projects/${projectId}/segments/?search=${encodeURIComponent(name)}`;
 }
 
+export function pickCanonicalSegment<T extends { id: number }>(
+  segments: T[],
+): { chosen: T; extras: T[] } {
+  if (segments.length === 0) {
+    throw new L3BootstrapError("Segment list was empty after lookup");
+  }
+  const sorted = [...segments].sort((a, b) => a.id - b.id);
+  const chosen = sorted[0];
+  if (!chosen) {
+    throw new L3BootstrapError("Segment list was empty after lookup");
+  }
+  return { chosen, extras: sorted.slice(1) };
+}
+
+export function warnDuplicateSegments(
+  chosen: { id: number },
+  extras: Array<{ id: number; name?: string }>,
+): void {
+  if (extras.length === 0) return;
+  const extraIds = extras.map((row) => row.id).join(", ");
+  process.stderr.write(
+    `Warning: multiple sensory_safe/overstimulated segments found; using lowest id=${chosen.id}; extras=${extraIds} (not deleted)\n`,
+  );
+}
+
 async function listNamedSegments(
   apiUrl: string,
   token: string,
@@ -553,15 +578,10 @@ async function ensureSegment(
     );
     return { segment: data, created: true };
   }
-  const first = existing[0];
-  if (!first) {
-    throw new L3BootstrapError("Segment list was empty after lookup");
-  }
-  let chosen = first;
-  for (const row of existing) {
-    chosen = await writeSegmentRules(apiUrl, token, projectId, row.id);
-  }
-  return { segment: chosen, created: false };
+  const { chosen, extras } = pickCanonicalSegment(existing);
+  warnDuplicateSegments(chosen, extras);
+  const updated = await writeSegmentRules(apiUrl, token, projectId, chosen.id);
+  return { segment: updated, created: false };
 }
 
 async function ensureFlag(

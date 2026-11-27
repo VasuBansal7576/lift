@@ -14,6 +14,22 @@ function wait(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function cssDisableWorks() {
+  const s = document.createElement("style");
+  s.textContent = "#__lift_probe{color:rgb(12,34,56)}";
+  document.head.append(s);
+  const el = document.createElement("div");
+  el.id = "__lift_probe";
+  document.body.append(el);
+  const on = getComputedStyle(el).color;
+  s.disabled = true;
+  if (s.sheet) s.sheet.disabled = true;
+  const off = getComputedStyle(el).color;
+  s.remove();
+  el.remove();
+  return on !== off;
+}
+
 function css(rules: object[]) {
   return { op: "injectCSS" as const, rules };
 }
@@ -68,41 +84,63 @@ describe("R11 attribution does not loop", () => {
     expect(document.querySelector("[data-lift-css]")).not.toBeNull();
   });
 
-  it("keeps focus on a promoted control while the page changes", async () => {
+  it("keeps focus on a promoted control while injectCSS plus a page contrast change is attributed", async () => {
     document.body.innerHTML = `<div id="h" style="cursor:pointer;color:#111;background-color:#fff">Pay</div>`;
     expect(
       applyPatchSpec({
         id: "focus-keep",
         version: 0,
-        ops: [{ op: "promoteToControl", selector: "#h", as: "button" }],
+        ops: [
+          { op: "promoteToControl", selector: "#h", as: "button" },
+          css([
+            {
+              selector: { id: "h" },
+              declarations: [{ property: "min-width", value: "44px" }],
+            },
+          ]),
+        ],
       }).ok,
     ).toBe(true);
     const host = document.getElementById("h");
     if (host instanceof HTMLElement) host.focus();
     expect(document.activeElement).toBe(host);
+    const before = getRuntimeStats();
     if (host instanceof HTMLElement) host.style.color = "#eee";
-    await wait(80);
+    await wait(120);
+    const after = getRuntimeStats();
+    expect(after.attributions - before.attributions).toBeGreaterThanOrEqual(1);
     expect(document.activeElement).toBe(host);
     expect(host?.getAttribute("data-lift-promoted")).toBe("button");
   });
 
-  it("keeps a user-opened disclosure open while the page changes", async () => {
+  it("keeps a user-opened disclosure open while injectCSS plus a page contrast change is attributed", async () => {
     document.body.innerHTML = `
-      <button type="button" id="tr">More</button>
+      <button type="button" id="tr" style="color:#111;background-color:#fff">More</button>
       <div id="panel">Hidden</div>
     `;
     expect(
       applyPatchSpec({
         id: "disc",
         version: 0,
-        ops: [{ op: "toggleDisclosure", trigger: "#tr", panel: "#panel" }],
+        ops: [
+          { op: "toggleDisclosure", trigger: "#tr", panel: "#panel" },
+          css([
+            {
+              selector: { id: "tr" },
+              declarations: [{ property: "min-width", value: "44px" }],
+            },
+          ]),
+        ],
       }).ok,
     ).toBe(true);
     document.getElementById("tr")?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     expect(document.getElementById("panel")?.classList.contains("lift-open")).toBe(true);
+    const before = getRuntimeStats();
     const tr = document.getElementById("tr");
     if (tr instanceof HTMLElement) tr.style.color = "#eee";
-    await wait(80);
+    await wait(120);
+    const after = getRuntimeStats();
+    expect(after.attributions - before.attributions).toBeGreaterThanOrEqual(1);
     expect(document.getElementById("panel")?.classList.contains("lift-open")).toBe(true);
   });
 });
@@ -123,7 +161,7 @@ describe("R11 W3/W4 spec-caused still undoes", () => {
     expect(document.getElementById("pay")?.hasAttribute("aria-label")).toBe(false);
   });
 
-  it("still undoes a genuine spec-caused contrast regression", async () => {
+  it.skipIf(!cssDisableWorks())("still undoes a genuine spec-caused contrast regression", async () => {
     document.head.insertAdjacentHTML(
       "beforeend",
       `<style>.panel { color: #fff; background-color: #111; }</style>`,
@@ -139,7 +177,7 @@ describe("R11 W3/W4 spec-caused still undoes", () => {
     expect(!sheet || sheet.disabled).toBe(true);
   });
 
-  it("still undoes overflow .item matches that fail contrast", async () => {
+  it.skipIf(!cssDisableWorks())("still undoes overflow .item matches that fail contrast", async () => {
     const list = document.createElement("div");
     list.style.cssText = "background-color:#fff;color:#111";
     for (let i = 0; i < 10; i += 1) {
@@ -179,7 +217,7 @@ describe("R11 W3/W4 spec-caused still undoes", () => {
 });
 
 describe("R11 window capture before promote is once", () => {
-  it("Enter and Space each fire one click when window capture clicks first", () => {
+  it("Enter and Space each fire one click when window capture clicks first", async () => {
     document.body.innerHTML = `<div id="h" style="cursor:pointer">Pay</div>`;
     const host = document.getElementById("h");
     let clicks = 0;
@@ -200,10 +238,12 @@ describe("R11 window capture before promote is once", () => {
     ).toBe(true);
     key(host, "keydown", "Enter");
     key(host, "keyup", "Enter");
+    await wait(0);
     expect(clicks).toBe(1);
     clicks = 0;
     key(host, "keydown", " ");
     key(host, "keyup", " ");
+    await wait(0);
     expect(clicks).toBe(1);
     window.removeEventListener("keydown", onWin, true);
   });

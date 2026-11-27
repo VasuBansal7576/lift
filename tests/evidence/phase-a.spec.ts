@@ -1,6 +1,10 @@
+import { createRequire } from "node:module";
 import { AxeBuilder } from "@axe-core/playwright";
 import { expect, test, type Page } from "@playwright/test";
 import { AXE_GATE_RULES } from "../../shared/patch-spec.ts";
+
+const require = createRequire(import.meta.url);
+const axePath = require.resolve("axe-core/axe.min.js");
 
 async function pause(page: Page, ms = 1600) {
   await page.waitForTimeout(ms);
@@ -110,35 +114,53 @@ test("01-control-barriers", async ({ page }) => {
   await pause(page, 2000);
 });
 
+async function injectAxe(page: Page) {
+  await page.addScriptTag({ path: axePath });
+}
+
+async function paintLiveAxePanel(page: Page, title: string) {
+  await page.evaluate(async (cap) => {
+    const axe = (window as unknown as { axe: { run: (ctx: Document) => Promise<{ violations: { id: string; nodes: unknown[] }[] }> } }).axe;
+    const results = await axe.run(document);
+    let panel = document.getElementById("lift-axe-panel");
+    if (!panel) {
+      panel = document.createElement("div");
+      panel.id = "lift-axe-panel";
+      panel.setAttribute("data-evidence", "1");
+      panel.style.cssText =
+        "position:fixed;top:56px;left:16px;right:16px;z-index:2147483646;max-height:40vh;overflow:auto;padding:12px 16px;font:16px/1.4 ui-monospace,monospace;background:#111;color:#fff;border:3px solid #38bdf8";
+      document.body.append(panel);
+    }
+    const lines = results.violations.map((v) => `${v.id}: ${v.nodes.length}`).join("\n");
+    panel.textContent = `${cap}\n${results.violations.length} rules\n${lines || "(none)"}`;
+    return results.violations.map((v) => v.id);
+  }, title);
+  await pause(page, 1200);
+}
+
 test("02-treatment-before-after", async ({ page }) => {
   await page.goto("/checkout/?lift_variant=control");
   await openCheckoutWithHover(page);
+  await injectAxe(page);
+  await paintLiveAxePanel(page, "BEFORE axe.run() — treatment not applied yet");
   const beforeAxe = await axeSummary(page);
-  await showBanner(
-    page,
-    `BEFORE runtime spec — ${beforeAxe.total} axe violations, gate [${beforeAxe.gate.join(", ")}]`,
-  );
   await expect(page.locator("#place-order")).toHaveJSProperty("tagName", "DIV");
+  await showBanner(page, "APPLYING treatment spec on this same page — watch labels, Shop, Place order");
   const applied = await applyTreatment(page);
   expect(applied.ok).toBe(true);
-  await pause(page, 800);
+  await pause(page, 1800);
   await expect(page.locator("#shop-trigger")).toHaveRole("button");
   await expect(page.locator('label[for="email"]')).toHaveText("Email");
   await expect(page.locator("#place-order")).toHaveRole("button");
   await expect(page.locator("#place-order")).toHaveText("Place order");
+  await paintLiveAxePanel(page, "AFTER axe.run() — treatment applied on this page");
   const afterAxe = await axeSummary(page);
-  const leftoverNote =
-    "leftover region on .sim-banner — fixture demo note sits outside header/main landmarks; not a gate rule (label/button-name/color-contrast); promoteToControl cannot emit landmark tags";
-  await showBanner(
-    page,
-    `AFTER runtime.js spec — ${afterAxe.total} axe violations (was ${beforeAxe.total}); gate [${afterAxe.gate.join(", ") || "cleared"}]; ${leftoverNote}`,
-  );
   expect(beforeAxe.total, "control axe count").toBe(4);
   expect(afterAxe.gate, "treatment should clear the axe gate").toEqual([]);
   expect(afterAxe.ids, "one leftover non-gate region on the demo banner").toEqual(["region"]);
   expect(afterAxe.total, "treatment leftover axe count").toBe(1);
   await page.locator("#place-order").focus();
-  await pause(page, 2000);
+  await pause(page, 1800);
 });
 
 test("03-keyboard-submit-once", async ({ page }) => {
@@ -196,6 +218,14 @@ async function applyAttack(
     };
     return runtime.applyPatchSpec(input);
   }, spec);
+}
+
+async function liftCssEnabled(page: Page) {
+  return page.evaluate(() =>
+    [...document.querySelectorAll("[data-lift-css]")].some(
+      (el) => el instanceof HTMLStyleElement && !el.disabled,
+    ),
+  );
 }
 
 async function setBackstopsPaused(page: Page, paused: boolean) {
@@ -600,7 +630,9 @@ test("04-late-content", async ({ page }) => {
     const failOpen = (window as unknown as { __LIFT_FAIL_OPEN__?: { reason: string }[] })
       .__LIFT_FAIL_OPEN__;
     return {
-      css: Boolean(document.querySelector("[data-lift-css]")),
+      css: [...document.querySelectorAll("[data-lift-css]")].some(
+        (el) => el instanceof HTMLStyleElement && !el.disabled,
+      ),
       failOpen: failOpen?.length ?? 0,
       reason: failOpen?.[failOpen.length - 1]?.reason ?? "",
     };
@@ -661,7 +693,7 @@ test("04-descendant-contrast", async ({ page }) => {
   await showGhostReadout(page, ".lift-ghost", "BAD STATE: white-on-white");
   await setBackstopsPaused(page, false);
   await page.waitForTimeout(80);
-  expect(await page.evaluate(() => Boolean(document.querySelector("[data-lift-css]")))).toBe(false);
+  expect(await liftCssEnabled(page)).toBe(false);
   const after = await snapshotPage(page);
   expect(after.pay).toBe(before.pay);
   await showRestoredReadout(page, ".lift-ghost", "UNDONE descendant contrast — injected CSS removed");
@@ -819,7 +851,9 @@ test("04-covered-control", async ({ page }) => {
     const box = buy.getBoundingClientRect();
     const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
     return {
-      css: Boolean(document.querySelector("[data-lift-css]")),
+      css: [...document.querySelectorAll("[data-lift-css]")].some(
+        (el) => el instanceof HTMLStyleElement && !el.disabled,
+      ),
       hitOk: hit === buy || Boolean(buy.contains(hit)),
     };
   });
@@ -893,7 +927,7 @@ test("04-reapply-guard", async ({ page }) => {
   await showGhostReadout(page, ".lift-ghost", "BAD STATE: white-on-white after re-apply left undos");
   await setBackstopsPaused(page, false);
   await page.waitForTimeout(80);
-  expect(await page.evaluate(() => Boolean(document.querySelector("[data-lift-css]")))).toBe(false);
+  expect(await liftCssEnabled(page)).toBe(false);
   await expect(page.locator("#panel")).toContainText("Theme panel");
   await showRestoredReadout(page, "#panel", "UNDONE — Theme panel is readable again (effective background)");
   await clearBadState(page);
@@ -965,7 +999,9 @@ test("04-cssom-insertRule", async ({ page }) => {
     await new Promise((resolve) => setTimeout(resolve, 120));
     const el = document.querySelector(".slot");
     return {
-      hasCss: Boolean(document.querySelector("[data-lift-css]")),
+      hasCss: [...document.querySelectorAll("[data-lift-css]")].some(
+        (el) => el instanceof HTMLStyleElement && !el.disabled,
+      ),
       color: el instanceof HTMLElement ? getComputedStyle(el).color : "",
       bg: el instanceof HTMLElement ? getComputedStyle(el).backgroundColor : "",
     };
@@ -1130,7 +1166,7 @@ test("04-guard-spec-caused", async ({ page }) => {
   await showGhostReadout(page, ".lift-ghost", "BAD STATE: spec-caused white-on-white");
   await setBackstopsPaused(page, false);
   await page.waitForTimeout(80);
-  expect(await page.evaluate(() => Boolean(document.querySelector("[data-lift-css]")))).toBe(false);
+  expect(await liftCssEnabled(page)).toBe(false);
   await showRestoredReadout(page, "#spec-panel", "UNDONE spec-caused regression — panel readable again");
   await clearBadState(page);
   await pause(page, 800);
@@ -1260,7 +1296,9 @@ test("04-sticky-hit-target-covers-rejected", async ({ page }) => {
     const box = buy.getBoundingClientRect();
     const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
     return {
-      css: Boolean(document.querySelector("[data-lift-css]")),
+      css: [...document.querySelectorAll("[data-lift-css]")].some(
+        (el) => el instanceof HTMLStyleElement && !el.disabled,
+      ),
       hitOk: hit === buy || Boolean(buy.contains(hit)),
     };
   });
@@ -1324,46 +1362,56 @@ test("04-capture-click-no-double", async ({ page }) => {
   await pause(page, 2000);
 });
 
-async function paintAccessibleNamePanel(page: Page, selector: string, caption: string) {
-  const computed = await page.evaluate((sel) => {
-    const el = document.querySelector(sel);
-    if (!(el instanceof HTMLElement)) return { name: "", vis: "" };
-    const by = el.getAttribute("aria-labelledby");
-    let name = "";
-    if (by) {
-      name = by
-        .trim()
-        .split(/\s+/)
-        .map((id) => (document.getElementById(id)?.textContent || "").trim())
-        .filter(Boolean)
-        .join(" ");
-    }
-    if (!name) name = (el.getAttribute("aria-label") || "").trim();
-    if (!name) name = (el.textContent || "").trim();
-    return { name, vis: (el.textContent || "").trim() };
-  }, selector);
-  await page.evaluate(
-    ({ cap, name, vis }) => {
-      let panel = document.getElementById("lift-name-panel");
-      if (!panel) {
-        panel = document.createElement("div");
-        panel.id = "lift-name-panel";
-        panel.setAttribute("data-evidence", "1");
-        panel.style.cssText =
-          "position:fixed;bottom:96px;left:16px;right:16px;z-index:2147483647;padding:14px 16px;font:700 20px/1.4 ui-monospace,monospace;background:#111;color:#fff;border:4px solid #38bdf8";
-        document.body.append(panel);
+async function installLiveNamePanel(page: Page, selector: string) {
+  await page.evaluate((sel) => {
+    const compute = (el: Element) => {
+      const by = el.getAttribute("aria-labelledby");
+      let name = "";
+      if (by) {
+        name = by
+          .trim()
+          .split(/\s+/)
+          .map((id) => (document.getElementById(id)?.textContent || "").trim())
+          .filter(Boolean)
+          .join(" ");
       }
-      panel.textContent = `${cap}\ncomputed accessible name: "${name}"\nvisible text: "${vis}"`;
-    },
-    { cap: caption, name: computed.name, vis: computed.vis },
-  );
-  await pause(page, 1500);
+      if (!name) name = (el.getAttribute("aria-label") || "").trim();
+      if (!name) name = (el.textContent || "").trim();
+      return { name, vis: (el.textContent || "").trim() };
+    };
+    let panel = document.getElementById("lift-name-panel");
+    if (!panel) {
+      panel = document.createElement("div");
+      panel.id = "lift-name-panel";
+      panel.setAttribute("data-evidence", "1");
+      panel.style.cssText =
+        "position:fixed;bottom:96px;left:16px;right:16px;z-index:2147483647;padding:14px 16px;font:700 20px/1.4 ui-monospace,monospace;background:#111;color:#fff;border:4px solid #38bdf8";
+      document.body.append(panel);
+    }
+    const paint = () => {
+      const el = document.querySelector(sel);
+      if (!(el instanceof HTMLElement) || !panel) return;
+      const { name, vis } = compute(el);
+      const next = `LIVE accessible name from DOM\ncomputed: "${name}"\nvisible: "${vis}"\naria-label: "${el.getAttribute("aria-label") ?? ""}"`;
+      if (panel.textContent !== next) panel.textContent = next;
+    };
+    paint();
+    const target = document.querySelector(sel);
+    if (target) {
+      new MutationObserver(paint).observe(target, {
+        subtree: true,
+        childList: true,
+        characterData: true,
+        attributes: true,
+      });
+    }
+  }, selector);
 }
 
 test("04-label-in-name-attributed", async ({ page }) => {
   await page.goto("/checkout/?lift_variant=control&lift_bot=1");
   await openCheckoutWithHover(page);
-  await showBanner(page, "W3 — aria-label is undone when the visible text no longer matches");
+  await showBanner(page, "W3 — live accessible name from the DOM as the visible text changes");
   const applied = await page.evaluate(async () => {
     const href = new URL("/runtime/runtime.js", location.origin).href;
     const runtime = (await import(href)) as {
@@ -1383,47 +1431,21 @@ test("04-label-in-name-attributed", async ({ page }) => {
     });
   });
   expect(applied.ok).toBe(true);
+  await installLiveNamePanel(page, "#named-pay");
+  await pause(page, 1200);
   await setBackstopsPaused(page, true);
-  const before = await page.evaluate(() => {
+  await page.evaluate(() => {
     const pay = document.getElementById("named-pay");
-    if (!(pay instanceof HTMLElement)) return { name: "", text: "" };
-    pay.textContent = "Checkout (2)";
-    return {
-      labelled: pay.getAttribute("aria-label") ?? "",
-      text: pay.textContent ?? "",
-      computed: pay.getAttribute("aria-label") || pay.textContent || "",
-    };
+    if (pay instanceof HTMLElement) pay.textContent = "Checkout (2)";
   });
-  await paintAccessibleNamePanel(
-    page,
-    "#named-pay",
-    `BEFORE undo — aria-label="${before.labelled}" visible="${before.text}"`,
-  );
-  await showBanner(
-    page,
-    `BEFORE undo — computed name="${before.computed}" visible="${before.text}" (label-in-name broken)`,
-  );
+  await pause(page, 1600);
   await setBackstopsPaused(page, false);
-  await page.waitForTimeout(80);
+  await page.waitForTimeout(200);
   const after = await page.evaluate(() => {
     const pay = document.getElementById("named-pay");
-    if (!(pay instanceof HTMLElement)) return { labelled: true, computed: "", text: "" };
-    return {
-      labelled: pay.hasAttribute("aria-label"),
-      computed: pay.getAttribute("aria-label") || pay.textContent || "",
-      text: pay.textContent ?? "",
-    };
+    return { labelled: Boolean(pay?.hasAttribute("aria-label")), text: pay?.textContent ?? "" };
   });
   expect(after.labelled).toBe(false);
-  await paintAccessibleNamePanel(
-    page,
-    "#named-pay",
-    `AFTER undo — aria-label removed, visible="${after.text}"`,
-  );
-  await showBanner(
-    page,
-    `AFTER undo — computed name="${after.computed}" visible="${after.text}" — aria-label op removed`,
-  );
   await pause(page, 2000);
 });
 
@@ -1482,7 +1504,13 @@ test("04-overflow-matches-contrast", async ({ page }) => {
   await showGhostReadout(page, "#dark-items .item", "BAD STATE: overflow .item is #111 on #111");
   await setBackstopsPaused(page, false);
   await page.waitForTimeout(80);
-  expect(await page.evaluate(() => Boolean(document.querySelector("[data-lift-css]")))).toBe(false);
+  expect(
+    await page.evaluate(() =>
+      [...document.querySelectorAll("[data-lift-css]")].some(
+        (el) => el instanceof HTMLStyleElement && !el.disabled,
+      ),
+    ),
+  ).toBe(false);
   await showRestoredReadout(
     page,
     "#dark-items .item",
@@ -1493,9 +1521,10 @@ test("04-overflow-matches-contrast", async ({ page }) => {
 });
 
 test("04-page-contrast-no-loop", async ({ page }) => {
+  test.setTimeout(30_000);
   await page.goto("/checkout/?lift_variant=control&lift_bot=1");
   await openCheckoutWithHover(page);
-  await showBanner(page, "R11 — page #eee on white must not loop undo/redo");
+  await showBanner(page, "Page colour flashes every 100ms — counters must stay live, undos 0");
   const applied = await page.evaluate(async () => {
     const href = new URL("/runtime/runtime.js", location.origin).href;
     const runtime = (await import(href)) as {
@@ -1507,13 +1536,13 @@ test("04-page-contrast-no-loop", async ({ page }) => {
     hit.id = "loop-hit";
     hit.href = "#x";
     hit.textContent = "Go";
-    hit.style.cssText = "display:inline-block;color:#111;background:#fff;font:700 18px/1.3 system-ui";
+    hit.style.cssText =
+      "display:inline-block;padding:12px 18px;color:#111;background:#fff;font:700 22px/1.3 system-ui";
     checkout.append(hit);
     const counter = document.createElement("div");
     counter.id = "undo-cycles";
     counter.style.cssText =
-      "font:800 28px/1.2 ui-monospace,monospace;margin:12px 0;padding:10px;background:#111;color:#fff";
-    counter.textContent = "undo cycles: 0";
+      "font:800 22px/1.35 ui-monospace,monospace;margin:12px 0;padding:12px;background:#111;color:#fff;white-space:pre-wrap";
     checkout.append(counter);
     const applied = runtime.applyPatchSpec({
       id: "minw-loop",
@@ -1531,33 +1560,61 @@ test("04-page-contrast-no-loop", async ({ page }) => {
       ],
     });
     const before = runtime.getRuntimeStats();
-    hit.style.color = "#eee";
+    let styleMutations = 0;
+    let loads = 0;
+    new MutationObserver((records) => {
+      for (const rec of records) {
+        if (rec.type === "attributes" && rec.attributeName === "style") styleMutations += 1;
+      }
+    }).observe(hit, { attributes: true, attributeFilter: ["style"] });
+    document.addEventListener(
+      "load",
+      () => {
+        loads += 1;
+      },
+      true,
+    );
+    let on = false;
+    const flash = window.setInterval(() => {
+      on = !on;
+      hit.style.color = on ? "#eee" : "#111";
+    }, 100);
     const started = Date.now();
-    while (Date.now() - started < 5000) {
+    while (Date.now() - started < 8000) {
+      const elapsed = (Date.now() - started) / 1000;
       const stats = runtime.getRuntimeStats();
-      counter.textContent = `undo cycles: ${stats.undos - before.undos}`;
-      await new Promise((resolve) => setTimeout(resolve, 200));
+      const mutPerSec = elapsed > 0 ? styleMutations / elapsed : 0;
+      const loadPerSec = elapsed > 0 ? loads / elapsed : 0;
+      counter.textContent = [
+        `style mutations/s: ${mutPerSec.toFixed(1)}`,
+        `loads/s: ${loadPerSec.toFixed(2)}`,
+        `undos: ${stats.undos - before.undos}`,
+        `attributions: ${stats.attributions - before.attributions}`,
+        `elapsed s: ${elapsed.toFixed(1)}`,
+      ].join("\n");
+      await new Promise((resolve) => setTimeout(resolve, 250));
     }
+    window.clearInterval(flash);
     const after = runtime.getRuntimeStats();
     return {
       ok: applied.ok,
-      css: Boolean(document.querySelector("[data-lift-css]")),
+      css: [...document.querySelectorAll("[data-lift-css]")].some(
+        (el) => el instanceof HTMLStyleElement && !el.disabled,
+      ),
       undos: after.undos - before.undos,
-      attributions: after.attributions - before.attributions,
     };
   });
   expect(applied.ok).toBe(true);
   expect(applied.css).toBe(true);
   expect(applied.undos).toBe(0);
-  await showBanner(page, "undo cycles: 0 for 5s — min-width fix kept");
-  await pause(page, 1500);
+  await pause(page, 800);
 });
 
 test("04-attribution-keeps-focus", async ({ page }) => {
   await page.goto("/checkout/?lift_variant=control&lift_bot=1");
   await openCheckoutWithHover(page);
-  await showBanner(page, "R11 — promoted control keeps focus while the page changes");
-  const applied = await page.evaluate(async () => {
+  await showBanner(page, "injectCSS + page colour change — focus ring and disclosure stay");
+  const setup = await page.evaluate(async () => {
     const href = new URL("/runtime/runtime.js", location.origin).href;
     const runtime = (await import(href)) as {
       applyPatchSpec: (input: unknown) => { ok: boolean };
@@ -1566,27 +1623,191 @@ test("04-attribution-keeps-focus", async ({ page }) => {
     const host = document.createElement("div");
     host.id = "focus-keep";
     host.style.cssText =
-      "display:inline-block;margin:12px 0;padding:12px 18px;background:#111;color:#fff;cursor:pointer;font:700 20px/1.3 system-ui;outline:3px solid #38bdf8;outline-offset:4px";
+      "display:inline-block;margin:12px 0;padding:12px 18px;background:#fff;color:#111;cursor:pointer;font:700 20px/1.3 system-ui;outline:4px solid #38bdf8;outline-offset:4px";
     host.textContent = "Pay now";
-    checkout.append(host);
+    const tr = document.createElement("button");
+    tr.id = "tr";
+    tr.type = "button";
+    tr.textContent = "More";
+    const panel = document.createElement("div");
+    panel.id = "panel";
+    panel.textContent = "Menu stays open";
+    panel.style.cssText = "padding:8px;background:#fef3c7";
+    const stats = document.createElement("div");
+    stats.id = "attr-stats";
+    stats.style.cssText =
+      "font:800 22px/1.3 ui-monospace,monospace;margin:12px 0;padding:10px;background:#111;color:#fff";
+    const vis = document.createElement("style");
+    vis.textContent = "#panel{display:none}#panel.lift-open{display:block;background:#fef3c7;padding:8px;border:3px dashed #22c55e}";
+    document.head.append(vis);
+    checkout.append(host, tr, panel, stats);
     return runtime.applyPatchSpec({
       id: "focus-keep",
       version: 0,
-      ops: [{ op: "promoteToControl", selector: "#focus-keep", as: "button" }],
+      ops: [
+        { op: "promoteToControl", selector: "#focus-keep", as: "button" },
+        { op: "toggleDisclosure", trigger: "#tr", panel: "#panel" },
+        {
+          op: "injectCSS",
+          rules: [
+            {
+              selector: { id: "focus-keep" },
+              declarations: [{ property: "min-width", value: "44px" }],
+            },
+          ],
+        },
+      ],
     });
   });
-  expect(applied.ok).toBe(true);
+  expect(setup.ok).toBe(true);
+  await page.locator("#tr").click();
   await page.locator("#focus-keep").focus();
   await expect(page.locator("#focus-keep")).toBeFocused();
-  await showBanner(page, "focused — page will change color, focus ring must stay");
-  await page.evaluate(() => {
+  const result = await page.evaluate(async () => {
+    const href = new URL("/runtime/runtime.js", location.origin).href;
+    const runtime = (await import(href)) as {
+      getRuntimeStats: () => { attributions: number; undos: number };
+    };
     const host = document.getElementById("focus-keep");
-    if (host instanceof HTMLElement) host.style.backgroundColor = "#222";
+    const panel = document.getElementById("panel");
+    const statsEl = document.getElementById("attr-stats");
+    const before = runtime.getRuntimeStats();
+    if (host instanceof HTMLElement) host.style.color = "#eee";
+    const started = Date.now();
+    while (Date.now() - started < 2500) {
+      const stats = runtime.getRuntimeStats();
+      if (statsEl) {
+        statsEl.textContent = `attributions: ${stats.attributions - before.attributions}  undos: ${stats.undos - before.undos}  focused: ${document.activeElement === host}  open: ${panel?.classList.contains("lift-open")}`;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+    const after = runtime.getRuntimeStats();
+    return {
+      focused: document.activeElement === host,
+      open: Boolean(panel?.classList.contains("lift-open")),
+      attributions: after.attributions - before.attributions,
+      undos: after.undos - before.undos,
+    };
   });
-  await page.waitForTimeout(200);
+  expect(result.focused).toBe(true);
+  expect(result.open).toBe(true);
+  expect(result.attributions).toBeGreaterThanOrEqual(1);
+  expect(result.undos).toBe(0);
   await expect(page.locator("#focus-keep")).toBeFocused();
-  await showBanner(page, "STILL FOCUSED — attribution did not blur the promoted control");
+  await pause(page, 1500);
+});
+
+test("04-per-node-attribution", async ({ page }) => {
+  await page.goto("/checkout/?lift_variant=control&lift_bot=1");
+  await openCheckoutWithHover(page);
+  await showBanner(page, "A is page-caused, B is spec-caused 1.4:1 — spec must undo");
+  const result = await page.evaluate(async () => {
+    const href = new URL("/runtime/runtime.js", location.origin).href;
+    const runtime = (await import(href)) as {
+      applyPatchSpec: (input: unknown) => { ok: boolean };
+    };
+    const checkout = document.getElementById("checkout") || document.body;
+    const pageStyle = document.createElement("style");
+    pageStyle.textContent = ".dark { background-color:#111; color:#fff }";
+    document.head.append(pageStyle);
+    const a = document.createElement("div");
+    a.id = "node-a";
+    a.className = "probe";
+    a.textContent = "A page-caused #eee on white";
+    a.style.cssText = "padding:10px;background:#fff;color:#111;font:700 18px/1.3 system-ui";
+    const dark = document.createElement("div");
+    dark.className = "dark";
+    dark.style.cssText = "padding:10px;margin-top:12px";
+    const b = document.createElement("div");
+    b.id = "node-b";
+    b.className = "probe";
+    b.textContent = "B spec-caused #111 on #111";
+    b.style.cssText = "background:#fff;color:#111;font:700 18px/1.3 system-ui";
+    const status = document.createElement("div");
+    status.id = "per-node-status";
+    status.style.cssText =
+      "font:800 20px/1.3 ui-monospace,monospace;margin:12px 0;padding:10px;background:#111;color:#fff";
+    checkout.append(a, dark, b, status);
+    const applied = runtime.applyPatchSpec({
+      id: "per-node",
+      version: 0,
+      ops: [
+        {
+          op: "injectCSS",
+          rules: [
+            {
+              selector: { classes: ["probe"] },
+              declarations: [{ property: "color", value: "#111" }],
+            },
+          ],
+        },
+      ],
+    });
+    a.style.color = "#eee";
+    b.style.backgroundColor = "";
+    b.style.color = "";
+    dark.append(b);
+    status.textContent = `A color ${getComputedStyle(a).color}  B color ${getComputedStyle(b).color} — waiting for per-node undo`;
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    const sheet = document.querySelector("[data-lift-css]") as HTMLStyleElement | null;
+    status.textContent = `sheet.disabled=${Boolean(sheet?.disabled)}  A stays page ${getComputedStyle(a).color}  B restored ${getComputedStyle(b).color}`;
+    return { ok: applied.ok, disabled: Boolean(sheet?.disabled), a: getComputedStyle(a).color, b: getComputedStyle(b).color };
+  });
+  expect(result.ok).toBe(true);
+  expect(result.disabled).toBe(true);
   await pause(page, 2000);
+});
+
+test("04-cssom-edit-detected", async ({ page }) => {
+  test.setTimeout(20_000);
+  await page.goto("/checkout/?lift_variant=control&lift_bot=1");
+  await openCheckoutWithHover(page);
+  await showBanner(page, "cssRules[0].style.color = #eee — guard must see it");
+  const result = await page.evaluate(async () => {
+    const href = new URL("/runtime/runtime.js", location.origin).href;
+    const runtime = (await import(href)) as {
+      applyPatchSpec: (input: unknown) => { ok: boolean };
+    };
+    const checkout = document.getElementById("checkout") || document.body;
+    const probe = document.createElement("div");
+    probe.className = "probe";
+    probe.textContent = "Watch this text";
+    probe.style.cssText = "padding:12px;background:#fff;font:700 20px/1.3 system-ui";
+    const status = document.createElement("div");
+    status.id = "cssom-status";
+    status.style.cssText =
+      "font:800 20px/1.3 ui-monospace,monospace;margin:12px 0;padding:10px;background:#111;color:#fff";
+    checkout.append(probe, status);
+    const applied = runtime.applyPatchSpec({
+      id: "cssom-edit",
+      version: 0,
+      ops: [
+        {
+          op: "injectCSS",
+          rules: [
+            {
+              selector: { classes: ["probe"] },
+              declarations: [{ property: "color", value: "#111" }],
+            },
+          ],
+        },
+      ],
+    });
+    const sheet = document.querySelector("[data-lift-css]") as HTMLStyleElement | null;
+    const rule = sheet?.sheet?.cssRules?.[0] as CSSStyleRule | undefined;
+    if (rule) rule.style.color = "#eee";
+    status.textContent = `edited cssRules[0].style.color → ${getComputedStyle(probe).color}`;
+    const started = Date.now();
+    while (Date.now() - started < 5000) {
+      status.textContent = `color ${getComputedStyle(probe).color}  disabled=${Boolean(sheet?.disabled)}  ${(Date.now() - started) / 1000}s`;
+      if (sheet?.disabled) break;
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+    return { ok: applied.ok, disabled: Boolean(sheet?.disabled) };
+  });
+  expect(result.ok).toBe(true);
+  expect(result.disabled).toBe(true);
+  await pause(page, 1500);
 });
 
 test("05-sticky-identity", async ({ page }) => {

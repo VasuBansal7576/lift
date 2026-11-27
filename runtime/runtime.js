@@ -55,10 +55,10 @@ const clickListenerHosts = new WeakSet();
 const hostClickedAt = new WeakMap();
 const pendingHostClicks = new WeakSet();
 const liftStyleNodes = new WeakSet();
-const parkedCss = new WeakMap();
 const pageVerdicts = new WeakMap();
+const clickWatchUnpatches = [];
 let keySeq = 0;
-let currentKeyEvent = null;
+let keyInFlight = false;
 let keyWatchCleanup = null;
 let cssomGen = 0;
 let mutationSeq = 0;
@@ -66,7 +66,8 @@ let lastFailNode = null;
 let sampleRoundRobin = 0;
 const runtimeStats = { undos: 0, attributions: 0, ticksRan: 0, ticksSkipped: 0 };
 
-(function watchClickListeners() {
+function installClickWatch() {
+  if (clickWatchUnpatches.length) return;
   const patch = (proto) => {
     if (!proto || typeof proto.addEventListener !== "function") return;
     const native = proto.addEventListener;
@@ -77,12 +78,21 @@ const runtimeStats = { undos: 0, attributions: 0, ticksRan: 0, ticksSkipped: 0 }
     }
     addEventListenerLifted.__liftClickWatch = true;
     proto.addEventListener = addEventListenerLifted;
+    clickWatchUnpatches.push(() => {
+      if (proto.addEventListener === addEventListenerLifted) proto.addEventListener = native;
+    });
   };
   if (typeof EventTarget !== "undefined") patch(EventTarget.prototype);
   if (typeof Node !== "undefined") patch(Node.prototype);
   if (typeof Element !== "undefined") patch(Element.prototype);
   if (typeof HTMLElement !== "undefined") patch(HTMLElement.prototype);
-})();
+}
+
+function uninstallClickWatch() {
+  while (clickWatchUnpatches.length) clickWatchUnpatches.pop()();
+}
+
+installClickWatch();
 
 function markHostClicked(el) {
   if (!el || el.nodeType !== 1) return;
@@ -103,18 +113,15 @@ function isLiftStyleTarget(target) {
 function ensureKeyWatch() {
   if (keyWatchCleanup) return;
   const onKey = (event) => {
-    if (event.type === "keydown" && !event.repeat) keySeq += 1;
-    currentKeyEvent = event;
-    const target = event.target;
-    queueMicrotask(() => {
-      currentKeyEvent = null;
-      if (event.type === "keyup" || event.key === "Enter") {
-        if (target && target.nodeType === 1) {
-          hostClickedAt.delete(target);
-          pendingHostClicks.delete(target);
-        }
-      }
-    });
+    if (event.type === "keydown" && !event.repeat) {
+      keySeq += 1;
+      keyInFlight = true;
+    }
+    if (event.type === "keyup") {
+      queueMicrotask(() => {
+        keyInFlight = false;
+      });
+    }
   };
   const add = (target) => {
     if (!target || typeof target.addEventListener !== "function") return;
@@ -132,7 +139,7 @@ function ensureKeyWatch() {
     if (typeof window !== "undefined") remove(window);
     if (typeof document !== "undefined") remove(document);
     keyWatchCleanup = null;
-    currentKeyEvent = null;
+    keyInFlight = false;
   };
 }
 
@@ -140,19 +147,24 @@ function releaseKeyWatch() {
   if (keyWatchCleanup) keyWatchCleanup();
 }
 
+ensureKeyWatch();
+
 function installHostClickGate(el) {
   if (!(el instanceof HTMLElement) || typeof HTMLElement === "undefined") return () => {};
   const protoClick = HTMLElement.prototype.click;
   if (typeof protoClick !== "function") return () => {};
-  const wrapped = function liftHostClick() {
+  const previous = Object.getOwnPropertyDescriptor(el, "click");
+  let prevFn = protoClick;
+  if (previous && typeof previous.value === "function") prevFn = previous.value;
+  const wrapped = function liftHostClick(...args) {
     markHostClicked(el);
-    return protoClick.call(this);
+    return prevFn.apply(this, args);
   };
   try {
     Object.defineProperty(el, "click", {
       configurable: true,
-      enumerable: false,
-      writable: true,
+      enumerable: previous ? previous.enumerable : false,
+      writable: previous ? previous.writable !== false : true,
       value: wrapped,
     });
   } catch {
@@ -160,7 +172,17 @@ function installHostClickGate(el) {
   }
   return () => {
     const desc = Object.getOwnPropertyDescriptor(el, "click");
-    if (desc && desc.value === wrapped) delete el.click;
+    if (!desc || desc.value !== wrapped) return;
+    try {
+      if (previous) Object.defineProperty(el, "click", previous);
+      else delete el.click;
+    } catch {
+      try {
+        delete el.click;
+      } catch {
+        /* ignore */
+      }
+    }
   };
 }
 
@@ -547,9 +569,11 @@ function elementsTouchedByRecords(elements, records) {
   return touched;
 }
 
-function cssMatchesViolateHostsOrContrast(root, op, mode, beforeRects, records) {
+function cssMatchesViolateHostsOrContrast(root, op, mode, beforeRects, records, opts) {
   const scope = "querySelectorAll" in root ? root : docOf(root);
   const guard = mode === "guard";
+  const skipNodes = opts && opts.skipNodes;
+  const onlyNode = opts && opts.onlyNode;
   for (const rule of op.rules || []) {
     let matches;
     try {
@@ -578,15 +602,18 @@ function cssMatchesViolateHostsOrContrast(root, op, mode, beforeRects, records) 
     const isState = Boolean(rule.selector && rule.selector.state);
     const checkList = guard ? sampleMatchesForGuard(matches, records) : [...matches];
     for (const el of checkList) {
-      if (elementIsPageContainer(el) || elementForbiddenAsTextOrTagHost(el)) {
+      if (onlyNode && el !== onlyNode && !(el.contains && el.contains(onlyNode))) continue;
+      if (skipNodes && skipNodes.has(el)) continue;
+      const runHost = !onlyNode || el === onlyNode;
+      if (runHost && (elementIsPageContainer(el) || elementForbiddenAsTextOrTagHost(el))) {
         lastFailNode = el;
         return "target is not allowlisted";
       }
-      if (grows && hostHasFixedHeightAndHiddenOverflow(el)) {
+      if (runHost && grows && hostHasFixedHeightAndHiddenOverflow(el)) {
         lastFailNode = el;
         return "size change is not allowlisted";
       }
-      if (grows && hostOrAncestorIsOutOfFlow(el)) {
+      if (runHost && grows && hostOrAncestorIsOutOfFlow(el)) {
         const allowHit =
           hitOnly &&
           isInlineControl(el) &&
@@ -597,15 +624,15 @@ function cssMatchesViolateHostsOrContrast(root, op, mode, beforeRects, records) 
           return "size change is not allowlisted";
         }
       }
-      if (setsUnderline && decorationIncludesLineThrough(el)) {
+      if (runHost && setsUnderline && decorationIncludesLineThrough(el)) {
         lastFailNode = el;
         return "text-decoration is not allowlisted";
       }
-      if (outlineBudgetExceeded(decls)) {
+      if (runHost && outlineBudgetExceeded(decls)) {
         lastFailNode = el;
         return "outline is not allowlisted";
       }
-      if (changesPaint && backgroundUnknown(el)) {
+      if (runHost && changesPaint && backgroundUnknown(el)) {
         lastFailNode = el;
         return "background is not allowlisted";
       }
@@ -616,6 +643,8 @@ function cssMatchesViolateHostsOrContrast(root, op, mode, beforeRects, records) 
         return "too many descendants";
       }
       for (const node of nodes) {
+        if (skipNodes && skipNodes.has(node)) continue;
+        if (onlyNode && node !== onlyNode) continue;
         if (node !== el && !isTextBearing(node) && !isFormControl(node)) continue;
         const err = checkNodeContrast(node);
         if (err) {
@@ -623,6 +652,7 @@ function cssMatchesViolateHostsOrContrast(root, op, mode, beforeRects, records) 
           return err;
         }
       }
+      if (!runHost) continue;
       const bg = effectiveBackgroundRgb(el);
       if (outlineColor) {
         if (!bg) {
@@ -674,19 +704,6 @@ function setSheetDisabled(style, disabled) {
     if (style.sheet) style.sheet.disabled = Boolean(disabled);
   } catch {
     /* ignore */
-  }
-  if (disabled) {
-    style.setAttribute("media", "not all");
-    style.removeAttribute("data-lift-css");
-    if (!parkedCss.has(style)) parkedCss.set(style, style.textContent ?? "");
-    if (style.textContent) style.textContent = "";
-  } else {
-    style.removeAttribute("media");
-    style.setAttribute("data-lift-css", "1");
-    if (parkedCss.has(style)) {
-      style.textContent = parkedCss.get(style);
-      parkedCss.delete(style);
-    }
   }
 }
 
@@ -938,26 +955,39 @@ function installActivationBridge(el, opts) {
   const space = Boolean(opts && opts.space);
   let spaceArmed = false;
   let spaceClickSeq = 0;
+  let keyOnHost = false;
   const stopClickGate = installHostClickGate(el);
+  const onClickCapture = () => {
+    if (keyInFlight || keyOnHost) markHostClicked(el);
+  };
+  el.addEventListener("click", onClickCapture, true);
+  const deferOwnClick = (seq) => {
+    queueMicrotask(() => {
+      const already = hostClickedThisKey(el) || hostClickedAt.get(el) === seq;
+      keyOnHost = false;
+      if (already) {
+        pendingHostClicks.delete(el);
+        return;
+      }
+      el.click();
+      pendingHostClicks.delete(el);
+    });
+  };
   const onKeyDown = (event) => {
     if (event.target !== el) return;
     const kind = isActivationKey(event, space);
     if (!kind) return;
     if (event.repeat) return;
+    keyOnHost = true;
     if (kind === "space") {
       spaceArmed = true;
       spaceClickSeq = keySeq;
       event.preventDefault();
       return;
     }
-    if (event.defaultPrevented || hostClickedThisKey(el)) {
-      pendingHostClicks.delete(el);
-      return;
-    }
+    if (event.defaultPrevented) return;
     event.preventDefault();
-    el.click();
-    pendingHostClicks.delete(el);
-    event.stopPropagation();
+    deferOwnClick(keySeq);
   };
   const onKeyUp = (event) => {
     if (event.target !== el) return;
@@ -966,23 +996,15 @@ function installActivationBridge(el, opts) {
     if (!spaceArmed) return;
     spaceArmed = false;
     if (event.repeat) return;
-    if (
-      event.defaultPrevented ||
-      hostClickedThisKey(el) ||
-      hostClickedAt.get(el) === spaceClickSeq
-    ) {
-      pendingHostClicks.delete(el);
-      return;
-    }
+    if (event.defaultPrevented) return;
     event.preventDefault();
-    el.click();
-    pendingHostClicks.delete(el);
-    event.stopPropagation();
+    deferOwnClick(spaceClickSeq);
   };
   el.addEventListener("keydown", onKeyDown);
   el.addEventListener("keyup", onKeyUp);
   return () => {
     stopClickGate();
+    el.removeEventListener("click", onClickCapture, true);
     el.removeEventListener("keydown", onKeyDown);
     el.removeEventListener("keyup", onKeyUp);
   };
@@ -1226,39 +1248,58 @@ function runUndo(item) {
   else if (typeof item.undo === "function") item.undo();
 }
 
-function runRedo(item) {
-  if (!item || typeof item !== "object") return;
-  if (typeof item.redo === "function") item.redo();
+function captureScroll(doc, node) {
+  const view = doc && doc.defaultView;
+  const winX = view && typeof view.scrollX === "number" ? view.scrollX : 0;
+  const winY = view && typeof view.scrollY === "number" ? view.scrollY : 0;
+  const positions = [];
+  const push = (el) => {
+    if (!el || typeof el.scrollTop !== "number") return;
+    positions.push([el, el.scrollTop, el.scrollLeft]);
+  };
+  if (doc) {
+    push(doc.scrollingElement || doc.documentElement);
+    push(doc.documentElement);
+    push(doc.body);
+  }
+  let cur = node && node.nodeType === 1 ? node : null;
+  while (cur) {
+    push(cur);
+    cur = cur.parentElement;
+  }
+  const restoreOnce = () => {
+    if (view && typeof view.scrollTo === "function") {
+      const curX = typeof view.scrollX === "number" ? view.scrollX : 0;
+      const curY = typeof view.scrollY === "number" ? view.scrollY : 0;
+      if (curX !== winX || curY !== winY) view.scrollTo(winX, winY);
+    }
+    for (const [el, top, left] of positions) {
+      if (el.scrollTop !== top) el.scrollTop = top;
+      if (el.scrollLeft !== left) el.scrollLeft = left;
+    }
+  };
+  return () => {
+    restoreOnce();
+    if (view && typeof view.requestAnimationFrame === "function") {
+      view.requestAnimationFrame(restoreOnce);
+    }
+  };
 }
 
 function undoAll(undos) {
+  const doc = typeof document !== "undefined" ? document : null;
+  const restore = captureScroll(doc, lastFailNode);
   runtimeStats.undos += 1;
-  for (let i = undos.length - 1; i >= 0; i -= 1) {
-    try {
-      runUndo(undos[i]);
-    } catch {
-      /* fail-open: best-effort undo */
+  try {
+    for (let i = undos.length - 1; i >= 0; i -= 1) {
+      try {
+        runUndo(undos[i]);
+      } catch {
+        /* fail-open: best-effort undo */
+      }
     }
-  }
-}
-
-function redoAll(undos) {
-  for (let i = 0; i < undos.length; i += 1) {
-    try {
-      runRedo(undos[i]);
-    } catch {
-      /* fail-open: best-effort redo */
-    }
-  }
-}
-
-function removeSpecSheets(root, spec) {
-  for (const el of specStyleElements(root, spec)) {
-    try {
-      el.remove();
-    } catch {
-      /* ignore */
-    }
+  } finally {
+    restore();
   }
 }
 
@@ -1702,7 +1743,7 @@ function overlayIsRendered(el) {
   return box.width > 0 && box.height > 0;
 }
 
-function overlayCoverageViolation(root, spec, snapshots, extraFocusables, mode) {
+function overlayCoverageViolation(root, spec, snapshots, extraFocusables, mode, opts) {
   if (!specGrowsBox(spec)) return null;
   const overlays = collectOverlayElements(root, spec);
   if (overlays.length === 0) return null;
@@ -1728,7 +1769,11 @@ function overlayCoverageViolation(root, spec, snapshots, extraFocusables, mode) 
     }
   }
   const grownUnion = unionRects(overlays);
+  const skipNodes = opts && opts.skipNodes;
+  const onlyNode = opts && opts.onlyNode;
   for (const item of items) {
+    if (skipNodes && skipNodes.has(item.el)) continue;
+    if (onlyNode && item.el !== onlyNode) continue;
     if (grownUnion && !rectsCouldOverlap(cachedRect(item.el), grownUnion)) continue;
     const after = coverageHitsFor(item.el, overlays);
     const beforeSet = new Set(item.before);
@@ -1853,9 +1898,13 @@ function failGuard(err, node) {
   return err;
 }
 
-function monotonicityViolation(root, snapshots) {
+function monotonicityViolation(root, snapshots, opts) {
+  const skipNodes = opts && opts.skipNodes;
+  const onlyNode = opts && opts.onlyNode;
   for (const before of snapshots) {
     const live = liveSuccessor(before.el) || (before.el.isConnected ? before.el : null);
+    if (skipNodes && live && skipNodes.has(live)) continue;
+    if (onlyNode && live !== onlyNode) continue;
     if (!live) {
       if (before.focusable || (before.role && INTERACTIVE_ROLES.has(before.role))) {
         return failGuard("lost interactive element", before.el);
@@ -1908,10 +1957,10 @@ function attachOverlayHits(root, spec, snapshots) {
   return snapshots;
 }
 
-function specContrastError(root, spec, mode, records) {
+function specContrastError(root, spec, mode, records, opts) {
   for (const op of spec.ops) {
     if (op.op !== "injectCSS") continue;
-    const err = cssMatchesViolateHostsOrContrast(root, op, mode, null, records);
+    const err = cssMatchesViolateHostsOrContrast(root, op, mode, null, records, opts);
     if (err) return err;
   }
   return null;
@@ -1947,7 +1996,31 @@ function kickAllGuards(reason) {
   for (const kick of [...guardKickers]) kick(reason);
 }
 
-function pageFingerprint(doc) {
+function sampledPaintHash(root, spec) {
+  const scope = "querySelectorAll" in root ? root : docOf(root);
+  const parts = [];
+  let n = 0;
+  for (const op of spec.ops || []) {
+    if (op.op !== "injectCSS") continue;
+    for (const rule of op.rules || []) {
+      let matches;
+      try {
+        matches = scope.querySelectorAll(serializeSelectorForQuery(rule.selector));
+      } catch {
+        continue;
+      }
+      for (const el of matches) {
+        if (n >= 24) return parts.join(";");
+        const style = getComputedStyle(el);
+        parts.push(`${style.color}|${style.backgroundColor}`);
+        n += 1;
+      }
+    }
+  }
+  return parts.join(";");
+}
+
+function pageFingerprint(doc, root, spec) {
   const view = doc && doc.defaultView;
   let sheetCount = 0;
   let sheetLen = 0;
@@ -1965,7 +2038,8 @@ function pageFingerprint(doc) {
   }
   const vw = view ? view.innerWidth : 0;
   const vh = view ? view.innerHeight : 0;
-  return `${mutationSeq}|${sheetCount}|${sheetLen}|${vw}x${vh}|${cssomGen}`;
+  const paint = root && spec ? sampledPaintHash(root, spec) : "";
+  return `${mutationSeq}|${sheetCount}|${sheetLen}|${vw}x${vh}|${cssomGen}|${paint}`;
 }
 
 function overlayGeometryKey(root, spec) {
@@ -2031,6 +2105,11 @@ function ensureCssomWatch() {
   };
 }
 
+function uninstallPrototypePatches() {
+  uninstallClickWatch();
+  if (cssomCleanup) cssomCleanup();
+}
+
 function releaseCssomWatch() {
   cssomWatchCount = Math.max(0, cssomWatchCount - 1);
   if (cssomWatchCount === 0 && cssomCleanup) cssomCleanup();
@@ -2053,8 +2132,6 @@ export function resetRuntimeGuards() {
   runtimeStats.attributions = 0;
   runtimeStats.ticksRan = 0;
   runtimeStats.ticksSkipped = 0;
-  if (cssomCleanup) cssomCleanup();
-  releaseKeyWatch();
   for (const stop of stops) {
     try {
       stop();
@@ -2062,6 +2139,10 @@ export function resetRuntimeGuards() {
       /* test isolation */
     }
   }
+  uninstallPrototypePatches();
+  releaseKeyWatch();
+  installClickWatch();
+  ensureKeyWatch();
   if (typeof window !== "undefined") window.__LIFT_FAIL_OPEN__ = [];
 }
 
@@ -2122,16 +2203,19 @@ function recordsTouchSnapshots(records, snapshots) {
 
 function runGuardCheck(root, spec, snapshots, records, opts) {
   const skipCoverage = Boolean(opts && opts.skipCoverage);
+  const skipNodes = opts && opts.skipNodes;
+  const onlyNode = opts && opts.onlyNode;
+  const guardOpts = { skipNodes, onlyNode };
   return withRectCache(() => {
-    const contrastErr = specContrastError(root, spec, "guard", records);
+    const contrastErr = specContrastError(root, spec, "guard", records, guardOpts);
     if (contrastErr) return contrastErr;
     if (!skipCoverage) {
       const extra = addedFocusablesFromRecords(records);
-      const coverErr = overlayCoverageViolation(root, spec, snapshots, extra, "guard");
+      const coverErr = overlayCoverageViolation(root, spec, snapshots, extra, "guard", guardOpts);
       if (coverErr) return coverErr;
     }
     const subset = recordsTouchSnapshots(records, snapshots);
-    return monotonicityViolation(root, subset);
+    return monotonicityViolation(root, subset, guardOpts);
   });
 }
 
@@ -2154,16 +2238,40 @@ function isContrastPredicate(err) {
   );
 }
 
-function recheckGuardPredicate(root, spec, snapshots, records, err, skipCoverage) {
+function isGeometryPredicate(err) {
+  return err === "lost hit target" || err === "clipped by overflow" || err === "lost visibility";
+}
+
+function nodeGeometryPersists(el, snapshots, err) {
+  if (!el) return true;
+  const before = (snapshots || []).find((s) => s.el === el || liveSuccessor(s.el) === el);
+  if (err === "lost visibility") {
+    return Boolean(before && before.visible && !isRenderedVisible(el));
+  }
+  if (err === "clipped by overflow") {
+    return Boolean(before && !before.clipped && isOverflowClipped(el));
+  }
+  if (err === "lost hit target") {
+    if (!inViewport(el)) return false;
+    return !hitIsSelfOrDescendant(el, hitTargetAtCenter(el));
+  }
+  return true;
+}
+
+function recheckGuardPredicate(root, spec, snapshots, records, err, skipCoverage, node) {
+  const only = { onlyNode: node || lastFailNode };
   return withRectCache(() => {
     if (err === "covered control") {
       if (skipCoverage) return null;
       const extra = addedFocusablesFromRecords(records);
-      return overlayCoverageViolation(root, spec, snapshots, extra, "guard");
+      return overlayCoverageViolation(root, spec, snapshots, extra, "guard", only);
     }
-    if (isContrastPredicate(err)) return specContrastError(root, spec, "guard", records);
+    if (isContrastPredicate(err)) return specContrastError(root, spec, "guard", records, only);
+    if (isGeometryPredicate(err)) {
+      return nodeGeometryPersists(node || lastFailNode, snapshots, err) ? err : null;
+    }
     const subset = recordsTouchSnapshots(records, snapshots);
-    return monotonicityViolation(root, subset);
+    return monotonicityViolation(root, subset, only);
   });
 }
 
@@ -2220,18 +2328,24 @@ function originalTextWouldViolate(root, el, spec, snapshots, err) {
   return true;
 }
 
-function withSheetsDisabled(root, spec, fn) {
+function withSheetsDisabled(root, spec, fn, node) {
   const sheets = specStyleElements(root, spec);
-  const prev = sheets.map((style) => style.disabled);
+  const prev = sheets.map((style) => Boolean(style.disabled));
+  const restore = captureScroll(docOf(root), node || lastFailNode);
   for (const style of sheets) setSheetDisabled(style, true);
-  const doc = docOf(root);
   try {
-    if (doc && doc.body) void doc.body.offsetHeight;
     return fn();
   } finally {
     sheets.forEach((style, i) => setSheetDisabled(style, prev[i]));
-    if (doc && doc.body) void doc.body.offsetHeight;
+    restore();
   }
+}
+
+function nodeStyleSig(el) {
+  if (!el || el.nodeType !== 1) return "";
+  const style = getComputedStyle(el);
+  const bg = effectiveBackgroundRgb(el);
+  return `${style.color}|${bg ? bg.join(",") : ""}|${style.fontSize}|${style.fontWeight}`;
 }
 
 function cachePageVerdict(node, predicate) {
@@ -2241,12 +2355,15 @@ function cachePageVerdict(node, predicate) {
     map = new Map();
     pageVerdicts.set(node, map);
   }
-  map.set(predicate, cssomGen);
+  map.set(predicate, { gen: cssomGen, sig: nodeStyleSig(node) });
 }
 
 function hasFreshPageVerdict(node, predicate) {
   if (!node || !predicate) return false;
-  return pageVerdicts.get(node)?.get(predicate) === cssomGen;
+  const entry = pageVerdicts.get(node)?.get(predicate);
+  if (!entry) return false;
+  if (entry.gen !== cssomGen) return false;
+  return entry.sig === nodeStyleSig(node);
 }
 
 function recordsTouchNode(records, node) {
@@ -2258,6 +2375,8 @@ function recordsTouchNode(records, node) {
       if (added && added.nodeType === 1) nodes.push(added);
     }
     for (const start of nodes) {
+      if (start === node) return true;
+      if (typeof start.contains === "function" && start.contains(node)) return true;
       let cur = start;
       while (cur && cur.nodeType === 1) {
         if (cur === node) return true;
@@ -2270,7 +2389,6 @@ function recordsTouchNode(records, node) {
 
 function attributeGuardViolation(root, spec, snapshots, records, undos, err) {
   if (isCapacityGuardError(err)) {
-    rebaselineSnapshots(root, spec, snapshots);
     return "page";
   }
   const node = lastFailNode;
@@ -2282,8 +2400,15 @@ function attributeGuardViolation(root, spec, snapshots, records, undos, err) {
   try {
     if (err === "lost visible name" || err === "lost name") {
       persists = originalTextWouldViolate(root, node, spec, snapshots, err);
-    } else if (isContrastPredicate(err) || err === "covered control") {
-      persists = Boolean(withSheetsDisabled(root, spec, () => recheckGuardPredicate(root, spec, snapshots, records, err)));
+    } else if (isContrastPredicate(err) || err === "covered control" || isGeometryPredicate(err)) {
+      persists = Boolean(
+        withSheetsDisabled(
+          root,
+          spec,
+          () => recheckGuardPredicate(root, spec, snapshots, records, err, false, node),
+          node,
+        ),
+      );
     } else {
       persists = true;
     }
@@ -2292,7 +2417,6 @@ function attributeGuardViolation(root, spec, snapshots, records, undos, err) {
   }
   if (persists) {
     cachePageVerdict(node, err);
-    rebaselineSnapshots(root, spec, snapshots);
     return "page";
   }
   undoAll(undos);
@@ -2311,8 +2435,9 @@ function installMutationGuard(root, spec, snapshots, undos) {
   let stopped = false;
   let queued = [];
   let queuedReason = "mutation";
-  let lastFp = pageFingerprint(doc);
+  let lastFp = pageFingerprint(doc, root, spec);
   let lastGeom = overlayGeometryKey(root, spec);
+  let intervalN = 0;
   const media =
     doc.defaultView && typeof doc.defaultView.matchMedia === "function"
       ? doc.defaultView.matchMedia("(prefers-color-scheme: dark)")
@@ -2332,18 +2457,30 @@ function installMutationGuard(root, spec, snapshots, undos) {
     const geom = overlayGeometryKey(root, spec);
     const skipCoverage = reason === "interval" && geom === lastGeom;
     lastGeom = geom;
-    lastFp = pageFingerprint(doc);
-    const err = runGuardCheck(root, spec, snapshots, records, { skipCoverage });
-    if (err) {
-      const cause = attributeGuardViolation(root, spec, snapshots, records, undos, err);
-      if (cause === "page") {
-        startObserving();
-        return;
+    lastFp = pageFingerprint(doc, root, spec);
+    const restoreScroll = captureScroll(doc, lastFailNode);
+    const skipNodes = new Set();
+    let kept = true;
+    try {
+      for (let i = 0; i < 32; i += 1) {
+        const err = runGuardCheck(root, spec, snapshots, records, { skipCoverage, skipNodes });
+        if (!err) break;
+        const node = lastFailNode;
+        const cause = attributeGuardViolation(root, spec, snapshots, records, undos, err);
+        if (cause === "spec") {
+          restoreScroll();
+          recordFailOpen(err, spec.id);
+          stop();
+          return;
+        }
+        if (!node || skipNodes.has(node)) break;
+        skipNodes.add(node);
+        if (i === 31) kept = true;
       }
-      recordFailOpen(err, spec.id);
-      stop();
-      return;
+    } finally {
+      restoreScroll();
     }
+    if (kept) rebaselineSnapshots(root, spec, snapshots);
     startObserving();
   };
 
@@ -2382,8 +2519,10 @@ function installMutationGuard(root, spec, snapshots, undos) {
   const kick = (reason) => {
     if (stopped || backstopsPaused) return;
     if (reason === "interval" || reason === "resize" || reason === "visibility") {
-      const fp = pageFingerprint(doc);
-      if (fp === lastFp) {
+      if (reason === "interval") intervalN += 1;
+      const fp = pageFingerprint(doc, root, spec);
+      const force = reason === "interval" && intervalN % 10 === 0;
+      if (!force && fp === lastFp) {
         runtimeStats.ticksSkipped += 1;
         return;
       }
@@ -2437,7 +2576,10 @@ function installMutationGuard(root, spec, snapshots, undos) {
       }
     }
     removeGuard(stop);
-    if (activeGuards.length === 0) releaseKeyWatch();
+    if (activeGuards.length === 0) {
+      releaseKeyWatch();
+      uninstallPrototypePatches();
+    }
   };
 
   ensureKeyWatch();
@@ -2508,6 +2650,7 @@ export function applyPatchSpec(input, root) {
     const scope = root ?? (typeof document === "undefined" ? null : document);
     if (!scope) return { ok: false, error: "no document", ops: opsStatus };
     ensureKeyWatch();
+    installClickWatch();
     const collected = collectWatchElements(scope, parsed.spec);
     if (collected.error) return { ok: false, error: collected.error, ops: opsStatus };
     const snapshots = attachOverlayHits(

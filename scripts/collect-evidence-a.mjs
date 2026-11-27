@@ -15,6 +15,10 @@ const NAMES = [
   "04-typed-not-state",
   "04-typed-body-class-anchor",
   "04-typed-color-eq-background",
+  "04-typed-hover-invisible",
+  "04-replace-button-to-span",
+  "04-late-content",
+  "04-descendant-contrast",
   "05-sticky-identity",
 ];
 

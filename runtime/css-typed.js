@@ -60,6 +60,15 @@ function parseColor(raw) {
 export function cssColorToRgb(value) {
   if (typeof value !== "string") return null;
   const v = value.trim();
+  const hex3 = /^#([0-9a-f]{3})$/i.exec(v);
+  if (hex3) {
+    const [r, g, b] = hex3[1].toLowerCase();
+    return [
+      Number.parseInt(r + r, 16),
+      Number.parseInt(g + g, 16),
+      Number.parseInt(b + b, 16),
+    ];
+  }
   const hex = /^#([0-9a-f]{6})$/i.exec(v);
   if (hex) {
     const n = hex[1];
@@ -192,7 +201,7 @@ function parseDeclaration(raw) {
       emitted = parsePx(value, 0, 8);
       break;
     case "border-width":
-      emitted = parsePx(value, 0, 8);
+      emitted = parsePx(value, 1, 8);
       break;
     case "font-size":
       emitted = parsePx(value, 12, 48) || parseRem(value, 0.75, 3);
@@ -285,6 +294,16 @@ export function serializeCss(rules) {
     .join(" ");
 }
 
+const STATE_ONLY_PROPS = new Set([
+  "outline-style",
+  "outline-color",
+  "outline-width",
+  "outline-offset",
+  "text-decoration-line",
+  "text-decoration-thickness",
+]);
+const PAINT_STATES = new Set(["hover", "focus", "focus-visible", "active"]);
+
 function ruleHasLowContrast(declarations) {
   const color = declarations.find((d) => d.property === "color");
   const bg = declarations.find((d) => d.property === "background-color");
@@ -293,6 +312,11 @@ function ruleHasLowContrast(declarations) {
   const back = cssColorToRgb(bg.value);
   if (!fg || !back) return true;
   return contrastRatio(fg, back) < 4.5;
+}
+
+function stateRuleNotAllowlisted(selector, declarations) {
+  if (!selector.state || !PAINT_STATES.has(selector.state)) return false;
+  return declarations.some((d) => !STATE_ONLY_PROPS.has(d.property));
 }
 
 export function parseCssRules(rawRules, index) {
@@ -323,6 +347,9 @@ export function parseCssRules(rawRules, index) {
       declarations.push(parsed);
     }
     if (ruleHasLowContrast(declarations)) {
+      return { error: `ops[${index}] css is not allowlisted` };
+    }
+    if (stateRuleNotAllowlisted(selector, declarations)) {
       return { error: `ops[${index}] css is not allowlisted` };
     }
     rules.push({ selector, declarations });

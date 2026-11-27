@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { ROOT } from "../../agent/src/config.ts";
-import { applyPatchSpec, validatePatchSpec } from "../../runtime/runtime.js";
+import { applyPatchSpec, resetRuntimeGuards, validatePatchSpec } from "../../runtime/runtime.js";
 
 const CHECKOUT_HTML = `
   <header>
@@ -35,7 +35,7 @@ const CHECKOUT_HTML = `
       <span class="visible-hint">CVC</span>
       <input id="card-cvc" data-unlabeled>
     </p>
-    <p class="contrast-fail">
+    <p class="terms contrast-fail">
       <input id="terms" type="checkbox">
       <span id="terms-copy">I agree to the terms of sale and understand this order is final.</span>
     </p>
@@ -48,8 +48,10 @@ function checkoutSpec(): unknown {
 }
 
 afterEach(() => {
+  resetRuntimeGuards();
   document.head.innerHTML = "";
   document.body.innerHTML = "";
+  document.body.className = "";
 });
 
 describe("validatePatchSpec (runtime)", () => {
@@ -84,7 +86,6 @@ describe("applyPatchSpec ops", () => {
 
     const cart = document.getElementById("cart-icon");
     expect(cart?.getAttribute("aria-label")).toBe("View cart and check out");
-    expect(cart?.textContent).toBe("👜");
 
     expect(document.querySelector('label[for="email"]')?.textContent).toBe("Email");
     expect(document.getElementById("email")?.getAttribute("data-labelled")).toBe("1");
@@ -97,7 +98,8 @@ describe("applyPatchSpec ops", () => {
     const pay = document.getElementById("place-order");
     expect(pay?.tagName).toBe("BUTTON");
     expect(pay?.textContent).toBe("Place order");
-    expect(pay?.className).toBe("place-order");
+    expect(pay?.getAttribute("type")).toBe("button");
+    expect(pay?.classList.contains("div-pay")).toBe(true);
 
     expect(document.querySelectorAll("[data-lift-css]")).toHaveLength(1);
   });
@@ -112,7 +114,7 @@ describe("applyPatchSpec ops", () => {
     const result = applyPatchSpec({
       id: "replace",
       version: 0,
-      ops: [{ op: "replaceTag", selector: "#place-order", tag: "button", attributes: { type: "button" } }],
+      ops: [{ op: "replaceTag", selector: "#place-order", tag: "button" }],
     });
     expect(result.ok).toBe(true);
     const next = document.getElementById("place-order");
@@ -201,7 +203,7 @@ describe("applyPatchSpec ops", () => {
           op: "insertHTML",
           selector: "#host",
           position: "append",
-          html: '<a href="#main">Skip</a>',
+          html: "<span>Skip</span>",
           mountId: "skip-main",
         },
       ],
@@ -212,9 +214,7 @@ describe("applyPatchSpec ops", () => {
     expect(chip?.getAttribute("tabindex")).toBe("0");
     expect(chip?.getAttribute("data-lift-enter")).toBe("1");
     expect(document.querySelectorAll('[data-lift-mount="skip-main"]')).toHaveLength(1);
-    expect(document.querySelector('[data-lift-mount="skip-main"] a')?.getAttribute("href")).toBe(
-      "#main",
-    );
+    expect(document.querySelector('[data-lift-mount="skip-main"] span')?.textContent).toBe("Skip");
 
     let clicked = 0;
     chip?.addEventListener("click", () => {
@@ -360,19 +360,19 @@ describe("applyPatchSpec ops", () => {
       applyPatchSpec({
         id: "chain-1",
         version: 0,
-        ops: [{ op: "replaceTag", selector: "#x", tag: "button", attributes: { type: "button" } }],
+        ops: [{ op: "replaceTag", selector: "#x", tag: "button" }],
       }).ok,
     ).toBe(true);
     expect(
       applyPatchSpec({
         id: "chain-2",
         version: 0,
-        ops: [{ op: "replaceTag", selector: "#x", tag: "a", attributes: { href: "#ok" } }],
+        ops: [{ op: "replaceTag", selector: "#x", tag: "button" }],
       }).ok,
     ).toBe(true);
     document.getElementById("x")?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     expect(clicks).toBe(1);
-    expect(document.getElementById("x")?.tagName).toBe("A");
+    expect(document.getElementById("x")?.tagName).toBe("BUTTON");
   });
 
   it("is idempotent for replaceTag on a class selector that drops the class", () => {
@@ -380,15 +380,16 @@ describe("applyPatchSpec ops", () => {
     const spec = {
       id: "class-replace",
       version: 0,
-      ops: [{ op: "replaceTag", selector: ".chip", tag: "button", attributes: { class: "btn" } }],
+      ops: [{ op: "replaceTag", selector: ".chip", tag: "button" }],
     };
     expect(applyPatchSpec(spec).ok).toBe(true);
     expect(applyPatchSpec(spec).ok).toBe(true);
-    expect(document.querySelectorAll("button.btn")).toHaveLength(1);
-    expect(document.querySelectorAll(".chip")).toHaveLength(0);
+    expect(document.querySelectorAll("button.chip")).toHaveLength(1);
+    expect(document.querySelectorAll("span.chip")).toHaveLength(0);
   });
 
   it("updates injectCSS text when the same id carries different css", () => {
+    document.body.innerHTML = `<span class="a">a</span>`;
     const first = applyPatchSpec({
       id: "css-1",
       version: 0,
@@ -493,7 +494,7 @@ describe("applyPatchSpec ops", () => {
     expect(keys).toBe(0);
   });
 
-  it("defaults insertHTML buttons to type=button and reserves data-lift-*", () => {
+  it("refuses insertHTML buttons and reserves data-lift-*", () => {
     document.body.innerHTML = `<div id="host"></div>`;
     expect(
       applyPatchSpec({
@@ -509,8 +510,7 @@ describe("applyPatchSpec ops", () => {
           },
         ],
       }).ok,
-    ).toBe(true);
-    expect(document.querySelector("#host button")?.getAttribute("type")).toBe("button");
+    ).toBe(false);
     expect(
       validatePatchSpec({
         id: "reserved",
@@ -533,6 +533,7 @@ describe("applyPatchSpec ops", () => {
   });
 
   it("restores the previous injectCSS text when a later op rolls back", () => {
+    document.body.innerHTML = `<span class="a">a</span>`;
     expect(
       applyPatchSpec({
         id: "css-1",
@@ -677,7 +678,7 @@ describe("applyPatchSpec ops", () => {
     expect(document.getElementById("plain")?.getAttribute("tabindex")).toBe("-1");
   });
 
-  it("adds class tokens instead of replacing", () => {
+  it("forbids class via setAttribute", () => {
     document.body.innerHTML = `<span id="x" class="keep">x</span>`;
     expect(
       applyPatchSpec({
@@ -685,21 +686,7 @@ describe("applyPatchSpec ops", () => {
         version: 0,
         ops: [{ op: "setAttribute", selector: "#x", name: "class", value: "extra" }],
       }).ok,
-    ).toBe(true);
-    expect(document.getElementById("x")?.className.split(/\s+/).sort()).toEqual(["extra", "keep"]);
-  });
-
-  it("undoes only the class tokens it added", () => {
-    document.body.innerHTML = `<span id="x" class="keep">x</span>`;
-    const rolled = applyPatchSpec({
-      id: "class-undo",
-      version: 0,
-      ops: [
-        { op: "setAttribute", selector: "#x", name: "class", value: "extra" },
-        { op: "setText", selector: "#missing", text: "nope" },
-      ],
-    });
-    expect(rolled.ok).toBe(false);
+    ).toBe(false);
     expect(document.getElementById("x")?.className).toBe("keep");
   });
 
@@ -757,7 +744,7 @@ describe("applyPatchSpec ops", () => {
   });
 
   it("refuses insertHTML into body/html/input at apply time", () => {
-    document.body.innerHTML = `<input id="email" type="email"><main id="main"></main>`;
+    document.body.innerHTML = `<input id="email" type="email"><div id="host"></div><main id="main"></main>`;
     expect(
       applyPatchSpec({
         id: "ins-input",
@@ -769,7 +756,7 @@ describe("applyPatchSpec ops", () => {
       applyPatchSpec({
         id: "ins-main",
         version: 0,
-        ops: [{ op: "insertHTML", selector: "#main", position: "prepend", html: '<a href="#main">Skip</a>' }],
+        ops: [{ op: "insertHTML", selector: "#host", position: "prepend", html: "<span>Skip</span>" }],
       }).ok,
     ).toBe(true);
   });
@@ -835,7 +822,7 @@ describe("applyPatchSpec ops", () => {
     });
     expect(rolled.ok).toBe(false);
     expect(document.getElementById("shop-trigger")?.getAttribute("data-lift-disclosure")).toBeNull();
-    expect(document.getElementById("shop-menu")?.classList.contains("is-open")).toBe(false);
+    expect(document.getElementById("shop-menu")?.classList.contains("lift-open")).toBe(false);
 
     expect(
       applyPatchSpec({
@@ -847,7 +834,7 @@ describe("applyPatchSpec ops", () => {
     const trigger = document.getElementById("shop-trigger");
     const panel = document.getElementById("shop-menu");
     trigger?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    expect(panel?.classList.contains("is-open")).toBe(true);
+    expect(panel?.classList.contains("lift-open")).toBe(true);
     expect(trigger?.getAttribute("aria-expanded")).toBe("true");
   });
 
@@ -877,7 +864,7 @@ describe("applyPatchSpec ops", () => {
     expect(applyPatchSpec(checkoutSpec()).ok).toBe(true);
     const shop = document.getElementById("shop-trigger");
     shop?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    expect(document.getElementById("shop-menu")?.classList.contains("is-open")).toBe(true);
+    expect(document.getElementById("shop-menu")?.classList.contains("lift-open")).toBe(true);
   });
 });
 

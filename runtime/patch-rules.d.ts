@@ -7,6 +7,8 @@ export const INSERT_TAGS: Set<string>;
 export const PATCH_OP_LIMIT: 50;
 export const CSS_MATCH_LIMIT: 50;
 export const FORBIDDEN_OP_HOSTS: Set<string>;
+export const INTERACTIVE_ROLES: Set<string>;
+export const LANDMARK_ROLES: Set<string>;
 
 export function isSafeMountId(value: unknown): value is string;
 export function isAllowedAttributeName(name: string): boolean;
@@ -22,6 +24,9 @@ export function elementHasVoidOrControlDescendant(el: Element): boolean;
 export function isLabelableTextControl(el: Element | null): boolean;
 export function elementHasElementChildren(el: Element): boolean;
 export function isInteractiveElement(el: Element): boolean;
+export function isNativeInteractiveHost(el: Element): boolean;
+export function elementOrAncestorInteractive(el: Element): boolean;
+export function roleAllowedOnElement(el: Element, value: string): boolean;
 export function elementHasInteractiveDescendant(el: Element): boolean;
 export function attributeWouldHideInteractive(name: string, value: string, el: Element): boolean;
 export function hashKey(value: string): string;

@@ -121,7 +121,7 @@
           "required": ["property", "value"],
           "properties": {
             "property": { "const": "border-width" },
-            "value": { "$ref": "#/$defs/px0to8" }
+            "value": { "$ref": "#/$defs/px1to8" }
           }
         },
         {
@@ -226,9 +226,38 @@
       }
     },
     "safeAttrName": {
-      "type": "string",
-      "minLength": 1,
-      "not": { "pattern": "^([oO][nN]|src$|srcset$|formaction$|id$|name$|data-lift-)" }
+      "enum": [
+        "tabindex",
+        "role",
+        "alt",
+        "lang",
+        "title",
+        "aria-label",
+        "aria-labelledby",
+        "aria-describedby",
+        "aria-controls",
+        "aria-required",
+        "aria-invalid",
+        "aria-live"
+      ]
+    },
+    "replaceAttrName": {
+      "enum": [
+        "tabindex",
+        "role",
+        "alt",
+        "lang",
+        "title",
+        "aria-label",
+        "aria-labelledby",
+        "aria-describedby",
+        "aria-controls",
+        "aria-required",
+        "aria-invalid",
+        "aria-live",
+        "href",
+        "for"
+      ]
     },
     "safeHref": {
       "type": "string",
@@ -248,12 +277,7 @@
                 { "$ref": "#/$defs/forbiddenHostSelector" }
               ]
             },
-            "name": {
-              "allOf": [
-                { "$ref": "#/$defs/safeAttrName" },
-                { "not": { "pattern": "^type$" } }
-              ]
-            },
+            "name": { "$ref": "#/$defs/safeAttrName" },
             "value": { "type": "string" }
           },
           "if": { "properties": { "name": { "const": "href" } } },
@@ -271,7 +295,7 @@
                 { "$ref": "#/$defs/forbiddenHostSelector" }
               ]
             },
-            "text": { "type": "string" }
+            "text": { "type": "string", "pattern": ".*\\S.*" }
           }
         },
         {
@@ -342,7 +366,7 @@
             "tag": { "enum": ["button", "label", "span", "a", "p", "strong", "em"] },
             "attributes": {
               "type": "object",
-              "propertyNames": { "$ref": "#/$defs/safeAttrName" },
+              "propertyNames": { "$ref": "#/$defs/replaceAttrName" },
               "additionalProperties": { "type": "string" }
             }
           },
@@ -375,7 +399,7 @@
               "minLength": 1,
               "not": {
                 "anyOf": [
-                  { "pattern": "<\\s*(script|iframe|object|embed|link|meta|style|form|base|svg|img)\\b" },
+                  { "pattern": "<\\s*(script|iframe|object|embed|link|meta|style|form|base|svg|img|button|a|input|select|textarea)\\b" },
                   { "pattern": "\\bon[a-z]+\\s*=" },
                   { "pattern": "javascript:" },
                   { "pattern": "formaction" },

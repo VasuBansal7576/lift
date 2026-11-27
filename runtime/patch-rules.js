@@ -21,12 +21,10 @@ export const INSERT_HTML_POSITIONS = ["before", "after", "prepend", "append"];
 export const ALLOWED_REPLACE_TAGS = ["button", "label", "span", "a", "p", "strong", "em"];
 export const MOUNT_ID_RE = /^[a-z0-9_-]+$/i;
 export const INSERT_TAGS = new Set([
-  "a",
   "span",
   "strong",
   "em",
   "p",
-  "button",
   "label",
   "b",
   "i",
@@ -36,24 +34,21 @@ export const INSERT_TAGS = new Set([
 export const PATCH_OP_LIMIT = 50;
 export const CSS_MATCH_LIMIT = 50;
 
-const ALLOWED_ATTR_NAMES = new Set([
-  "class",
-  "for",
-  "type",
+const SET_ATTR_NAMES = new Set([
   "tabindex",
   "role",
   "alt",
   "lang",
-  "autocomplete",
   "title",
-  "aria-expanded",
-  "aria-controls",
   "aria-label",
   "aria-labelledby",
   "aria-describedby",
-  "aria-hidden",
-  "href",
+  "aria-controls",
+  "aria-required",
+  "aria-invalid",
+  "aria-live",
 ]);
+const REPLACE_EXTRA_ATTRS = new Set(["href", "for"]);
 
 const PATCH_OP_SET = new Set(PATCH_OPS);
 const INSERT_POS_SET = new Set(INSERT_HTML_POSITIONS);
@@ -72,6 +67,7 @@ const DROP_INSERT_ATTR = new Set([
   "id",
   "name",
   "for",
+  "class",
 ]);
 
 const HTML_NS = "http://www.w3.org/1999/xhtml";
@@ -93,6 +89,26 @@ export const FORBIDDEN_OP_HOSTS = new Set([
 ]);
 
 const PAGE_CONTAINERS = new Set(["html", "head", "body", "main", "header", "footer", "nav", "aside"]);
+const PAGE_ROLES = new Set([
+  "main",
+  "banner",
+  "contentinfo",
+  "navigation",
+  "complementary",
+  "region",
+  "form",
+]);
+export const LANDMARK_ROLES = new Set([
+  "main",
+  "banner",
+  "contentinfo",
+  "navigation",
+  "complementary",
+  "region",
+  "form",
+  "search",
+  "article",
+]);
 
 const VOID_OR_CONTROL = new Set([
   "area",
@@ -136,7 +152,7 @@ const INTERACTIVE_TAGS = new Set([
   "embed",
 ]);
 
-const INTERACTIVE_ROLES = new Set([
+export const INTERACTIVE_ROLES = new Set([
   "button",
   "link",
   "menuitem",
@@ -202,9 +218,16 @@ export function isAllowedAttributeName(name) {
   const lower = name.toLowerCase();
   if (lower.startsWith("on")) return false;
   if (lower.startsWith("data-lift-")) return false;
-  if (ALLOWED_ATTR_NAMES.has(lower)) return true;
-  if (/^aria-[a-z0-9-]+$/.test(lower)) return true;
-  return false;
+  if (lower === "class" || lower === "type") return false;
+  return SET_ATTR_NAMES.has(lower);
+}
+
+function isReplaceAttributeName(name) {
+  if (typeof name !== "string") return false;
+  const lower = name.toLowerCase();
+  if (lower === "class" || lower === "type" || lower === "aria-expanded") return false;
+  if (REPLACE_EXTRA_ATTRS.has(lower)) return true;
+  return isAllowedAttributeName(name);
 }
 
 /** Same-origin href: `#…` or a single `/` not followed by `/` or `\`. */
@@ -237,13 +260,17 @@ export function isSafeAttributeValue(name, value) {
   if (attr === "tabindex") {
     return value === "0" || value === "-1";
   }
-  if (attr === "aria-hidden") {
+  if (attr === "aria-hidden") return false;
+  if (attr === "aria-live") return value === "polite";
+  if (attr === "aria-required" || attr === "aria-invalid") {
     return value === "true" || value === "false";
   }
   if (attr === "role") {
     const tokens = roleTokens(value);
-    if (tokens.length === 0) return false;
-    return tokens.every((token) => !HIDDEN_ROLE_TOKENS.has(token));
+    if (tokens.length !== 1) return false;
+    const role = tokens[0];
+    if (HIDDEN_ROLE_TOKENS.has(role)) return false;
+    return INTERACTIVE_ROLES.has(role) || LANDMARK_ROLES.has(role);
   }
   return true;
 }
@@ -285,7 +312,17 @@ export function elementForbiddenAsTextOrTagHost(el) {
 
 export function elementIsPageContainer(el) {
   if (!el || el.nodeType !== 1) return true;
-  return PAGE_CONTAINERS.has(localTagName(el));
+  if (PAGE_CONTAINERS.has(localTagName(el))) return true;
+  if (roleTokens(el.getAttribute("role") || "").some((token) => PAGE_ROLES.has(token))) {
+    return true;
+  }
+  const body = el.ownerDocument && el.ownerDocument.body;
+  if (body && el !== body && typeof body.querySelectorAll === "function") {
+    const bodyCount = body.querySelectorAll("*").length;
+    const ownCount = el.querySelectorAll("*").length;
+    if (bodyCount > 0 && ownCount > bodyCount * 0.5) return true;
+  }
+  return false;
 }
 
 export function elementHasVoidOrControlDescendant(el) {
@@ -312,12 +349,69 @@ function isContentEditable(el) {
   return raw === "" && el.hasAttribute("contenteditable") ? true : raw === "true" || raw === "plaintext-only";
 }
 
-export function isInteractiveElement(el) {
+export function isContentEditableHost(el) {
+  return isContentEditable(el);
+}
+
+export function isNativeInteractiveHost(el) {
   if (!el || el.nodeType !== 1) return true;
-  if (INTERACTIVE_TAGS.has(localTagName(el))) return true;
-  if (el.hasAttribute("tabindex")) return true;
+  const tag = localTagName(el);
+  if (tag === "a") return el.hasAttribute("href");
+  if (tag === "button" || tag === "input" || tag === "select" || tag === "textarea" || tag === "summary") {
+    return true;
+  }
   if (isContentEditable(el)) return true;
   return roleTokens(el.getAttribute("role") || "").some((token) => INTERACTIVE_ROLES.has(token));
+}
+
+export function isInteractiveElement(el) {
+  if (!el || el.nodeType !== 1) return true;
+  if (isNativeInteractiveHost(el)) return true;
+  const tag = localTagName(el);
+  if (tag !== "a" && INTERACTIVE_TAGS.has(tag)) return true;
+  if (el.hasAttribute("tabindex")) return true;
+  return false;
+}
+
+export function elementOrAncestorInteractive(el) {
+  let node = el;
+  while (node && node.nodeType === 1) {
+    if (isInteractiveElement(node)) return true;
+    node = node.parentElement;
+  }
+  return false;
+}
+
+export function roleMatchesKind(el, role) {
+  if (!INTERACTIVE_ROLES.has(role)) return false;
+  const tag = localTagName(el);
+  const type = ((el.getAttribute && el.getAttribute("type")) || "text").trim().toLowerCase();
+  if (tag === "button" || tag === "summary") return role === "button";
+  if (tag === "a") return role === "link";
+  if (tag === "textarea") return role === "textbox";
+  if (tag === "select") return role === "combobox" || role === "listbox";
+  if (tag === "input") {
+    if (type === "checkbox") return role === "checkbox" || role === "switch";
+    if (type === "radio") return role === "radio";
+    if (type === "search") return role === "searchbox" || role === "textbox";
+    if (type === "number") return role === "spinbutton" || role === "textbox";
+    if (type === "range") return role === "slider";
+    return role === "textbox" || role === "searchbox" || role === "combobox";
+  }
+  const existing = roleTokens(el.getAttribute("role") || "")[0];
+  if (existing && INTERACTIVE_ROLES.has(existing)) return role === existing;
+  return INTERACTIVE_ROLES.has(role);
+}
+
+export function roleAllowedOnElement(el, value) {
+  const tokens = roleTokens(value);
+  if (tokens.length !== 1) return false;
+  const role = tokens[0];
+  if (HIDDEN_ROLE_TOKENS.has(role)) return false;
+  if (isNativeInteractiveHost(el) || INTERACTIVE_TAGS.has(localTagName(el))) {
+    return roleMatchesKind(el, role);
+  }
+  return INTERACTIVE_ROLES.has(role) || LANDMARK_ROLES.has(role);
 }
 
 export function elementHasInteractiveDescendant(el) {
@@ -400,10 +494,8 @@ function insertAttrForbidden(name) {
 function sanitizeInsertedElement(el) {
   const tag = localTagName(el);
   if (!INSERT_TAGS.has(tag)) return false;
-  if (tag === "button") {
-    const type = (el.getAttribute("type") || "").toLowerCase();
-    if (!type) el.setAttribute("type", "button");
-    else if (type !== "button") return false;
+  if (tag === "button" || tag === "a" || tag === "input" || tag === "select" || tag === "textarea") {
+    return false;
   }
   for (const attr of [...el.attributes]) {
     const name = attr.name;
@@ -459,7 +551,9 @@ function parseAttributes(raw, index) {
   if (!isRecord(raw)) return { error: `ops[${index}] attributes must be an object` };
   const out = {};
   for (const [name, value] of Object.entries(raw)) {
-    if (!isAllowedAttributeName(name)) return { error: `ops[${index}] disallowed attribute: ${name}` };
+    if (!isReplaceAttributeName(name)) {
+      return { error: `ops[${index}] disallowed attribute: ${name}` };
+    }
     if (typeof value !== "string") return { error: `ops[${index}] attribute ${name} must be a string` };
     if (!isSafeAttributeValue(name, value)) return { error: `ops[${index}] unsafe attribute value: ${name}` };
     out[name] = value;
@@ -486,7 +580,9 @@ function parseOp(raw, index, doc) {
       if (!isNonEmptyString(raw.selector)) return { error: `ops[${index}] selector required` };
       if (!isNonEmptyString(raw.name)) return { error: `ops[${index}] name required` };
       if (typeof raw.value !== "string") return { error: `ops[${index}] value must be a string` };
-      if (raw.name.toLowerCase() === "type") return { error: `ops[${index}] disallowed attribute` };
+      if (raw.name.toLowerCase() === "class" || raw.name.toLowerCase() === "type") {
+        return { error: `ops[${index}] disallowed attribute` };
+      }
       if (!isAllowedAttributeName(raw.name)) return { error: `ops[${index}] disallowed attribute` };
       if (!isSafeAttributeValue(raw.name, raw.value)) {
         return { error: `ops[${index}] unsafe attribute value` };
@@ -499,6 +595,7 @@ function parseOp(raw, index, doc) {
     case "setText": {
       if (!isNonEmptyString(raw.selector)) return { error: `ops[${index}] selector required` };
       if (typeof raw.text !== "string") return { error: `ops[${index}] text must be a string` };
+      if (raw.text.trim().length < 1) return { error: `ops[${index}] text required` };
       if (selectorTargetsForbiddenHost(raw.selector)) {
         return { error: `ops[${index}] target is not allowlisted` };
       }

@@ -129,12 +129,14 @@ export const PATCH_SPEC_CORPUS: CorpusCase[] = [
   {
     name: "href fragment",
     spec: op([{ op: "setAttribute", selector: "a", name: "href", value: "#main" }]),
-    ok: true,
+    ok: false,
+    error: "ops[0] disallowed attribute",
   },
   {
     name: "href same-origin path",
     spec: op([{ op: "setAttribute", selector: "a", name: "href", value: "/checkout" }]),
-    ok: true,
+    ok: false,
+    error: "ops[0] disallowed attribute",
   },
   {
     name: "injectCSS simple",
@@ -172,7 +174,7 @@ export const PATCH_SPEC_CORPUS: CorpusCase[] = [
         op: "insertHTML",
         selector: "main",
         position: "prepend",
-        html: '<a href="#main">Skip</a>',
+        html: "<span>Skip</span>",
         mountId: "skip",
       },
     ]),
@@ -219,19 +221,19 @@ export const PATCH_SPEC_CORPUS: CorpusCase[] = [
     name: "href protocol-relative",
     spec: op([{ op: "setAttribute", selector: "a", name: "href", value: "//evil.example" }]),
     ok: false,
-    error: "ops[0] unsafe attribute value",
+    error: "ops[0] disallowed attribute",
   },
   {
     name: "href backslash",
     spec: op([{ op: "setAttribute", selector: "a", name: "href", value: "/\\evil" }]),
     ok: false,
-    error: "ops[0] unsafe attribute value",
+    error: "ops[0] disallowed attribute",
   },
   {
     name: "javascript href",
     spec: op([{ op: "setAttribute", selector: "a", name: "href", value: "javascript:alert(1)" }]),
     ok: false,
-    error: "ops[0] unsafe attribute value",
+    error: "ops[0] disallowed attribute",
   },
   {
     name: "raw css string rejected",
@@ -771,14 +773,14 @@ export const PATCH_SPEC_CORPUS: CorpusCase[] = [
     name: "aria-hidden padded true",
     spec: op([{ op: "setAttribute", selector: "#x", name: "aria-hidden", value: " true" }]),
     ok: false,
-    error: "ops[0] unsafe attribute value",
+    error: "ops[0] disallowed attribute",
     schema: "skip",
   },
   {
     name: "aria-hidden trailing true",
     spec: op([{ op: "setAttribute", selector: "#x", name: "aria-hidden", value: "true " }]),
     ok: false,
-    error: "ops[0] unsafe attribute value",
+    error: "ops[0] disallowed attribute",
     schema: "skip",
   },
   {
@@ -936,7 +938,7 @@ export const PATCH_SPEC_CORPUS: CorpusCase[] = [
       },
     ]),
     ok: false,
-    error: "ops[0] target is not allowlisted",
+    error: "ops[0] html is not allowlisted",
   },
   {
     name: "wrapLabel body",
@@ -1008,6 +1010,96 @@ export const PATCH_SPEC_CORPUS: CorpusCase[] = [
     ]),
     ok: false,
     error: "ops[0] css is not allowlisted",
+  },
+  {
+    name: "setAttribute class forbidden",
+    spec: op([{ op: "setAttribute", selector: "#x", name: "class", value: "gone" }]),
+    ok: false,
+    error: "ops[0] disallowed attribute",
+  },
+  {
+    name: "setAttribute aria-hidden forbidden",
+    spec: op([{ op: "setAttribute", selector: "#x", name: "aria-hidden", value: "true" }]),
+    ok: false,
+    error: "ops[0] disallowed attribute",
+  },
+  {
+    name: "setText empty",
+    spec: op([{ op: "setText", selector: "#x", text: "   " }]),
+    ok: false,
+    error: "ops[0] text required",
+  },
+  {
+    name: "typed hover color",
+    spec: op([
+      {
+        op: "injectCSS",
+        rules: [
+          {
+            selector: { classes: ["x"], state: "hover" },
+            declarations: [{ property: "color", value: "#fff" }],
+          },
+        ],
+      },
+    ]),
+    ok: false,
+    error: "ops[0] css is not allowlisted",
+    schema: "skip",
+  },
+  {
+    name: "typed border-width 0px",
+    spec: op([
+      {
+        op: "injectCSS",
+        rules: [
+          {
+            selector: { classes: ["x"] },
+            declarations: [{ property: "border-width", value: "0px" }],
+          },
+        ],
+      },
+    ]),
+    ok: false,
+    error: "ops[0] css is not allowlisted",
+  },
+  {
+    name: "replaceTag type attribute",
+    spec: op([
+      {
+        op: "replaceTag",
+        selector: "#x",
+        tag: "button",
+        attributes: { type: "submit" },
+      },
+    ]),
+    ok: false,
+    error: "ops[0] disallowed attribute: type",
+  },
+  {
+    name: "replaceTag class attribute",
+    spec: op([
+      {
+        op: "replaceTag",
+        selector: "#x",
+        tag: "span",
+        attributes: { class: "x" },
+      },
+    ]),
+    ok: false,
+    error: "ops[0] disallowed attribute: class",
+  },
+  {
+    name: "insertHTML anchor",
+    spec: op([
+      {
+        op: "insertHTML",
+        selector: "main",
+        position: "append",
+        html: '<a href="#main">Skip</a>',
+      },
+    ]),
+    ok: false,
+    error: "ops[0] html is not allowlisted",
   },
 ];
 

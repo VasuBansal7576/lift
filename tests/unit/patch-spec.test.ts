@@ -24,15 +24,14 @@ describe("parsePatchSpec", () => {
       "replaceTag",
       "toggleDisclosure",
       "setAttribute",
-      "setText",
       "wrapLabel",
       "wrapLabel",
       "wrapLabel",
       "wrapLabel",
       "wrapLabel",
       "replaceTag",
-      "replaceTag",
       "setText",
+      "replaceTag",
     ]);
   });
 
@@ -85,7 +84,7 @@ describe("parsePatchSpec", () => {
         op: "insertHTML",
         selector: "main",
         position: "prepend",
-        html: "<a href=\"#main\">Skip</a>",
+        html: "<span>Skip</span>",
         mountId: "skip",
       },
       toggleDisclosure: { op: "toggleDisclosure", trigger: "#shop-trigger", panel: "#shop-menu" },

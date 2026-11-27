@@ -20,8 +20,6 @@
       "selector": "#shop-trigger",
       "tag": "button",
       "attributes": {
-        "type": "button",
-        "aria-expanded": "false",
         "aria-controls": "shop-menu"
       }
     },
@@ -35,11 +33,6 @@
       "selector": "#cart-icon",
       "name": "aria-label",
       "value": "View cart and check out"
-    },
-    {
-      "op": "setText",
-      "selector": "#cart-icon",
-      "text": "👜"
     },
     {
       "op": "wrapLabel",
@@ -73,15 +66,14 @@
       "attributes": { "for": "terms" }
     },
     {
-      "op": "replaceTag",
-      "selector": "#place-order",
-      "tag": "button",
-      "attributes": { "type": "button", "class": "place-order" }
-    },
-    {
       "op": "setText",
       "selector": "#place-order",
       "text": "Place order"
+    },
+    {
+      "op": "replaceTag",
+      "selector": "#place-order",
+      "tag": "button"
     }
   ]
 }

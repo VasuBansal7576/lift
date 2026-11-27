@@ -57,6 +57,7 @@ test("Chromium refuses setText into an injected style tag", async ({ page }) => 
         },
       ],
     };
+    document.body.insertAdjacentHTML("beforeend", `<span class="x">x</span>`);
     runtime.applyPatchSpec({
       id: "css",
       version: 0,
@@ -162,17 +163,17 @@ test("chained replaceTag forwards one click to the original node", async ({ page
     runtime.applyPatchSpec({
       id: "chain-1",
       version: 0,
-      ops: [{ op: "replaceTag", selector: "#chain-pay", tag: "button", attributes: { type: "button" } }],
+      ops: [{ op: "replaceTag", selector: "#chain-pay", tag: "button" }],
     });
     runtime.applyPatchSpec({
       id: "chain-2",
       version: 0,
-      ops: [{ op: "replaceTag", selector: "#chain-pay", tag: "a", attributes: { href: "#ok" } }],
+      ops: [{ op: "replaceTag", selector: "#chain-pay", tag: "button" }],
     });
     document.getElementById("chain-pay")?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     return { n, tag: document.getElementById("chain-pay")?.tagName ?? "" };
   });
-  expect(clicks.tag).toBe("A");
+  expect(clicks.tag).toBe("BUTTON");
   expect(clicks.n).toBe(1);
 });
 
@@ -192,7 +193,6 @@ test("replaceTag on a class selector is idempotent", async ({ page }) => {
           op: "replaceTag",
           selector: ".lift-chip-test",
           tag: "button",
-          attributes: { class: "lift-btn-test" },
         },
       ],
     };
@@ -201,14 +201,14 @@ test("replaceTag on a class selector is idempotent", async ({ page }) => {
     return {
       first: first.ok,
       second: second.ok,
-      buttons: document.querySelectorAll("button.lift-btn-test").length,
-      chips: document.querySelectorAll(".lift-chip-test").length,
+      buttons: document.querySelectorAll("button.lift-chip-test").length,
+      spans: document.querySelectorAll("span.lift-chip-test").length,
     };
   });
   expect(result.first).toBe(true);
   expect(result.second).toBe(true);
   expect(result.buttons).toBe(1);
-  expect(result.chips).toBe(0);
+  expect(result.spans).toBe(0);
 });
 
 test("injectCSS with the same id updates css and undo restores the previous text", async ({
@@ -220,6 +220,7 @@ test("injectCSS with the same id updates css and undo restores the previous text
     const runtime = (await import(href)) as {
       applyPatchSpec: (input: unknown) => { ok: boolean };
     };
+    document.body.insertAdjacentHTML("beforeend", `<span class="a">a</span>`);
     const rule = (color: string) => ({
       op: "injectCSS",
       id: "s1",

@@ -24,3 +24,5 @@ export function applyPatchSpec(
 ):
   | { ok: true; ops: ApplyOpStatus[] }
   | { ok: false; error: string; ops: ApplyOpStatus[] };
+
+export function resetRuntimeGuards(): void;

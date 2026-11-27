@@ -349,6 +349,159 @@ test("04-typed-color-eq-background", async ({ page }) => {
   await pause(page, 2000);
 });
 
+test("04-typed-hover-invisible", async ({ page }) => {
+  await page.goto("/checkout/?lift_variant=control");
+  await openCheckoutWithHover(page);
+  const before = await snapshotPage(page);
+  await showBanner(page, "FAIL-OPEN — state rule hover { color } is unrepresentable");
+  const result = await applyAttack(page, {
+    id: "evil-hover-color",
+    version: 0,
+    ops: [
+      {
+        op: "injectCSS",
+        rules: [
+          {
+            selector: { classes: ["div-pay"], state: "hover" },
+            declarations: [{ property: "color", value: "#fff" }],
+          },
+        ],
+      },
+    ],
+  });
+  expect(result.ok).toBe(false);
+  const after = await snapshotPage(page);
+  expect(after.pay).toBe(before.pay);
+  expect(after.html).toBe(before.html);
+  await showBanner(
+    page,
+    `REJECTED hover color (${result.error ?? "not allowlisted"}) — page unchanged`,
+  );
+  await pause(page, 2000);
+});
+
+test("04-replace-button-to-span", async ({ page }) => {
+  await page.goto("/checkout/?lift_variant=control");
+  await openCheckoutWithHover(page);
+  expect((await applyTreatment(page)).ok).toBe(true);
+  await expect(page.locator("#place-order")).toHaveJSProperty("tagName", "BUTTON");
+  await showBanner(page, "FAIL-OPEN — replaceTag button → span is undone (monotonicity + interactive host)");
+  const result = await applyAttack(page, {
+    id: "evil-btn-span",
+    version: 0,
+    ops: [{ op: "replaceTag", selector: "#place-order", tag: "span" }],
+  });
+  expect(result.ok).toBe(false);
+  await expect(page.locator("#place-order")).toHaveJSProperty("tagName", "BUTTON");
+  await expect(page.locator("#place-order")).toHaveAttribute("type", "button");
+  await showBanner(
+    page,
+    `UNDONE replaceTag button→span (${result.error ?? "monotonicity"}) — Place order stays BUTTON type=button`,
+  );
+  await pause(page, 2000);
+});
+
+test("04-late-content", async ({ page }) => {
+  await page.goto("/checkout/?lift_variant=control");
+  await openCheckoutWithHover(page);
+  await showBanner(page, "MutationObserver — apply legal CSS, then inject late low-contrast text");
+  const applied = await page.evaluate(async () => {
+    const href = new URL("/runtime/runtime.js", location.origin).href;
+    const runtime = (await import(href)) as {
+      applyPatchSpec: (input: unknown) => { ok: boolean; error?: string };
+    };
+    const host = document.createElement("div");
+    host.className = "lift-late-slot";
+    host.textContent = "ok";
+    host.style.cssText = "padding:8px;background:#fff;color:#111";
+    document.body.append(host);
+    return runtime.applyPatchSpec({
+      id: "late-ok",
+      version: 0,
+      ops: [
+        {
+          op: "injectCSS",
+          rules: [
+            {
+              selector: { classes: ["lift-late-slot"] },
+              declarations: [
+                { property: "color", value: "#111" },
+                { property: "background-color", value: "#fff" },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+  });
+  expect(applied.ok).toBe(true);
+  await showBanner(page, "CSS applied — inserting white-on-white descendant");
+  const after = await page.evaluate(async () => {
+    const slot = document.querySelector(".lift-late-slot");
+    slot?.insertAdjacentHTML("beforeend", `<span style="color:#fff">hidden</span>`);
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    const failOpen = (window as unknown as { __LIFT_FAIL_OPEN__?: { reason: string }[] })
+      .__LIFT_FAIL_OPEN__;
+    return {
+      css: Boolean(document.querySelector("[data-lift-css]")),
+      failOpen: failOpen?.length ?? 0,
+      reason: failOpen?.[failOpen.length - 1]?.reason ?? "",
+    };
+  });
+  expect(after.css).toBe(false);
+  expect(after.failOpen).toBeGreaterThan(0);
+  await showBanner(
+    page,
+    `UNDONE by MutationObserver (${after.reason || "contrast"}) — fail-open recorded, style removed`,
+  );
+  await pause(page, 2000);
+});
+
+test("04-descendant-contrast", async ({ page }) => {
+  await page.goto("/checkout/?lift_variant=control");
+  await openCheckoutWithHover(page);
+  const before = await snapshotPage(page);
+  await showBanner(page, "FAIL-OPEN — parent contrast is fine, descendant ghost text is not");
+  const result = await page.evaluate(async () => {
+    const href = new URL("/runtime/runtime.js", location.origin).href;
+    const runtime = (await import(href)) as {
+      applyPatchSpec: (input: unknown) => { ok: boolean; error?: string };
+    };
+    const host = document.createElement("div");
+    host.className = "lift-card";
+    host.append("ok");
+    const ghost = document.createElement("span");
+    ghost.style.color = "#fff";
+    ghost.textContent = "hid";
+    host.append(ghost);
+    document.body.append(host);
+    return runtime.applyPatchSpec({
+      id: "desc-contrast",
+      version: 0,
+      ops: [
+        {
+          op: "injectCSS",
+          rules: [
+            {
+              selector: { classes: ["lift-card"] },
+              declarations: [{ property: "background-color", value: "#fff" }],
+            },
+          ],
+        },
+      ],
+    });
+  });
+  expect(result.ok).toBe(false);
+  expect(await page.evaluate(() => Boolean(document.querySelector("[data-lift-css]")))).toBe(false);
+  const after = await snapshotPage(page);
+  expect(after.pay).toBe(before.pay);
+  await showBanner(
+    page,
+    `UNDONE descendant contrast (${result.error ?? "not allowlisted"}) — injected CSS removed`,
+  );
+  await pause(page, 2000);
+});
+
 test("05-sticky-identity", async ({ page }) => {
   await page.goto("/checkout/");
   await page.waitForTimeout(1500);

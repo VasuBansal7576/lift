@@ -17,12 +17,17 @@ import {
   elementHasInteractiveDescendant,
   elementHasVoidOrControlDescendant,
   elementIsPageContainer,
+  elementOrAncestorInteractive,
   hashKey,
+  INTERACTIVE_ROLES,
+  isInteractiveElement,
   isLabelableTextControl,
+  isNativeInteractiveHost,
   isSafeInsertHtml,
   localTagName,
   mountKeyFor,
   parsePatchSpec,
+  roleAllowedOnElement,
   sanitizeInsertHtml,
 } from "./patch-rules.js";
 
@@ -77,41 +82,44 @@ function resolveForTarget(root, id) {
   }
 }
 
+function idsResolveToNamedElements(root, value) {
+  const ids = String(value)
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  if (ids.length === 0) return false;
+  for (const id of ids) {
+    const el = resolveForTarget(root, id);
+    if (!el || !(el.textContent || "").trim()) return false;
+  }
+  return true;
+}
+
 function applySetAttribute(root, op, index) {
   const found = queryOne(root, op.selector);
   if (found.error) return miss(index, op.selector, found.error);
   const el = found.el;
   if (!(el instanceof Element)) return miss(index, op.selector);
-  if (elementForbiddenAsTextOrTagHost(el)) {
+  if (elementForbiddenAsTextOrTagHost(el) || elementIsPageContainer(el)) {
     return { status: "miss", error: `ops[${index}] target is not allowlisted` };
   }
   const attrName = op.name.toLowerCase();
   if (attrName.startsWith("data-lift-")) {
     return { status: "miss", error: `ops[${index}] disallowed attribute` };
   }
-  if (attrName === "type") {
-    const tag = localTagName(el);
-    if (tag === "input" || tag === "select" || tag === "textarea" || op.value.toLowerCase() === "hidden") {
-      return { status: "miss", error: `ops[${index}] disallowed attribute` };
-    }
+  if (attrName === "class" || attrName === "type" || attrName === "for") {
+    return { status: "miss", error: `ops[${index}] disallowed attribute` };
   }
   if (attributeWouldHideInteractive(op.name, op.value, el)) {
     return { status: "miss", error: `ops[${index}] target is not allowlisted` };
   }
-  if (attrName === "for") {
-    const target = resolveForTarget(root, op.value.trim());
-    if (!isLabelableTextControl(target)) {
+  if (attrName === "aria-labelledby" || attrName === "aria-describedby") {
+    if (!idsResolveToNamedElements(root, op.value)) {
       return { status: "miss", error: `ops[${index}] target is not allowlisted` };
     }
   }
-  if (attrName === "class") {
-    const tokens = op.value.trim().split(/\s+/).filter(Boolean);
-    const added = tokens.filter((token) => !el.classList.contains(token));
-    if (added.length === 0) return noop();
-    for (const token of added) el.classList.add(token);
-    return applied(() => {
-      for (const token of added) el.classList.remove(token);
-    });
+  if (attrName === "role" && !roleAllowedOnElement(el, op.value)) {
+    return { status: "miss", error: `ops[${index}] target is not allowlisted` };
   }
   if (el.getAttribute(op.name) === op.value) return noop();
   const had = el.hasAttribute(op.name);
@@ -128,10 +136,17 @@ function applySetText(root, op, index) {
   if (found.error) return miss(index, op.selector, found.error);
   const el = found.el;
   if (!(el instanceof Element)) return miss(index, op.selector);
-  if (elementForbiddenAsTextOrTagHost(el)) {
+  if (elementForbiddenAsTextOrTagHost(el) || elementIsPageContainer(el)) {
     return { status: "miss", error: `ops[${index}] target is not allowlisted` };
   }
   if (elementHasElementChildren(el) || elementHasVoidOrControlDescendant(el)) {
+    return { status: "miss", error: `ops[${index}] target is not allowlisted` };
+  }
+  if (op.text.trim().length < 1) {
+    return { status: "miss", error: `ops[${index}] text required` };
+  }
+  if (isInteractiveElement(el)) {
+    if ((el.textContent || "") === op.text) return noop();
     return { status: "miss", error: `ops[${index}] target is not allowlisted` };
   }
   const prevChildren = [...el.childNodes];
@@ -158,7 +173,37 @@ function parseComputedRgb(css) {
   return rgb ? { rgb, alpha: 1 } : null;
 }
 
+const TEXT_DESCENDANT_CAP = 500;
+const PAINT_STATES = new Set(["hover", "focus", "focus-visible", "active"]);
+
+function backgroundUnknown(el) {
+  let node = el;
+  while (node && node.nodeType === 1) {
+    const style = getComputedStyle(node);
+    const img = String(style.backgroundImage || node.style?.backgroundImage || "")
+      .trim()
+      .toLowerCase();
+    if (img && img !== "none") return true;
+    const parsed =
+      parseComputedRgb(style.backgroundColor) || parseComputedRgb(node.style?.backgroundColor || "");
+    if (parsed && parsed.alpha > 0 && parsed.alpha < 0.99) return true;
+    const opacityRaw = String(style.opacity || "").trim();
+    if (opacityRaw !== "") {
+      const opacity = Number(opacityRaw);
+      if (Number.isFinite(opacity) && opacity < 1) return true;
+    }
+    const inlineOpacityRaw = String(node.style?.opacity || "").trim();
+    if (inlineOpacityRaw !== "") {
+      const inlineOpacity = Number(inlineOpacityRaw);
+      if (Number.isFinite(inlineOpacity) && inlineOpacity < 1) return true;
+    }
+    node = node.parentElement;
+  }
+  return false;
+}
+
 function effectiveBackgroundRgb(el) {
+  if (backgroundUnknown(el)) return null;
   let node = el;
   while (node && node.nodeType === 1) {
     const parsed = parseComputedRgb(getComputedStyle(node).backgroundColor);
@@ -178,6 +223,29 @@ function largeTextThreshold(el) {
   return 4.5;
 }
 
+function isTextBearing(el) {
+  if (!el || !el.childNodes) return false;
+  for (const node of el.childNodes) {
+    if (node.nodeType === 3 && String(node.textContent || "").trim()) return true;
+  }
+  return false;
+}
+
+function checkNodeContrast(el, minRatio) {
+  const fg = parseComputedRgb(getComputedStyle(el).color);
+  if (!fg || fg.alpha < 0.99) return null;
+  const bg = effectiveBackgroundRgb(el);
+  if (!bg) return "background is not allowlisted";
+  const min = minRatio ?? largeTextThreshold(el);
+  if (contrastRatio(fg.rgb, bg) < min) return "contrast is not allowlisted";
+  return null;
+}
+
+function colorValueFromRule(rule, property) {
+  const decl = (rule.declarations || []).find((d) => d.property === property);
+  return decl ? cssColorToRgb(decl.value) : null;
+}
+
 function cssMatchesViolateHostsOrContrast(root, op) {
   const scope = "querySelectorAll" in root ? root : docOf(root);
   for (const rule of op.rules || []) {
@@ -187,16 +255,36 @@ function cssMatchesViolateHostsOrContrast(root, op) {
     } catch {
       return "invalid selector";
     }
+    if (matches.length === 0) return "selector matched nothing";
     if (matches.length > CSS_MATCH_LIMIT) return "too many matches";
+    const decls = rule.declarations || [];
+    const changesPaint = decls.some(
+      (d) => d.property === "color" || d.property === "background-color",
+    );
+    const outlineColor = colorValueFromRule(rule, "outline-color");
+    const borderColor = colorValueFromRule(rule, "border-color");
+    const isState = Boolean(rule.selector && PAINT_STATES.has(rule.selector.state));
     for (const el of matches) {
       if (elementIsPageContainer(el) || elementForbiddenAsTextOrTagHost(el)) {
         return "target is not allowlisted";
       }
-      const fg = parseComputedRgb(getComputedStyle(el).color);
-      if (!fg || fg.alpha < 0.99) continue;
+      if (changesPaint && backgroundUnknown(el)) return "background is not allowlisted";
+      const nodes = [el, ...el.querySelectorAll("*")];
+      if (nodes.length > TEXT_DESCENDANT_CAP) return "too many descendants";
+      for (const node of nodes) {
+        if (node !== el && !isTextBearing(node)) continue;
+        const err = checkNodeContrast(node);
+        if (err) return err;
+      }
       const bg = effectiveBackgroundRgb(el);
-      const min = largeTextThreshold(el);
-      if (contrastRatio(fg.rgb, bg) < min) return "contrast is not allowlisted";
+      if (outlineColor) {
+        if (!bg) return "background is not allowlisted";
+        if (contrastRatio(outlineColor, bg) < 3) return "contrast is not allowlisted";
+      }
+      if (!isState && borderColor) {
+        if (!bg) return "background is not allowlisted";
+        if (contrastRatio(borderColor, bg) < 3) return "contrast is not allowlisted";
+      }
     }
   }
   return null;
@@ -275,11 +363,15 @@ function applyWrapLabel(root, op, index) {
   const labelledValue = hadLabelled ? input.getAttribute("data-labelled") : null;
   input.removeAttribute("data-unlabeled");
   input.setAttribute("data-labelled", "1");
-  if (hint) hint.replaceWith(label);
-  else input.insertAdjacentElement("beforebegin", label);
+  if (hint) {
+    replacementOf.set(hint, label);
+    hint.replaceWith(label);
+  } else input.insertAdjacentElement("beforebegin", label);
   return applied(() => {
-    if (hint) label.replaceWith(hint);
-    else label.remove();
+    if (hint) {
+      replacementOf.delete(hint);
+      label.replaceWith(hint);
+    } else label.remove();
     if (!hadLabelled) input.removeAttribute("data-labelled");
     else input.setAttribute("data-labelled", labelledValue ?? "");
     if (hadUnlabeled) input.setAttribute("data-unlabeled", unlabeledValue ?? "");
@@ -292,7 +384,7 @@ function applyMakeFocusable(root, op, index) {
   if (found.error) return miss(index, op.selector, found.error);
   const el = found.el;
   if (!(el instanceof HTMLElement)) return miss(index, op.selector);
-  if (elementForbiddenAsTextOrTagHost(el)) {
+  if (elementForbiddenAsTextOrTagHost(el) || elementIsPageContainer(el)) {
     return { status: "miss", error: `ops[${index}] target is not allowlisted` };
   }
   if (el.getAttribute("data-lift-focusable") === "1") return noop();
@@ -312,7 +404,7 @@ function applyBindEnterToClick(root, op, index) {
   if (found.error) return miss(index, op.selector, found.error);
   const el = found.el;
   if (!(el instanceof HTMLElement)) return miss(index, op.selector);
-  if (elementForbiddenAsTextOrTagHost(el)) {
+  if (elementForbiddenAsTextOrTagHost(el) || elementIsPageContainer(el)) {
     return { status: "miss", error: `ops[${index}] target is not allowlisted` };
   }
   if (elementHasInteractiveDescendant(el)) {
@@ -336,6 +428,7 @@ function applyBindEnterToClick(root, op, index) {
 
 const FORWARDED_TO = new WeakMap();
 const replacementRoot = new WeakMap();
+const replacementOf = new WeakMap();
 
 function alreadyForwardedTo(event, target) {
   const set = FORWARDED_TO.get(event);
@@ -425,19 +518,23 @@ function forTargetAllowed(root, op) {
   return isLabelableTextControl(resolveForTarget(root, forValue));
 }
 
+function ensureButtonType(el) {
+  if (localTagName(el) !== "button") return null;
+  const had = el.hasAttribute("type");
+  const prev = el.getAttribute("type");
+  if (prev === "button") return null;
+  el.setAttribute("type", "button");
+  return () => {
+    if (!had) el.removeAttribute("type");
+    else el.setAttribute("type", prev ?? "");
+  };
+}
+
 function overlayAttributes(el, attrs) {
   const undoAttrs = [];
   for (const [name, value] of Object.entries(attrs)) {
-    if (name.toLowerCase() === "class") {
-      const tokens = String(value).trim().split(/\s+/).filter(Boolean);
-      const added = tokens.filter((token) => !el.classList.contains(token));
-      if (added.length === 0) continue;
-      for (const token of added) el.classList.add(token);
-      undoAttrs.push(() => {
-        for (const token of added) el.classList.remove(token);
-      });
-      continue;
-    }
+    const attrName = name.toLowerCase();
+    if (attrName === "class" || attrName === "type") continue;
     if (el.getAttribute(name) === value) continue;
     const had = el.hasAttribute(name);
     const prev = el.getAttribute(name);
@@ -460,13 +557,22 @@ function applyReplaceTag(root, op, index) {
     if (!forTargetAllowed(root, op)) {
       return { status: "miss", error: `ops[${index}] target is not allowlisted` };
     }
-    return overlayAttributes(existing, op.attributes || {});
+    const overlay = overlayAttributes(existing, op.attributes || {});
+    const undoType = ensureButtonType(existing);
+    if (overlay.status === "noop" && !undoType) return overlay;
+    return applied(() => {
+      if (overlay.status === "applied") overlay.undo();
+      if (undoType) undoType();
+    });
   }
   const found = queryOne(root, op.selector);
   if (found.error) return miss(index, op.selector, found.error);
   const el = found.el;
   if (!(el instanceof Element)) return miss(index, op.selector);
-  if (elementForbiddenAsTextOrTagHost(el)) {
+  if (elementForbiddenAsTextOrTagHost(el) || elementIsPageContainer(el)) {
+    return { status: "miss", error: `ops[${index}] target is not allowlisted` };
+  }
+  if (isNativeInteractiveHost(el) && op.tag !== "button" && op.tag !== "a") {
     return { status: "miss", error: `ops[${index}] target is not allowlisted` };
   }
   if (elementHasVoidOrControlDescendant(el) || elementHasInteractiveDescendant(el)) {
@@ -476,7 +582,13 @@ function applyReplaceTag(root, op, index) {
     if (!forTargetAllowed(root, op)) {
       return { status: "miss", error: `ops[${index}] target is not allowlisted` };
     }
-    return overlayAttributes(el, op.attributes || {});
+    const overlay = overlayAttributes(el, op.attributes || {});
+    const undoType = ensureButtonType(el);
+    if (overlay.status === "noop" && !undoType) return overlay;
+    return applied(() => {
+      if (overlay.status === "applied") overlay.undo();
+      if (undoType) undoType();
+    });
   }
   if (el.tagName.toLowerCase() === op.tag.toLowerCase()) {
     if (!forTargetAllowed(root, op)) {
@@ -486,8 +598,10 @@ function applyReplaceTag(root, op, index) {
     const prevMarker = el.getAttribute("data-lift-replaced");
     el.setAttribute("data-lift-replaced", key);
     const overlay = overlayAttributes(el, op.attributes || {});
+    const undoType = ensureButtonType(el);
     return applied(() => {
       if (overlay.status === "applied") overlay.undo();
+      if (undoType) undoType();
       if (!hadMarker) el.removeAttribute("data-lift-replaced");
       else el.setAttribute("data-lift-replaced", prevMarker ?? "");
     });
@@ -503,17 +617,21 @@ function applyReplaceTag(root, op, index) {
   const next = doc.createElement(op.tag);
   copyAttributesExceptHandlers(el, next);
   for (const [name, value] of Object.entries(op.attributes || {})) {
+    if (name.toLowerCase() === "class" || name.toLowerCase() === "type") continue;
     next.setAttribute(name, value);
   }
+  if (op.tag === "button") next.setAttribute("type", "button");
   next.setAttribute("data-lift-replaced", key);
   while (el.firstChild) next.appendChild(el.firstChild);
   const rootOriginal = replacementRoot.get(el) ?? el;
   replacementRoot.set(next, rootOriginal);
+  replacementOf.set(el, next);
   el.replaceWith(next);
   const stopForward = forwardUiEvents(next, rootOriginal);
   return applied(() => {
     stopForward();
     replacementRoot.delete(next);
+    replacementOf.delete(el);
     while (next.firstChild) el.appendChild(next.firstChild);
     next.replaceWith(el);
   });
@@ -534,7 +652,10 @@ function applyInsertHtml(root, op, index) {
   if (found.error) return miss(index, op.selector, found.error);
   const target = found.el;
   if (!(target instanceof Element)) return miss(index, op.selector);
-  if (elementForbiddenAsTextOrTagHost(target)) {
+  if (elementForbiddenAsTextOrTagHost(target) || elementIsPageContainer(target)) {
+    return { status: "miss", error: `ops[${index}] target is not allowlisted` };
+  }
+  if (elementOrAncestorInteractive(target)) {
     return { status: "miss", error: `ops[${index}] target is not allowlisted` };
   }
   const doc = docOf(root);
@@ -543,6 +664,13 @@ function applyInsertHtml(root, op, index) {
   }
   const fragment = sanitizeInsertHtml(op.html, doc);
   if (!fragment) return { status: "miss", error: `ops[${index}] html is not allowlisted` };
+  for (const node of fragment.querySelectorAll("*")) {
+    for (const attr of [...node.attributes]) {
+      if (attributeWouldHideInteractive(attr.name, attr.value, node)) {
+        return { status: "miss", error: `ops[${index}] html is not allowlisted` };
+      }
+    }
+  }
   const holder = doc.createElement("span");
   holder.setAttribute("data-lift-mount", key);
   holder.setAttribute("data-lift-inserted", "1");
@@ -587,10 +715,10 @@ function applyToggleDisclosure(root, op, index) {
   if (trigger.getAttribute("data-lift-disclosure") === "1") return noop();
   const hadExpanded = trigger.hasAttribute("aria-expanded");
   const prevExpanded = trigger.getAttribute("aria-expanded");
-  const hadOpen = panel.classList.contains("is-open");
+  const hadOpen = panel.classList.contains("lift-open");
   const onClick = (event) => {
-    if (event.target !== trigger) return;
-    const open = panel.classList.toggle("is-open");
+    if (!trigger.contains(event.target)) return;
+    const open = panel.classList.toggle("lift-open");
     trigger.setAttribute("aria-expanded", open ? "true" : "false");
   };
   trigger.addEventListener("click", onClick);
@@ -601,8 +729,8 @@ function applyToggleDisclosure(root, op, index) {
     trigger.removeAttribute("data-lift-disclosure");
     if (!hadExpanded) trigger.removeAttribute("aria-expanded");
     else trigger.setAttribute("aria-expanded", prevExpanded ?? "false");
-    if (!hadOpen) panel.classList.remove("is-open");
-    else panel.classList.add("is-open");
+    if (!hadOpen) panel.classList.remove("lift-open");
+    else panel.classList.add("lift-open");
   });
 }
 
@@ -641,6 +769,270 @@ function undoAll(undos) {
   }
 }
 
+function liveSuccessor(el) {
+  let cur = el;
+  const seen = new Set();
+  while (cur && !cur.isConnected) {
+    if (seen.has(cur)) return null;
+    seen.add(cur);
+    cur = replacementOf.get(cur);
+  }
+  return cur && cur.isConnected ? cur : null;
+}
+
+function isFocusableSnap(el) {
+  if (!(el instanceof HTMLElement)) return false;
+  if ("disabled" in el && el.disabled) return false;
+  if ((el.getAttribute("aria-disabled") || "").trim().toLowerCase() === "true") return false;
+  return el.tabIndex >= 0;
+}
+
+function isRenderedVisible(el) {
+  if (!(el instanceof Element)) return false;
+  const style = getComputedStyle(el);
+  if (style.visibility === "hidden" || style.display === "none") return false;
+  const opacity = Number(style.opacity);
+  if (Number.isFinite(opacity) && opacity <= 0) return false;
+  const rects = typeof el.getClientRects === "function" ? el.getClientRects() : [];
+  if (!rects || rects.length === 0) return false;
+  const box = el.getBoundingClientRect();
+  return box.width > 0 && box.height > 0;
+}
+
+function computedRole(el) {
+  const explicit = String(el.getAttribute("role") || "")
+    .trim()
+    .toLowerCase()
+    .split(/\s+/)
+    .filter(Boolean)[0];
+  if (explicit) return explicit;
+  const tag = localTagName(el);
+  if (tag === "button") return "button";
+  if (tag === "a" && el.hasAttribute("href")) return "link";
+  if (tag === "summary") return "button";
+  if (tag === "textarea") return "textbox";
+  if (tag === "select") return "combobox";
+  if (tag === "input") {
+    const type = (el.getAttribute("type") || "text").trim().toLowerCase();
+    if (type === "checkbox") return "checkbox";
+    if (type === "radio") return "radio";
+    if (type === "submit" || type === "reset" || type === "button" || type === "image") return "button";
+    return "textbox";
+  }
+  return tag;
+}
+
+function accessibleName(el) {
+  const by = el.getAttribute("aria-labelledby");
+  if (by) {
+    const doc = el.ownerDocument;
+    const parts = by
+      .trim()
+      .split(/\s+/)
+      .map((id) => (doc.getElementById(id)?.textContent || "").trim())
+      .filter(Boolean);
+    if (parts.length) return parts.join(" ");
+  }
+  const aria = (el.getAttribute("aria-label") || "").trim();
+  if (aria) return aria;
+  const labels = el.labels;
+  if (labels && labels.length) {
+    const t = [...labels]
+      .map((lab) => (lab.textContent || "").trim())
+      .filter(Boolean)
+      .join(" ");
+    if (t) return t;
+  }
+  const wrap = typeof el.closest === "function" ? el.closest("label") : null;
+  if (wrap && wrap !== el) {
+    const t = (wrap.textContent || "").trim();
+    if (t) return t;
+  }
+  if (el.id) {
+    try {
+      const lab = el.ownerDocument.querySelector(`label[for="${CSS.escape ? CSS.escape(el.id) : el.id}"]`);
+      const t = (lab?.textContent || "").trim();
+      if (t) return t;
+    } catch {
+      /* ignore */
+    }
+  }
+  const text = (el.textContent || "").trim();
+  if (text) return text;
+  const alt = (el.getAttribute("alt") || "").trim();
+  if (alt) return alt;
+  return (el.getAttribute("title") || "").trim();
+}
+
+function isAriaHiddenChain(el) {
+  let node = el;
+  while (node && node.nodeType === 1) {
+    if ((node.getAttribute("aria-hidden") || "").trim().toLowerCase() === "true") return true;
+    node = node.parentElement;
+  }
+  return false;
+}
+
+function snapshotA11y(el) {
+  const tag = localTagName(el);
+  return {
+    el,
+    focusable: isFocusableSnap(el),
+    visible: isRenderedVisible(el),
+    role: computedRole(el),
+    name: accessibleName(el),
+    ariaHidden: isAriaHiddenChain(el),
+    ariaDisabled: (el.getAttribute("aria-disabled") || "").trim().toLowerCase() === "true",
+    buttonType: tag === "button" ? (el.getAttribute("type") || "submit").toLowerCase() : null,
+  };
+}
+
+function opMatchSelectors(op) {
+  if (op.op === "injectCSS") {
+    return (op.rules || []).map((rule) => serializeSelectorForQuery(rule.selector));
+  }
+  if (op.op === "toggleDisclosure") return [op.trigger, op.panel];
+  return op.selector ? [op.selector] : [];
+}
+
+function collectWatchElements(root, spec) {
+  const scope = "querySelectorAll" in root ? root : docOf(root);
+  const watched = new Set();
+  const addInteractiveTree = (host) => {
+    if (!host || host.nodeType !== 1) return;
+    if (isInteractiveElement(host) || accessibleName(host)) watched.add(host);
+    if (typeof host.querySelectorAll !== "function") return;
+    for (const child of host.querySelectorAll("*")) {
+      if (isInteractiveElement(child) || accessibleName(child)) watched.add(child);
+    }
+  };
+  for (const op of spec.ops) {
+    for (const selector of opMatchSelectors(op)) {
+      let matches;
+      try {
+        matches = scope.querySelectorAll(selector);
+      } catch {
+        continue;
+      }
+      for (const el of matches) {
+        addInteractiveTree(el);
+        let anc = el.parentElement;
+        while (anc) {
+          addInteractiveTree(anc);
+          anc = anc.parentElement;
+        }
+      }
+    }
+  }
+  return [...watched];
+}
+
+function monotonicityViolation(root, snapshots) {
+  for (const before of snapshots) {
+    const live = liveSuccessor(before.el) || (before.el.isConnected ? before.el : null);
+    if (!live) return "lost interactive element";
+    const after = snapshotA11y(live);
+    if (before.focusable && !after.focusable) return "lost focusability";
+    if (before.visible && !after.visible) return "lost visibility";
+    if (INTERACTIVE_ROLES.has(before.role) && after.role !== before.role) {
+      return "changed interactive role";
+    }
+    if (before.name && !after.name) return "lost name";
+    if (!before.ariaHidden && after.ariaHidden) return "became aria-hidden";
+    if (!before.ariaDisabled && after.ariaDisabled) return "became aria-disabled";
+    if (
+      before.buttonType &&
+      after.buttonType &&
+      after.buttonType !== before.buttonType &&
+      (after.buttonType === "submit" || after.buttonType === "reset")
+    ) {
+      return "button type changed to submit or reset";
+    }
+  }
+  return null;
+}
+
+function specContrastError(root, spec) {
+  for (const op of spec.ops) {
+    if (op.op !== "injectCSS") continue;
+    const err = cssMatchesViolateHostsOrContrast(root, op);
+    if (err) return err;
+  }
+  return null;
+}
+
+const activeGuards = [];
+
+export function resetRuntimeGuards() {
+  const stops = activeGuards.splice(0);
+  for (const stop of stops) {
+    try {
+      stop();
+    } catch {
+      /* test isolation */
+    }
+  }
+  if (typeof window !== "undefined") window.__LIFT_FAIL_OPEN__ = [];
+}
+
+function recordFailOpen(reason, specId) {
+  const detail = { reason, specId, at: Date.now() };
+  if (typeof window === "undefined") return;
+  window.__LIFT_FAIL_OPEN__ = window.__LIFT_FAIL_OPEN__ || [];
+  window.__LIFT_FAIL_OPEN__.push(detail);
+  window.dispatchEvent(new CustomEvent("lift:fail-open", { detail }));
+}
+
+function installMutationGuard(root, spec, snapshots, undos) {
+  const doc = docOf(root);
+  if (!doc || typeof MutationObserver !== "function") return () => {};
+  let timer = null;
+  let stopped = false;
+  const observer = new MutationObserver(() => {
+    if (stopped) return;
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(() => {
+      timer = null;
+      if (stopped) return;
+      observer.disconnect();
+      const err = specContrastError(root, spec) || monotonicityViolation(root, snapshots);
+      if (err) {
+        stopped = true;
+        undoAll(undos);
+        recordFailOpen(err, spec.id);
+        return;
+      }
+      const node = doc.documentElement || root;
+      try {
+        observer.observe(node, {
+          childList: true,
+          subtree: true,
+          attributes: true,
+          attributeFilter: ["class"],
+        });
+      } catch {
+        /* closed document */
+      }
+    }, 32);
+  });
+  const node = doc.documentElement || root;
+  try {
+    observer.observe(node, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ["class"],
+    });
+  } catch {
+    return () => {};
+  }
+  return () => {
+    stopped = true;
+    if (timer) clearTimeout(timer);
+    observer.disconnect();
+  };
+}
+
 /** Apply a validated spec. On throw or a required-selector miss, undo so the page is untouched. */
 export function applyPatchSpec(input, root) {
   const opsStatus = [];
@@ -649,6 +1041,7 @@ export function applyPatchSpec(input, root) {
     if (!parsed.ok) return { ok: false, error: parsed.error, ops: opsStatus };
     const scope = root ?? (typeof document === "undefined" ? null : document);
     if (!scope) return { ok: false, error: "no document", ops: opsStatus };
+    const snapshots = collectWatchElements(scope, parsed.spec).map(snapshotA11y);
     const undos = [];
     try {
       for (let i = 0; i < parsed.spec.ops.length; i++) {
@@ -665,6 +1058,19 @@ export function applyPatchSpec(input, root) {
           opsStatus.push({ op: op.op, status: "noop" });
         }
       }
+      const contrastErr = specContrastError(scope, parsed.spec);
+      if (contrastErr) {
+        undoAll(undos);
+        return { ok: false, error: contrastErr, ops: opsStatus };
+      }
+      const monoErr = monotonicityViolation(scope, snapshots);
+      if (monoErr) {
+        undoAll(undos);
+        return { ok: false, error: monoErr, ops: opsStatus };
+      }
+      const stopGuard = installMutationGuard(scope, parsed.spec, snapshots, [...undos]);
+      activeGuards.push(stopGuard);
+      undos.push(stopGuard);
       return { ok: true, ops: opsStatus };
     } catch (err) {
       undoAll(undos);
@@ -684,5 +1090,5 @@ export function applyPatchSpec(input, root) {
 }
 
 if (typeof window !== "undefined") {
-  window.LiftRuntime = { applyPatchSpec, validatePatchSpec };
+  window.LiftRuntime = { applyPatchSpec, validatePatchSpec, resetRuntimeGuards };
 }

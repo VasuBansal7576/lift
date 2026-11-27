@@ -127,6 +127,8 @@ describe("flag agent", () => {
     expect(setup.metricId).toBe(33);
     expect(setup.experimentId).toBe(44);
     expect(setup.variants[0]?.optionId).toBe(22);
+    expect(setup.dashboardUrl).toContain("/environment/1/experiments/44");
+    expect(setup.dashboardUrl).not.toContain("envkey");
     expect(calls.some((line) => line.includes("experiment-metrics"))).toBe(true);
     expect(calls.some((line) => line.includes("/experiments/"))).toBe(true);
     expect(JSON.stringify(calls)).not.toMatch(/admin-token/);

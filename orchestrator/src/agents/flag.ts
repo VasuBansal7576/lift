@@ -315,7 +315,8 @@ export async function runFlagAgent(
     controlKey,
   );
   const running = await startExperiment(http, opts.environmentKey, experiment);
-  const dashboardUrl = `${opts.dashboardUrl}/project/${opts.projectId}/environment/${opts.environmentId || opts.environmentKey}/experiments/${running.id}`;
+  const envSlug = opts.environmentId || opts.projectId;
+  const dashboardUrl = `${opts.dashboardUrl}/project/${opts.projectId}/environment/${envSlug}/experiments/${running.id}`;
   const setup: FlagSetup = {
     dryRun: false,
     flagName: feature.name,

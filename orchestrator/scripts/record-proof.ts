@@ -63,13 +63,12 @@ async function loginFlagsmith(page: import("@playwright/test").Page) {
   await page.goto("http://127.0.0.1:8000/login", { waitUntil: "domcontentloaded" });
   const email = process.env.FLAGSMITH_BOOTSTRAP_EMAIL || "admin@lift.local";
   const password = process.env.FLAGSMITH_BOOTSTRAP_PASSWORD || "lift-dev-password";
-  const emailBox = page.locator("input[type='email'], input[name='email']").first();
-  if (await emailBox.count()) {
-    await emailBox.fill(email);
-    await page.locator("input[type='password']").first().fill(password);
-    await page.locator("button[type='submit'], input[type='submit']").first().click();
-    await page.waitForTimeout(1500);
-  }
+  const emailBox = page.getByLabel(/email/i);
+  await emailBox.waitFor({ timeout: 10_000 });
+  await emailBox.fill(email);
+  await page.getByLabel(/^password$/i).fill(password);
+  await page.getByRole("button", { name: /log in/i }).click();
+  await page.waitForURL((url) => !url.pathname.includes("login"), { timeout: 15_000 });
 }
 
 async function main() {
@@ -104,6 +103,20 @@ async function main() {
   await loginFlagsmith(page);
   await page.goto("http://127.0.0.1:4177/", { waitUntil: "domcontentloaded" }).catch(() => undefined);
 
+  async function showExperiment(flagName: string, experimentId: number) {
+    await page.goto("http://127.0.0.1:8000/organisation/1/projects", { waitUntil: "domcontentloaded" });
+    await page.locator("text=Create Project").waitFor({ timeout: 10_000 });
+    await page.getByText("Lift", { exact: true }).nth(1).click();
+    await page.waitForTimeout(2000);
+    await page.getByRole("link", { name: /^Experiments$/ }).click();
+    await page.waitForTimeout(2000);
+    await page.getByText(flagName).first().click();
+    await page.waitForTimeout(3500);
+    await page.evaluate((id) => {
+      history.replaceState({}, "", `/project/1/environment/1/experiments/${id}`);
+    }, experimentId);
+  }
+
   const t2 = resolve(OUT, "t2-orchestrator-run.mp4");
   const ff = startFfmpeg(t2);
   await page.waitForTimeout(1000);
@@ -125,17 +138,15 @@ async function main() {
 
   await page.goto("http://127.0.0.1:4177/", { waitUntil: "domcontentloaded" });
   await page.waitForTimeout(2500);
-  if (state.dashboardExperimentUrl) {
-    await page.goto(state.dashboardExperimentUrl, { waitUntil: "domcontentloaded" });
-    await page.waitForTimeout(4000);
+  if (state.flag) {
+    await showExperiment(state.flag.flagName, state.flag.experimentId);
   }
 
   if (state.recommendation?.kind === "winner") {
     const approved = await runOrchestrator(parseArgv(["--approve", "--apply", "--keep-ui", "--no-ui"]));
     process.stdout.write(`approve phase=${approved.phase}\n`);
-    if (state.dashboardExperimentUrl) {
-      await page.goto(state.dashboardExperimentUrl, { waitUntil: "domcontentloaded" });
-      await page.waitForTimeout(4000);
+    if (state.flag) {
+      await showExperiment(state.flag.flagName, state.flag.experimentId);
     }
   } else {
     process.stdout.write("No winner yet; --approve skipped (keep collecting).\n");
@@ -145,9 +156,9 @@ async function main() {
 
   const t1 = resolve(OUT, "t1-experiment.mp4");
   const ff1 = startFfmpeg(t1);
-  await page.goto(state.dashboardExperimentUrl || "http://127.0.0.1:8000/", {
-    waitUntil: "domcontentloaded",
-  });
+  if (state.flag) {
+    await showExperiment(state.flag.flagName, state.flag.experimentId);
+  }
   await page.waitForTimeout(6000);
   await page.goto("http://127.0.0.1:4177/", { waitUntil: "domcontentloaded" });
   await page.waitForTimeout(3000);
@@ -173,9 +184,8 @@ async function main() {
   const gen2 = await runOrchestrator(opts2);
   await page.goto("http://127.0.0.1:4177/", { waitUntil: "domcontentloaded" });
   await page.waitForTimeout(3000);
-  if (gen2.dashboardExperimentUrl) {
-    await page.goto(gen2.dashboardExperimentUrl, { waitUntil: "domcontentloaded" });
-    await page.waitForTimeout(4000);
+  if (gen2.flag) {
+    await showExperiment(gen2.flag.flagName, gen2.flag.experimentId);
   }
   await stopFfmpeg(ff2);
 

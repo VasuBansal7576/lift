@@ -86,30 +86,59 @@ poll() {
 
 "${COMPOSE[@]}" down -v --remove-orphans || true
 
-"${COMPOSE[@]}" up -d --quiet-pull postgres
-"${COMPOSE[@]}" up -d --quiet-pull migrate-db
+progress_line() {
+  local label="$1"
+  local i="$2"
+  local filled=$((i % 28 + 4))
+  local bar
+  bar=$(printf '%*s' "$filled" | tr ' ' '#')$(printf '%*s' $((32 - filled)) | tr ' ' '.')
+  printf '\r\033[K%-80s' "${label} ${i} ${bar}"
+}
+
+tick() {
+  local label="$1"
+  local i=0
+  while true; do
+    i=$((i + 1))
+    progress_line "$label" "$i"
+    sleep 1
+  done
+}
+
+run_up() {
+  local label="$1"
+  shift
+  tick "$label" &
+  local tick_pid=$!
+  "${COMPOSE[@]}" up -d --quiet-pull "$@"
+  kill "$tick_pid" 2>/dev/null || true
+  wait "$tick_pid" 2>/dev/null || true
+  progress_line "${label} done" 1
+}
+
+run_up "postgres up" postgres
+run_up "migrate-db up" migrate-db
 migrate_name="${PROJECT}-migrate-db-1"
 migrate_wait=0
 for _ in $(seq 1 120); do
   migrate_wait=$((migrate_wait + 1))
   status=$(docker inspect -f '{{.State.Status}}' "$migrate_name" 2>/dev/null || echo missing)
-  printf '\r\033[Kmigrate-db wait %ds status=%s' "$migrate_wait" "$status"
+  progress_line "migrate-db wait ${status}" "$migrate_wait"
   if [[ "$status" == "exited" ]]; then
-    printf '\n'
     code=$(docker inspect -f '{{.State.ExitCode}}' "$migrate_name" 2>/dev/null || echo 1)
     if [[ "$code" != "0" ]]; then
+      printf '\n'
       echo "migrate-db exited ${code}" >&2
       exit 1
     fi
     break
   fi
   if [[ "$status" == "missing" ]]; then
-    printf '\n'
     break
   fi
   sleep 1
 done
-"${COMPOSE[@]}" up -d --quiet-pull
+run_up "flagsmith up"
 
 poll
 

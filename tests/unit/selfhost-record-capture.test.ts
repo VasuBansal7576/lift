@@ -3,8 +3,15 @@ import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import { Window } from "happy-dom";
 import { ROOT } from "../../agent/src/config.ts";
-import { abortIfServerKeyInFiles, assertNoServerKeyVisible, liftScanFiles } from "../../selfhost/src/redact.ts";
+import { finishCapture } from "../../selfhost/src/capture-finish.ts";
+import {
+  abortIfServerKeyInFiles,
+  assertNoServerKeyVisible,
+  collectDomSecretScanText,
+  liftScanFiles,
+} from "../../selfhost/src/redact.ts";
 import { experimentOpenTarget, reloadButtonScreenPoint } from "../../selfhost/src/record-pointer.ts";
 
 const RECORDER = resolve(ROOT, "scripts/selfhost-record-live.ts");
@@ -18,24 +25,16 @@ const HIDDEN_NAV = [
   /location\.(href|assign|replace)/,
 ];
 
-function afterStartFfmpeg(src: string, fnName: string): string {
-  const start = src.indexOf(`async function ${fnName}`);
-  expect(start).toBeGreaterThan(-1);
-  const next = src.indexOf("\nasync function ", start + 1);
-  const fn = src.slice(start, next === -1 ? src.length : next);
-  const ff = fn.indexOf("startFfmpeg(");
-  expect(ff).toBeGreaterThan(-1);
-  return fn.slice(ff);
-}
-
 describe("E1 no hidden Playwright navigation after capture starts", () => {
-  it("bans click/fill/press/type/check/hover/dblclick/tap, keyboard, mouse, and location.href after startFfmpeg", () => {
+  it("bans click/fill/press/type/check/hover/dblclick/tap, keyboard, mouse, and location.href file-wide after startFfmpeg", () => {
     const src = readFileSync(RECORDER, "utf8");
-    for (const fnName of ["recordT3Up", "recordT3Site", "recordT3Dashboard", "recordT4"]) {
-      const captured = afterStartFfmpeg(src, fnName);
-      for (const ban of HIDDEN_NAV) {
-        expect(captured, `${fnName} after startFfmpeg`).not.toMatch(ban);
-      }
+    const def = src.indexOf("function startFfmpeg");
+    expect(def).toBeGreaterThan(-1);
+    const captured = src.slice(src.indexOf("startFfmpeg(", def + 1));
+    const helpers = src.slice(0, def);
+    for (const ban of HIDDEN_NAV) {
+      expect(captured, "after startFfmpeg").not.toMatch(ban);
+      expect(helpers, "helpers used during capture").not.toMatch(ban);
     }
   });
 });
@@ -114,6 +113,39 @@ describe("recorder guards", () => {
   it("places the reload icon click on the toolbar centre, not 24px left", () => {
     expect(reloadButtonScreenPoint(0, 0)).toEqual({ x: 108, y: 56 });
     expect(reloadButtonScreenPoint(10, 20)).toEqual({ x: 118, y: 76 });
+  });
+
+  it("aborts when a hidden input holds a server-style key", () => {
+    const window = new Window({ url: "http://127.0.0.1/" });
+    window.document.body.innerHTML = `<input type="hidden" value="ser.x">`;
+    expect(() => assertNoServerKeyVisible(collectDomSecretScanText(window.document as never))).toThrow(
+      /server-style ser/,
+    );
+  });
+
+  it("does not publish when a thrown leak finishes the capture", async () => {
+    const file = join(mkdtempSync(join(tmpdir(), "lift-clip-")), "t3-selfhost-up.mp4");
+    writeFileSync(file, "fake");
+    const published: string[] = [];
+    const removed: string[] = [];
+    await expect(async () => {
+      try {
+        throw new Error("server-style ser. key visible");
+      } finally {
+        await finishCapture(false, file, {
+          stopFfmpeg: async () => undefined,
+          exists: () => true,
+          rm: (path) => {
+            removed.push(path);
+          },
+          publish: (path) => {
+            published.push(path);
+          },
+        });
+      }
+    }).rejects.toThrow(/server-style ser/);
+    expect(published).toEqual([]);
+    expect(removed).toEqual([file]);
   });
 
   it("opens the current experiment by id rather than the first lift a11y label", () => {

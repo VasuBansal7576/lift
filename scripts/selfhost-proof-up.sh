@@ -48,7 +48,7 @@ COMPOSE=(
   -f selfhost/docker-compose.proof.yml
   --env-file selfhost/.env
   --project-name "$PROJECT"
-  --progress plain
+  --progress quiet
 )
 
 echo "==> compose project=${PROJECT} host=${ORIGIN}"
@@ -66,7 +66,7 @@ poll() {
     local filled=$((i % 28 + 4))
     local bar
     bar=$(printf '%*s' "$filled" | tr ' ' '#')$(printf '%*s' $((32 - filled)) | tr ' ' '.')
-    printf '\r%-80s' "health-poll ${i} HTTP ${http_code} ${bar}"
+    printf '\r\033[K%-80s' "health-poll ${i} HTTP ${http_code} ${bar}"
     if [ "$http_code" = "200" ]; then
       printf '\n'
       echo "body: $(tr -d '\n' </tmp/lift-proof-health.body)"
@@ -86,23 +86,19 @@ poll() {
 
 "${COMPOSE[@]}" down -v --remove-orphans || true
 
-poll &
-POLL_PID=$!
-
-"${COMPOSE[@]}" up -d postgres
-"${COMPOSE[@]}" up -d migrate-db
+"${COMPOSE[@]}" up -d --quiet-pull postgres
+"${COMPOSE[@]}" up -d --quiet-pull migrate-db
 migrate_name="${PROJECT}-migrate-db-1"
 migrate_wait=0
 for _ in $(seq 1 120); do
   migrate_wait=$((migrate_wait + 1))
   status=$(docker inspect -f '{{.State.Status}}' "$migrate_name" 2>/dev/null || echo missing)
-  printf '\rmigrate-db wait %ds status=%s' "$migrate_wait" "$status"
+  printf '\r\033[Kmigrate-db wait %ds status=%s' "$migrate_wait" "$status"
   if [[ "$status" == "exited" ]]; then
     printf '\n'
     code=$(docker inspect -f '{{.State.ExitCode}}' "$migrate_name" 2>/dev/null || echo 1)
     if [[ "$code" != "0" ]]; then
       echo "migrate-db exited ${code}" >&2
-      kill "$POLL_PID" 2>/dev/null || true
       exit 1
     fi
     break
@@ -113,9 +109,9 @@ for _ in $(seq 1 120); do
   fi
   sleep 1
 done
-"${COMPOSE[@]}" up -d
+"${COMPOSE[@]}" up -d --quiet-pull
 
-wait "$POLL_PID"
+poll
 
 echo "==> bootstrap ${ORIGIN} (writes selfhost/.env.proof only; no leftover SDK keys)"
 FLAGSMITH_PROOF_ORIGIN="$ORIGIN" npx tsx scripts/selfhost-proof-bootstrap.ts

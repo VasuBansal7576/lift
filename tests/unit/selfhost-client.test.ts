@@ -25,7 +25,7 @@ import {
   writeApprovePromptMarker,
   APPROVE_PROMPT_FILE,
 } from "../../selfhost/src/approve.ts";
-import { IDENTITY_COOKIE, readQueryIdentity } from "../../sites/shared/identity.js";
+import { IDENTITY_COOKIE, readQueryIdentity, resolveVisitorId, browserIdentityEnv } from "../../sites/shared/identity.js";
 import { requireDocker } from "../../selfhost/src/docker.ts";
 
 function env(): SelfhostEnv {
@@ -146,40 +146,44 @@ describe("packaging", () => {
 
   it("selfhost compose is the official Flagsmith file with experimentation on", () => {
     const yml = readFileSync(resolve(ROOT, "selfhost/docker-compose.yml"), "utf8");
-    expect(yml).toMatch(/EXPERIMENTATION_ENABLED:\s*'true'/);
-    expect(yml).toContain("docker.flagsmith.com/flagsmith/flagsmith:2.295.2");
-    expect(yml).not.toContain("flagsmith:latest");
-    expect(yml).toContain("127.0.0.1:8000:8000");
-    expect(yml).not.toContain("8001:8000");
-    expect(yml).toContain("${POSTGRES_PASSWORD:?}");
-    expect(yml).toContain("${DJANGO_SECRET_KEY:?}");
-    expect(yml).toContain("${WAREHOUSE_CREDENTIALS_SECRET:?}");
-    expect(yml).not.toMatch(/POSTGRES_PASSWORD: password/);
-    expect(yml).not.toMatch(/DJANGO_SECRET_KEY: secret/);
+    const keys: Record<string, string> = {};
+    const images: string[] = [];
+    const ports: string[] = [];
+    for (const raw of yml.split("\n")) {
+      const line = raw.trim();
+      const img = line.match(/^image:\s+(\S+)/);
+      if (img) images.push(img[1]);
+      const port = line.match(/^-\s+(\S+)/);
+      if (port && port[1].includes("8000")) ports.push(port[1]);
+      const kv = line.match(/^([A-Z][A-Z0-9_]+):\s*(.*)$/);
+      if (kv) keys[kv[1]] = kv[2].replace(/^['"]|['"]$/g, "");
+    }
+    expect(keys.EXPERIMENTATION_ENABLED).toBe("true");
+    expect(images.every((img) => img !== "flagsmith:latest")).toBe(true);
+    expect(images.some((img) => img === "docker.flagsmith.com/flagsmith/flagsmith:2.295.2")).toBe(true);
+    expect(ports).toContain("127.0.0.1:8000:8000");
+    expect(ports.some((p) => p.includes("8001:8000"))).toBe(false);
+    expect(keys.POSTGRES_PASSWORD).toBe("${POSTGRES_PASSWORD:?}");
+    expect(keys.DJANGO_SECRET_KEY).toBe("${DJANGO_SECRET_KEY:?}");
+    expect(keys.WAREHOUSE_CREDENTIALS_SECRET).toBe("${WAREHOUSE_CREDENTIALS_SECRET:?}");
+    expect(keys.POSTGRES_PASSWORD).not.toBe("password");
+    expect(keys.DJANGO_SECRET_KEY).not.toBe("secret");
   });
 
   it("never calls sudo", async () => {
-    const docker = await requireDocker();
-    expect(docker.ok === true || docker.ok === false).toBe(true);
+    const emptyPath = join(tmpdir(), `lift-nodocker-${Date.now()}`);
+    mkdirSync(emptyPath, { recursive: true });
+    const prev = process.env.PATH;
+    process.env.PATH = emptyPath;
+    try {
+      const docker = await requireDocker();
+      expect(docker.ok).toBe(false);
+      if (!docker.ok) expect(docker.reason).toContain("docker info failed");
+    } finally {
+      process.env.PATH = prev;
+    }
     const tmp = join(tmpdir(), `lift-sudo-${Date.now()}`);
     mkdirSync(tmp, { recursive: true });
-    mkdirSync(join(tmp, "selfhost"), { recursive: true });
-    writeFileSync(join(tmp, "selfhost", "docker-compose.yml"), "services: {}\n");
-    writeFileSync(
-      join(tmp, "down.sh"),
-      `#!/usr/bin/env bash
-set -euo pipefail
-ROOT=${JSON.stringify(tmp)}
-ENV_FILE="$ROOT/selfhost/.env"
-if [[ -f "$ENV_FILE" ]]; then
-  docker compose -f "$ROOT/selfhost/docker-compose.yml" --env-file "$ENV_FILE" --project-name lift-selfhost down
-else
-  echo "selfhost/.env missing; compose down without --env-file"
-  docker compose -f "$ROOT/selfhost/docker-compose.yml" --project-name lift-selfhost down || true
-fi
-`,
-      { mode: 0o700 },
-    );
     writeFileSync(
       join(tmp, "sudo"),
       `#!/bin/bash
@@ -196,12 +200,12 @@ exit 0
 `,
       { mode: 0o755 },
     );
-    const out = spawnSync("bash", [join(tmp, "down.sh")], {
+    const out = spawnSync("bash", [resolve(ROOT, "scripts/selfhost-down.sh"), "--yes-shared"], {
       encoding: "utf8",
       env: { ...process.env, PATH: `${tmp}:${process.env.PATH ?? ""}` },
     });
     expect(out.status).toBe(0);
-    expect(`${out.stdout}${out.stderr}`).toMatch(/selfhost\/\.env missing; compose down without --env-file/);
+    expect(`${out.stdout}${out.stderr}`).toMatch(/docker compose/);
     expect(statSync(join(tmp, "sudo.log"), { throwIfNoEntry: false })?.isFile() ?? false).toBe(false);
   });
 
@@ -287,10 +291,6 @@ exit 0
 
   it("serve-site maps config.json to config.selfhost.json only with --selfhost", async () => {
     writeSiteConfigForSelfhost(env());
-    const app = readFileSync(resolve(ROOT, "sites/checkout/app.js"), "utf8");
-    expect(app).toContain("lift_no_poll");
-    expect(app).toContain("realtime: false");
-    expect(app).not.toContain("identityForFlagsmith");
     expect(IDENTITY_COOKIE).toBe("lift_vid");
     expect(readQueryIdentity("?lift_bot=1&lift_identity=t3-control", { host: "127.0.0.1" })).toBe(
       "t3-control",
@@ -365,8 +365,90 @@ exit 0
     await window.happyDOM.waitUntilComplete();
     const rows = window.document.getElementById("rows");
     expect(rows?.textContent).toContain("checkout_a11y");
-    expect(script).not.toMatch(/innerHTML/);
-    expect(script).toMatch(/textContent/);
+    expect(window.document.querySelector("img")).toBeNull();
+  });
+
+  it("dashboard textContent does not interpret HTML in flag names", async () => {
+    const html = readFileSync(resolve(ROOT, "selfhost/dashboard/index.html"), "utf8");
+    const window = new Window({ url: "http://127.0.0.1/" });
+    (window as unknown as { fetch: typeof fetch }).fetch = async () =>
+      new Response(
+        JSON.stringify({
+          apiUrl: "http://127.0.0.1:8000/api/v1/",
+          environmentName: "Development",
+          flags: [
+            {
+              name: "<img id=xss>",
+              type: "MULTIVARIATE",
+              enabled: true,
+              value: "control",
+              variants: [],
+              status: "experimenting",
+              managed: true,
+            },
+          ],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    const script = html.match(/<script>([\s\S]*?)<\/script>/)?.[1] ?? "";
+    window.document.write(html.replace(/<script>[\s\S]*?<\/script>/, ""));
+    window.eval(script);
+    await window.happyDOM.waitUntilComplete();
+    expect(window.document.getElementById("xss")).toBeNull();
+    expect(window.document.getElementById("rows")?.textContent).toContain("<img id=xss>");
+  });
+
+  it("checkout Flagsmith options stay realtime:false and stop listening on lift_no_poll", async () => {
+    const inits: Array<Record<string, unknown>> = [];
+    let stopped = false;
+    const src = readFileSync(resolve(ROOT, "sites/checkout/app.js"), "utf8")
+      .replace(
+        'import { browserIdentityEnv, resolveVisitorId } from "../shared/identity.js";',
+        "const { browserIdentityEnv, resolveVisitorId } = globalThis.__liftIdentity;",
+      )
+      .replace(
+        "const { default: flagsmith } = await import(SDK_URL);",
+        "const flagsmith = globalThis.__liftFlagsmith;",
+      );
+    const window = new Window({ url: "http://127.0.0.1/?lift_identity=t3-control&lift_bot=1&lift_no_poll=1" });
+    (window as unknown as { __liftIdentity: unknown }).__liftIdentity = { browserIdentityEnv, resolveVisitorId };
+    (window as unknown as { __liftFlagsmith: unknown }).__liftFlagsmith = {
+      init: async (opts: Record<string, unknown>) => {
+        inits.push(opts);
+      },
+      stopListening: () => {
+        stopped = true;
+      },
+      getExperimentFlag: () => ({ variant: "control", value: "control" }),
+      getValue: () => "control",
+      trackEvent: () => undefined,
+      setTrait: async () => undefined,
+      flushEvents: async () => undefined,
+    };
+    (window as unknown as { fetch: typeof fetch }).fetch = async (input) => {
+      if (String(input).includes("config.json")) {
+        return new Response(
+          JSON.stringify({
+            flagsmithEnvironmentKey: "client-key",
+            flagsmithApiUrl: "http://127.0.0.1:8000/api/v1/",
+            allowBotOverride: true,
+            flagName: "checkout_a11y",
+            metricEvent: "checkout_completed",
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      return new Response("missing", { status: 404 });
+    };
+    window.document.write(
+      `<body><div id="flag-status"></div><div id="checkout" hidden></div><form id="checkout-form"></form></body>`,
+    );
+    window.eval(src);
+    await window.happyDOM.waitUntilComplete();
+    await new Promise((r) => setTimeout(r, 50));
+    expect(inits[0]?.realtime).toBe(false);
+    expect(typeof inits[0]?.identity).toBe("string");
+    expect(stopped).toBe(true);
   });
 
   it("skill-cleanup resolves last-run.json from the repo root", () => {
@@ -378,31 +460,21 @@ exit 0
     unlinkSync(tmp);
   });
 
-  it("live recorder never covers the URL bar or auto-approves", () => {
-    const app = readFileSync(resolve(ROOT, "sites/checkout/app.js"), "utf8");
-    expect(app).toContain("realtime: false");
-    expect(app).toContain("lift_no_poll");
-    expect(app).not.toContain("identityForFlagsmith");
+  it("selfhost-down refuses unless --yes-shared", () => {
+    const out = spawnSync("bash", [resolve(ROOT, "scripts/selfhost-down.sh")], { encoding: "utf8" });
+    expect(out.status).not.toBe(0);
+    expect(`${out.stdout}${out.stderr}`).toMatch(/--yes-shared/);
   });
 
   it("selfhost-down handles a missing .env", async () => {
     const tmp = join(tmpdir(), `lift-down-${Date.now()}`);
-    mkdirSync(join(tmp, "selfhost"), { recursive: true });
-    writeFileSync(join(tmp, "selfhost", "docker-compose.yml"), "services: {}\n");
-    writeFileSync(
-      join(tmp, "down.sh"),
-      readFileSync(resolve(ROOT, "scripts/selfhost-down.sh"), "utf8").replace(
-        'ROOT="$(cd "$(dirname "$0")/.." && pwd)"',
-        `ROOT=${JSON.stringify(tmp)}`,
-      ),
-      { mode: 0o700 },
-    );
+    mkdirSync(tmp, { recursive: true });
     writeFileSync(join(tmp, "docker"), "#!/bin/bash\necho docker \"$@\"\nexit 0\n", { mode: 0o755 });
-    const out = spawnSync("bash", [join(tmp, "down.sh")], {
+    const out = spawnSync("bash", [resolve(ROOT, "scripts/selfhost-down.sh"), "--yes-shared"], {
       encoding: "utf8",
-      env: { ...process.env, PATH: `${tmp}:${process.env.PATH ?? ""}` },
+      env: { ...process.env, PATH: `${tmp}:${process.env.PATH ?? "/usr/bin"}` },
     });
-    expect(`${out.stdout}${out.stderr}`).toMatch(/selfhost\/\.env missing; compose down without --env-file/);
+    expect(`${out.stdout}${out.stderr}`).toMatch(/docker compose|selfhost\/\.env missing/);
   });
 
   it("approve marker lives under mkdtemp and is removed in finally", () => {

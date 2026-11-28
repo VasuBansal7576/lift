@@ -4,6 +4,7 @@ import { mixSeed, mulberry32 } from "../../shared/rng.ts";
 import { PERSONAS, type Persona, type PersonaMix } from "../../shared/types.ts";
 import { pickPersona } from "../../shared/mix.ts";
 import { variantFromFlag } from "../../traffic/src/runner.ts";
+import { redactSecrets } from "./redact.ts";
 
 export interface TrafficCounts {
   identities: number;
@@ -102,7 +103,6 @@ function identityFor(runId: string, i: number): string {
 async function waitUntilEnrolled(opts: {
   apiUrl: string;
   environmentKey: string;
-  serverKey: string;
   flagName: string;
   timeoutMs?: number;
 }): Promise<void> {
@@ -133,10 +133,10 @@ async function waitUntilEnrolled(opts: {
     } finally {
       await flagsmith.close(2000);
     }
-    process.stderr.write(`enroll wait ${last}\n`);
+    process.stderr.write(redactSecrets(`enroll wait ${last}\n`, [opts.environmentKey]));
     await new Promise((r) => setTimeout(r, 3000));
   }
-  throw new Error(`Identities not enrolled in ${opts.flagName} (${last})`);
+  throw new Error(redactSecrets(`Identities not enrolled in ${opts.flagName} (${last})`, [opts.environmentKey]));
 }
 
 export function simulatedConversionsLabel(n = 120): string {
@@ -159,7 +159,6 @@ export async function sendSimulatedConversions(opts: {
   apiUrl: string;
   eventsUrl: string;
   environmentKey: string;
-  serverKey: string;
   flagName: string;
   event: string;
   n?: number;

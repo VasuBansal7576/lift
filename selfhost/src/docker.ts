@@ -22,6 +22,9 @@ export function sh(
       stderr.push(c);
       if (opts.echo) process.stderr.write(c);
     });
+    child.on("error", () =>
+      resolve({ code: 127, stdout: stdout.join(""), stderr: stderr.join("") }),
+    );
     child.on("close", (code) =>
       resolve({ code: code ?? 1, stdout: stdout.join(""), stderr: stderr.join("") }),
     );

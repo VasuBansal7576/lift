@@ -16,14 +16,18 @@ import { chromium, type Browser, type Locator, type Page } from "@playwright/tes
 import { createLiftSelfhost } from "../selfhost/src/client.ts";
 import { readEnvFile, loadSelfhostEnv } from "../selfhost/src/env.ts";
 import { ENV_FILE, PROOF_ENV_FILE, REPO_ROOT } from "../selfhost/src/paths.ts";
+import { finishCapture } from "../selfhost/src/capture-finish.ts";
 import {
   experimentOpenTarget,
-  glideScreenPoints,
+  glidePointerTo as glidePointerToCtl,
   reloadButtonScreenPoint,
+  xdotoolClick1 as xdotoolClick1Ctl,
+  type PointerCtl,
 } from "../selfhost/src/record-pointer.ts";
 import {
   abortIfServerKeyInFiles,
   assertNoServerKeyVisible,
+  scanPageSecrets,
   liftScanFiles,
 } from "../selfhost/src/redact.ts";
 import { writeSiteConfigForSelfhost } from "../selfhost/src/site-config.ts";
@@ -73,27 +77,6 @@ function sh(bin: string, args: string[], opts?: { cwd?: string; timeoutMs?: numb
       resolvePromise({ code: code ?? 1, stdout: stdout.join(""), stderr: stderr.join("") });
     });
   });
-}
-
-async function killStrayChrome(): Promise<void> {
-  const listed = await sh("ps", ["-eo", "pid,args"]);
-  for (const line of listed.stdout.split("\n")) {
-    if (!line.includes("lift-chrome-") && !line.includes("remote-debugging-port=")) continue;
-    if (!line.includes("chrome")) continue;
-    const pid = Number(line.trim().split(/\s+/)[0]);
-    if (pid > 1 && pid !== process.pid) {
-      try {
-        process.kill(pid, "SIGKILL");
-      } catch {
-        /* already gone */
-      }
-    }
-  }
-  await sh("xdotool", ["search", "--class", "Google-chrome", "windowkill"]).catch(() => ({
-    code: 0,
-    stdout: "",
-    stderr: "",
-  }));
 }
 
 async function killStrayFfmpeg(outFile: string): Promise<void> {
@@ -187,13 +170,17 @@ async function stopFfmpeg(child: ChildProcess, outFile?: string): Promise<void> 
   }
 }
 
-function makeClipFinisher(ff: ChildProcess, out: string): () => Promise<void> {
+function makeClipFinisher(ff: ChildProcess, out: string): (ok: boolean) => Promise<void> {
   let done = false;
-  return async () => {
+  return async (ok: boolean) => {
     if (done) return;
     done = true;
-    await stopFfmpeg(ff, out);
-    publish(out);
+    await finishCapture(ok, out, {
+      stopFfmpeg: () => stopFfmpeg(ff, ok ? out : undefined),
+      exists: existsSync,
+      rm: (file) => rmSync(file, { force: true }),
+      publish,
+    });
   };
 }
 
@@ -425,8 +412,8 @@ function chromeArgv(layout: ChromeLayout, profile: string, cdp: number): string[
     `--remote-debugging-port=${cdp}`,
     ...(layout === "full"
       ? ["--window-size=1920,1200", "--window-position=0,0"]
-      : layout === "top"
-        ? ["--window-size=1920,680", "--window-position=0,0"]
+        : layout === "top"
+        ? ["--window-size=1920,920", "--window-position=0,0"]
         : ["--window-size=1040,1100", "--window-position=880,24"]),
     "about:blank",
   ];
@@ -451,9 +438,10 @@ async function startChromeFromTerminal(
   );
   const cdp = await freePort();
   const line = [CHROME_BIN, ...chromeArgv(layout, profile, cdp)].map(shellQuote).join(" ");
+  const pidFile = join(profile, "chrome.pid");
   writeFileSync(
     "/tmp/lift-open-chrome.sh",
-    `#!/usr/bin/env bash\nexec ${line} >/tmp/lift-chrome-launch.log 2>&1 &\n`,
+    `#!/usr/bin/env bash\n${line} >/tmp/lift-chrome-launch.log 2>&1 &\necho $! > ${shellQuote(pidFile)}\n`,
     { mode: 0o700 },
   );
   await clickFocusTerminal(title);
@@ -465,14 +453,18 @@ async function startChromeFromTerminal(
     try {
       const res = await fetch(`http://127.0.0.1:${cdp}/json/version`);
       if (res.ok) {
-        const listed = await sh("pgrep", ["-f", `${CHROME_BIN}.*remote-debugging-port=${cdp}`]);
-        const pid = Number(
-          listed.stdout
-            .trim()
-            .split("\n")
-            .map((row) => row.trim())
-            .find((row) => /^\d+$/.test(row)),
-        );
+        let pid = 0;
+        if (existsSync(pidFile)) pid = Number(readFileSync(pidFile, "utf8").trim());
+        if (!(pid > 1)) {
+          const listed = await sh("pgrep", ["-f", `--user-data-dir=${profile}`]);
+          pid = Number(
+            listed.stdout
+              .trim()
+              .split("\n")
+              .map((row) => row.trim())
+              .find((row) => /^\d+$/.test(row)),
+          );
+        }
         if (!(pid > 1)) throw new Error("typed chrome launch has no pid");
         const child = { pid } as ChildProcess;
         return { child, cdp, profile };
@@ -482,6 +474,7 @@ async function startChromeFromTerminal(
     }
     await sleep(300);
   }
+  await stopChrome({ child: { pid: Number(existsSync(pidFile) ? readFileSync(pidFile, "utf8").trim() : 0) } as ChildProcess, profile });
   throw new Error("chrome CDP not ready after typed launch");
 }
 
@@ -513,7 +506,7 @@ async function startChrome(
     }
     await sleep(300);
   }
-  killProcessGroup(child);
+  await stopChrome({ child, profile });
   throw new Error("chrome CDP not ready");
 }
 
@@ -526,7 +519,14 @@ async function stopChrome(
   } catch {
     /* */
   }
-  killProcessGroup(chrome?.child ?? null);
+  const pid = chrome?.child.pid;
+  if (pid && pid > 1) {
+    try {
+      process.kill(pid, "SIGTERM");
+    } catch {
+      /* already gone */
+    }
+  }
   await sleep(400);
   if (chrome?.profile) {
     try {
@@ -628,27 +628,22 @@ async function viewportToScreen(page: Page, vx: number, vy: number): Promise<{ x
 
 let recordingChromePid: number | null = null;
 let allowWindowRaise = true;
-let lastPointer = { x: 960, y: 600 };
+
+const pointerCtl: PointerCtl = {
+  run: (bin, args) => sh(bin, [...args]),
+  sleep,
+  last: { x: 960, y: 600 },
+};
 
 async function glidePointerTo(x: number, y: number): Promise<void> {
-  const dest = { x: Math.round(x), y: Math.round(y) };
-  const points = glideScreenPoints(lastPointer, dest);
-  for (const point of points) {
-    await sh("xdotool", ["mousemove", String(point.x), String(point.y)]);
-    lastPointer = point;
-    await sleep(84);
-  }
-  lastPointer = dest;
+  await glidePointerToCtl(pointerCtl, x, y);
 }
 
 async function xdotoolClick1(x: number, y: number, focusChrome = true): Promise<void> {
   if (focusChrome && recordingChromePid) {
     await focusChromePid(recordingChromePid).catch(() => undefined);
   }
-  await glidePointerTo(x, y);
-  await sleep(550);
-  await sh("xdotool", ["click", "1"]);
-  await sleep(150);
+  await xdotoolClick1Ctl(pointerCtl, x, y);
 }
 
 async function xdotoolType(text: string, delay = 40): Promise<void> {
@@ -689,6 +684,10 @@ async function pointerClick(page: Page, locator: Locator): Promise<void> {
     box = await locator.boundingBox();
   }
   if (!box) throw new Error("locator has no box for pointer click");
+  const after = await page.evaluate(() => ({ w: window.innerWidth, h: window.innerHeight }));
+  if (box.y < 0 || box.y + box.height > after.h || box.x < 0 || box.x > after.w) {
+    throw new Error("locator is not inside the viewport after scroll");
+  }
   const vx = box.x + box.width / 2;
   const vy = box.y + box.height / 2;
   const point = await viewportToScreen(page, vx, vy);
@@ -897,6 +896,19 @@ async function focusChromeWindow(): Promise<string> {
   return id;
 }
 
+async function openUrlInNewTab(page: Page, pid: number, url: string): Promise<Page> {
+  recordingChromePid = pid;
+  await focusChromeWindow();
+  const created = page.context().waitForEvent("page", { timeout: 5_000 });
+  await sh("xdotool", ["key", "--clearmodifiers", "ctrl+t"]);
+  const next = await created;
+  await sleep(200);
+  await xdotoolType(url, 18);
+  await sh("xdotool", ["key", "--clearmodifiers", "Return"]);
+  await next.waitForLoadState("domcontentloaded", { timeout: 15_000 }).catch(() => undefined);
+  return next;
+}
+
 async function clickChromeNewTab(page: Page, pid: number): Promise<Page> {
   recordingChromePid = pid;
   const id = await chromeWindowId(pid);
@@ -949,7 +961,6 @@ async function downProofStack(): Promise<void> {
 }
 
 async function hideDock(): Promise<void> {
-  await killStrayChrome();
   await unmapWindowsNamed("plank");
   await unmapWindowsNamed("Plank");
 }
@@ -1007,26 +1018,20 @@ async function waitStaleFlagGone(
 }
 
 async function sanitizeFlagsmithUi(page: Page): Promise<void> {
-  let dump = { innerText: "", textContent: "" };
+  let dump = "";
   try {
-    dump = await page.evaluate(() => ({
-      innerText: document.body?.innerText ?? "",
-      textContent: document.documentElement?.textContent ?? "",
-    }));
+    dump = await page.evaluate(scanPageSecrets);
   } catch {
     return;
   }
-  assertNoServerKeyVisible(dump.innerText);
-  assertNoServerKeyVisible(dump.textContent);
-  if (/FLAGSMITH_SERVER|FLAGSMITH_ADMIN_API_TOKEN|DJANGO_SECRET_KEY|WAREHOUSE_CREDENTIALS_SECRET/.test(
-    `${dump.innerText}\n${dump.textContent}`,
-  )) {
+  assertNoServerKeyVisible(dump);
+  if (/FLAGSMITH_SERVER|FLAGSMITH_ADMIN_API_TOKEN|DJANGO_SECRET_KEY|WAREHOUSE_CREDENTIALS_SECRET/.test(dump)) {
     throw new Error("secret label visible on Flagsmith UI");
   }
 }
 
 async function assertNoSecrets(page: Page): Promise<void> {
-  const text = await page.evaluate(() => document.body.innerText ?? "");
+  const text = await page.evaluate(scanPageSecrets);
   assertNoServerKeyVisible(text);
   if (/FLAGSMITH_ADMIN_API_TOKEN|DJANGO_SECRET_KEY|WAREHOUSE_CREDENTIALS_SECRET/.test(text)) {
     throw new Error("secret label visible on Flagsmith UI");
@@ -1035,19 +1040,13 @@ async function assertNoSecrets(page: Page): Promise<void> {
 
 async function abortIfServerKeyLeaked(page?: Page): Promise<void> {
   if (page) {
-    let dump = { innerText: "", textContent: "", href: "" };
+    let dump = "";
     try {
-      dump = await page.evaluate(() => ({
-        innerText: document.body?.innerText ?? "",
-        textContent: document.documentElement?.textContent ?? "",
-        href: document.URL,
-      }));
+      dump = await page.evaluate(scanPageSecrets);
     } catch {
-      dump = { innerText: "", textContent: "", href: "" };
+      dump = "";
     }
-    assertNoServerKeyVisible(dump.innerText);
-    assertNoServerKeyVisible(dump.textContent);
-    assertNoServerKeyVisible(dump.href);
+    assertNoServerKeyVisible(dump);
     assertNoServerKeyVisible(page.url());
   }
   abortIfServerKeyInFiles(liftScanFiles());
@@ -1205,7 +1204,7 @@ async function pointerClickInput(page: Page, locator: Locator): Promise<void> {
 async function setTreatmentInUi(page: Page, percent: number): Promise<boolean> {
   const weight = await treatmentWeightInput(page);
   const already = await weight.inputValue();
-  if (new RegExp(`^${percent}(\\.0+)?$`).test(already)) return true;
+  if (!new RegExp(`^${percent}(\\.0+)?$`).test(already)) {
   for (let attempt = 0; attempt < 4; attempt += 1) {
     await pointerClickInput(page, weight);
     await sleep(150);
@@ -1225,6 +1224,7 @@ async function setTreatmentInUi(page: Page, percent: number): Promise<boolean> {
       throw new Error(`treatment weight input is ${JSON.stringify(typed)}, not ${percent}`);
     }
     await sleep(250);
+  }
   }
   await sh("xdotool", ["key", "Tab"]);
   await sleep(200);
@@ -1310,7 +1310,6 @@ async function closeFeaturePanel(page: Page): Promise<void> {
   const closeNode = [...(info.nodes ?? [])]
     .filter((n) => typeof n.w === "number" && n.w >= 8 && n.w <= 40 && Number(n.h) >= 8 && Number(n.h) <= 40 && Number(n.x) > 900)
     .sort((a, b) => Number(b.x) - Number(a.x))[0];
-  writeFileSync("/tmp/lift-xclose.json", JSON.stringify({ info, closeNode }, null, 2));
   if (!closeNode) throw new Error("feature panel X node not found in modal header");
   const vx = Number(closeNode.x) + Number(closeNode.w) / 2;
   const vy = Number(closeNode.y) + Number(closeNode.h) / 2;
@@ -1404,6 +1403,7 @@ async function waitForApproveLine(
   const deadline = Date.now() + 480_000;
   let lastStir = 0;
   while (Date.now() < deadline) {
+    await abortIfServerKeyLeaked();
     try {
       const log = existsSync("/tmp/lift-t4-skill-run.log")
         ? readFileSync("/tmp/lift-t4-skill-run.log", "utf8")
@@ -1449,7 +1449,7 @@ async function waitForApproveLine(
 async function typeApproveLine(title: string, line: string): Promise<void> {
   await clickFocusTerminal(title);
   await sleep(150);
-  await xdotoolType(line, 80);
+  await xdotoolType(line, 100);
   await sleep(120);
   await sh("xdotool", ["key", "--clearmodifiers", "Return"]);
   const deadline = Date.now() + 20_000;
@@ -1536,8 +1536,7 @@ async function revealCheckoutForm(page: Page, opts?: { fill?: boolean }): Promis
     await sh("xdotool", ["mouseup", "1"]);
     await sleep(300);
     if (!(await checkout.isVisible().catch(() => false))) {
-      await sh("xdotool", ["click", "1"]);
-      await sleep(300);
+      await xdotoolClick1(bag.x, bag.y);
     }
   }
   await checkout.waitFor({ state: "visible", timeout: 8_000 });
@@ -1609,7 +1608,7 @@ async function recordT3Up(): Promise<void> {
   let chrome: { child: ChildProcess; cdp: number; profile: string } | null = null;
   let browser: Browser | undefined;
   let upTerm: { child: ChildProcess; done: string; scriptPath: string } | null = null;
-  let finish = async () => {};
+  let finish: (ok: boolean) => Promise<void> = async () => {};
   try {
     await hideDock();
     await downProofStack();
@@ -1620,7 +1619,8 @@ async function recordT3Up(): Promise<void> {
     await clickFocusTerminal("t3-selfhost-up");
     const ff = startFfmpeg(out);
     finish = makeClipFinisher(ff, out);
-    await xdotoolType("npm run selfhost:proof-up", 28);
+    await sleep(1000);
+    await xdotoolType("npm run selfhost:proof-up", 100);
     await sh("xdotool", ["key", "--clearmodifiers", "Return"]);
     const startedDeadline = Date.now() + 12_000;
     while (Date.now() < startedDeadline && !existsSync("/tmp/lift-proof-up.started")) {
@@ -1655,11 +1655,11 @@ async function recordT3Up(): Promise<void> {
     const point = await viewportToScreen(page, box.x + box.width / 2, box.y + box.height / 2);
     await glidePointerTo(point.x, point.y);
     await sleep(3200);
-    await finish();
+    await finish(true);
   } finally {
     recordingChromePid = null;
     allowWindowRaise = true;
-    await finish();
+    await finish(false);
     await showDock();
     await closeWindowsNamed("t3-selfhost-up");
     cleanupTermFiles(upTerm);
@@ -1709,8 +1709,7 @@ async function recordT3Site(): Promise<void> {
     await sitePage.locator("#shop-trigger").waitFor({ state: "visible", timeout: 15_000 });
     await revealCheckoutForm(sitePage, { fill: false });
     await waitForFlagStatus(sitePage, "Flagsmith checkout_a11y=control");
-    const flagsmithPage = await clickChromeNewTab(sitePage, chromePid);
-    await typeUrlInOmnibox(flagsmithPage, chromePid, `${SHARED_ORIGIN}/login`);
+    const flagsmithPage = await openUrlInNewTab(sitePage, chromePid, `${SHARED_ORIGIN}/login`);
     await loginFlagsmith(flagsmithPage, chromePid);
     await awaitWhileNavigating(flagsmithPage, chromePid, openLiftFeatures(flagsmithPage));
     await openCheckoutFlag(flagsmithPage);
@@ -1718,6 +1717,7 @@ async function recordT3Site(): Promise<void> {
     const deadline = Date.now() + 15_000;
     while (Date.now() < deadline) {
       if ((await lift.readTreatmentWeight("checkout_a11y")) === 100) break;
+      await sleep(1000);
       await setTreatmentInUi(flagsmithPage, 100);
     }
     if ((await lift.readTreatmentWeight("checkout_a11y")) !== 100) {
@@ -1745,10 +1745,10 @@ async function recordT3Site(): Promise<void> {
     await pointerClick(sitePage, place);
     await abortIfServerKeyLeaked(sitePage);
     await sleep(3000);
-    await finish();
+    await finish(true);
   } finally {
     recordingChromePid = null;
-    await finish();
+    await finish(false);
     await showDock();
     await lift.setTreatmentWeight("checkout_a11y", 0).catch(() => undefined);
     await lift.clearIdentityOverride("t3-control", "checkout_a11y").catch(() => undefined);
@@ -1783,7 +1783,7 @@ async function recordT3Dashboard(): Promise<void> {
   const out = resolve(recordings, "t3-dashboard.mp4");
   let chrome: { child: ChildProcess; cdp: number; profile: string } | null = null;
   let browser: Browser | undefined;
-  let finish = async () => {};
+  let finish: (ok: boolean) => Promise<void> = async () => {};
   try {
     await hideDock();
     chrome = await startChrome("full");
@@ -1840,10 +1840,10 @@ async function recordT3Dashboard(): Promise<void> {
     await sleep(550);
     await pointerWheel(page, results, 3);
     await sleep(3200);
-    await finish();
+    await finish(true);
   } finally {
     recordingChromePid = null;
-    await finish();
+    await finish(false);
     await showDock();
     await stopChrome(chrome, browser);
   }
@@ -2005,14 +2005,17 @@ async function searchFeatureList(
       },
       { x: vx, y: vy },
     );
+    if (!hit.ok) {
+      if (attempt === 7) throw new Error(`features search box is not under the pointer (elementFromPoint=${hit.tag})`);
+      continue;
+    }
     const point = await viewportToScreen(page, vx, vy);
     await focusChromeWindow();
     await xdotoolClick1(point.x, point.y, false);
     await focusChromeWindow();
     const focused = await search.evaluate((el) => document.activeElement === el).catch(() => false);
     if (!focused) {
-      await sh("xdotool", ["click", "1"]);
-      await sleep(80);
+      await xdotoolClick1(point.x, point.y, false);
     }
     const still = await search.evaluate((el) => document.activeElement === el).catch(() => false);
     if (!still) continue;
@@ -2032,7 +2035,6 @@ async function searchFeatureList(
   }
   const url = page.url();
   const dump = ((await page.evaluate(() => document.body.innerText ?? "")) ?? "").slice(0, 400);
-  await page.screenshot({ path: "/tmp/lift-t4-search-fail.png" }).catch(() => undefined);
   throw new Error(`features search box did not receive the typed query (${url}) ${dump}`);
 }
 
@@ -2057,6 +2059,7 @@ async function waitSkillRunLogContains(
   const deadline = Date.now() + timeoutMs;
   let lastStir = 0;
   while (Date.now() < deadline) {
+    await abortIfServerKeyLeaked();
     if (existsSync("/tmp/lift-t4-skill-run.log")) {
       const log = stripScriptLog(readFileSync("/tmp/lift-t4-skill-run.log", "utf8"));
       if (log.includes("stale-flag NOT deleted")) {
@@ -2071,6 +2074,28 @@ async function waitSkillRunLogContains(
     await sleep(120);
   }
   throw new Error(`skill-run log missing ${needle}`);
+}
+
+async function revealResultsCards(page: Page): Promise<void> {
+  const needles = [/enrolled/i, /chance to win/i, /uplift/i];
+  for (let i = 0; i < 14; i += 1) {
+    const inner = await page.evaluate(() => ({ w: window.innerWidth, h: window.innerHeight }));
+    let allIn = true;
+    for (const needle of needles) {
+      const loc = page.getByText(needle).first();
+      const box = await loc.boundingBox().catch(() => null);
+      if (!box || box.y < 48 || box.y + box.height > inner.h - 12) {
+        allIn = false;
+        break;
+      }
+    }
+    if (allIn) return;
+    const pagePoint = await viewportToScreen(page, 640, Math.min(360, inner.h / 2));
+    await glidePointerTo(pagePoint.x, pagePoint.y);
+    await sleep(550);
+    await pointerWheel(page, page.locator("body"), 3);
+  }
+  throw new Error("Results cards (enrolled, chance to win, uplift) were not fully in view");
 }
 
 async function waitSkillRunLog(timeoutMs: number): Promise<string> {
@@ -2115,15 +2140,15 @@ async function recordT4(): Promise<void> {
   recordingChromePid = chromePid;
   const connected = await connectChrome(chrome.cdp);
   browser = connected.browser;
-  await ensureChromeGeometry(chromePid, 1920, 680, connected.page);
+  await ensureChromeGeometry(chromePid, 1920, 920, connected.page);
   try {
     writeFileSync("/tmp/lift-t4-skill-run.log", "");
   } catch {
     /* */
   }
-  runTerm = await openTerminal("t4-skill-run", "", "200x28+8+700", false, true);
+  runTerm = await openTerminal("t4-skill-run", "", "200x18+8+930", false, true);
   const ff = startFfmpeg(out);
-  const finish = makeClipFinisher(ff, out);
+  let finish = makeClipFinisher(ff, out);
   try {
     const page = connected.page;
     await loginFlagsmith(page, chromePid);
@@ -2237,21 +2262,14 @@ async function recordT4(): Promise<void> {
     await assertNoSecrets(page);
     const results = page.getByText("Results", { exact: true }).first();
     await results.waitFor({ state: "visible", timeout: 10_000 });
-    const resultsTable = page.getByText(/conversions|probability|p\(best\)/i).first();
-    if (!(await resultsTable.isVisible())) {
-      const pagePoint = await viewportToScreen(page, 640, 360);
-      await glidePointerTo(pagePoint.x, pagePoint.y);
-      await sleep(550);
-      await pointerWheel(page, results, 2);
-    }
-    await resultsTable.waitFor({ state: "visible", timeout: 10_000 });
+    await revealResultsCards(page);
     await abortIfServerKeyLeaked(page);
     await sleep(4_500);
-    await finish();
+    await finish(true);
   } finally {
     recordingChromePid = null;
     allowWindowRaise = true;
-    await finish();
+    await finish(false);
     await showDock();
     await closeWindowsNamed("t4-skill-run");
     cleanupTermFiles(runTerm);
@@ -2268,9 +2286,15 @@ const clips: Record<string, () => Promise<void>> = {
 };
 
 if (which === "all") {
-  for (const [name, fn] of Object.entries(clips)) {
+  const order = [
+    "t3-selfhost-up",
+    "t3-site-reads-selfhosted-flag",
+    "t4-skill-run",
+    "t3-dashboard",
+  ] as const;
+  for (const name of order) {
     process.stderr.write(`recording ${name}\n`);
-    await fn();
+    await clips[name]();
     await assertClipMotion(resolve(recordings, `${name}.mp4`));
   }
 } else if (clips[which]) {

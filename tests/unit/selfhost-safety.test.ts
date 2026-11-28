@@ -102,6 +102,29 @@ describe("redact", () => {
     expect(maskKey("abcdefghij")).toBe("…ghij");
   });
 
+  it("redacts configured environmentKey, serverKey and adminToken values", () => {
+    const prev = {
+      FLAGSMITH_ENVIRONMENT_KEY: process.env.FLAGSMITH_ENVIRONMENT_KEY,
+      FLAGSMITH_SERVER_KEY: process.env.FLAGSMITH_SERVER_KEY,
+      FLAGSMITH_ADMIN_API_TOKEN: process.env.FLAGSMITH_ADMIN_API_TOKEN,
+    };
+    process.env.FLAGSMITH_ENVIRONMENT_KEY = "env-public-xyz";
+    process.env.FLAGSMITH_SERVER_KEY = "ser.configuredkeyvalue";
+    process.env.FLAGSMITH_ADMIN_API_TOKEN = "admin-token-xyz";
+    try {
+      const out = redactSecrets("enroll wait env-public-xyz admin-token-xyz ser.configuredkeyvalue");
+      expect(out).not.toContain("env-public-xyz");
+      expect(out).not.toContain("admin-token-xyz");
+      expect(out).not.toContain("ser.configuredkeyvalue");
+      expect(out).toMatch(/\[REDACTED\]/);
+    } finally {
+      for (const [key, value] of Object.entries(prev)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
+  });
+
   it("throws when a server-style key would be visible", () => {
     expect(() => assertNoServerKeyVisible("api_key ser.secret does not exist")).toThrow(/server-style ser/);
     expect(() => assertNoServerKeyVisible("health-poll 3 liveness HTTP 200")).not.toThrow();

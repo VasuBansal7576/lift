@@ -88,7 +88,6 @@ describe("sendSimulatedConversions with a fake Flagsmith", () => {
     apiUrl: "http://127.0.0.1:9/api/v1/",
     eventsUrl: "http://127.0.0.1:9/api/",
     environmentKey: "env-key",
-    serverKey: "",
     flagName: "lift_a11y_r5",
     event: "checkout_completed",
     n: 80,

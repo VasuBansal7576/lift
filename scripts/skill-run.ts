@@ -336,6 +336,9 @@ async function gateServedVariants(opts: {
 async function main(): Promise<number> {
   const { flags } = parseArgs(process.argv.slice(2));
   const env = loadSelfhostEnv();
+  if (env.environmentKey) process.env.FLAGSMITH_ENVIRONMENT_KEY = env.environmentKey;
+  if (env.serverKey) process.env.FLAGSMITH_SERVER_KEY = env.serverKey;
+  if (env.adminToken) process.env.FLAGSMITH_ADMIN_API_TOKEN = env.adminToken;
   const lift = createLiftSelfhost(env);
   const ctx = mutationContext(flags, lift);
   const wantStart = flagBool(flags, "start");
@@ -540,10 +543,11 @@ async function main(): Promise<number> {
           apiUrl: env.adminApiUrl || env.apiUrl,
           eventsUrl: env.eventsUrl,
           environmentKey: env.environmentKey,
-          serverKey: env.serverKey,
           flagName,
           event: METRIC_EVENT,
           n,
+          seed: 20261127,
+          runId: `exp-${expId}`,
           outcomes: servedOutcomes,
         });
       } catch (err) {

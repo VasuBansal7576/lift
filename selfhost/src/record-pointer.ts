@@ -5,24 +5,12 @@ export type ShRunner = (
   args: readonly string[],
 ) => Promise<{ code: number; stdout: string; stderr: string }>;
 
-export function pointerPressReleaseArgs(x: number, y: number): string[][] {
-  const sx = String(Math.round(x));
-  const sy = String(Math.round(y));
-  return [
-    ["mousemove", sx, sy],
-    ["mousedown", "1"],
-    ["mouseup", "1"],
-  ];
-}
-
-export async function runPointerPressRelease(run: ShRunner, x: number, y: number): Promise<void> {
-  for (const args of pointerPressReleaseArgs(x, y)) {
-    const out = await run("xdotool", args);
-    if (out.code !== 0) {
-      throw new Error(`xdotool ${args.join(" ")} failed: ${out.stderr || out.stdout}`);
-    }
-  }
-}
+export type PointerCtl = {
+  run: ShRunner;
+  sleep: (ms: number) => Promise<void>;
+  last: Point;
+  beforeClick?: () => Promise<void>;
+};
 
 /** At 12fps a click glide must cover at least 8 frames with no teleport. */
 export function glideScreenPoints(from: Point, to: Point, minFrames = 10): Point[] {
@@ -38,6 +26,31 @@ export function glideScreenPoints(from: Point, to: Point, minFrames = 10): Point
     });
   }
   return points;
+}
+
+export async function glidePointerTo(ctl: PointerCtl, x: number, y: number): Promise<void> {
+  const dest = { x: Math.round(x), y: Math.round(y) };
+  const points = glideScreenPoints(ctl.last, dest);
+  for (const point of points) {
+    const out = await ctl.run("xdotool", ["mousemove", String(point.x), String(point.y)]);
+    if (out.code !== 0) {
+      throw new Error(`xdotool mousemove failed: ${out.stderr || out.stdout}`);
+    }
+    ctl.last = point;
+    await ctl.sleep(84);
+  }
+  ctl.last = dest;
+}
+
+export async function xdotoolClick1(ctl: PointerCtl, x: number, y: number): Promise<void> {
+  await ctl.beforeClick?.();
+  await glidePointerTo(ctl, x, y);
+  await ctl.sleep(550);
+  const out = await ctl.run("xdotool", ["click", "1"]);
+  if (out.code !== 0) {
+    throw new Error(`xdotool click 1 failed: ${out.stderr || out.stdout}`);
+  }
+  await ctl.sleep(150);
 }
 
 export function experimentHref(experimentId: number): string {
@@ -60,25 +73,4 @@ export function reloadButtonScreenPoint(
     x: Math.round(windowLeft + 108),
     y: Math.round(windowTop + 56),
   };
-}
-
-export async function runReloadButtonClick(
-  run: ShRunner,
-  windowLeft: number,
-  windowTop: number,
-): Promise<void> {
-  const point = reloadButtonScreenPoint(windowLeft, windowTop);
-  const move = await run("xdotool", ["mousemove", String(point.x), String(point.y)]);
-  if (move.code !== 0) throw new Error(`xdotool mousemove failed: ${move.stderr}`);
-  const click = await run("xdotool", ["click", "1"]);
-  if (click.code !== 0) throw new Error(`xdotool click failed: ${click.stderr}`);
-}
-
-export function f5ReloadArgs(): string[] {
-  return ["key", "F5"];
-}
-
-export async function runF5Reload(run: ShRunner): Promise<void> {
-  const out = await run("xdotool", f5ReloadArgs());
-  if (out.code !== 0) throw new Error(`xdotool F5 failed: ${out.stderr}`);
 }

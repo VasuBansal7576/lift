@@ -29,6 +29,7 @@ import {
   assertNoServerKeyVisible,
   SCAN_PAGE_SECRETS_SOURCE,
   liftScanFiles,
+  redactSecrets,
 } from "../selfhost/src/redact.ts";
 import { writeSiteConfigForSelfhost } from "../selfhost/src/site-config.ts";
 import { findApprovePromptFile } from "../selfhost/src/approve.ts";
@@ -2077,11 +2078,17 @@ async function waitSkillRunLogContains(
 }
 
 async function revealResultsCards(page: Page): Promise<void> {
-  const needles = [/enrolled/i, /chance to win/i, /uplift/i];
-  for (let i = 0; i < 14; i += 1) {
+  const groups = [
+    /enrolled|participants|sample size|unique users|identities/i,
+    /chance to (win|beat)|p\(best\)|probability/i,
+    /uplift|improvement|conversion rate/i,
+  ];
+  const results = page.getByText("Results", { exact: true }).first();
+  await results.waitFor({ state: "visible", timeout: 10_000 });
+  for (let i = 0; i < 16; i += 1) {
     const inner = await page.evaluate(() => ({ w: window.innerWidth, h: window.innerHeight }));
     let allIn = true;
-    for (const needle of needles) {
+    for (const needle of groups) {
       const loc = page.getByText(needle).first();
       const box = await loc.boundingBox().catch(() => null);
       if (!box || box.y < 48 || box.y + box.height > inner.h - 12) {
@@ -2090,12 +2097,12 @@ async function revealResultsCards(page: Page): Promise<void> {
       }
     }
     if (allIn) return;
-    const pagePoint = await viewportToScreen(page, 640, Math.min(360, inner.h / 2));
-    await glidePointerTo(pagePoint.x, pagePoint.y);
-    await sleep(550);
-    await pointerWheel(page, page.locator("body"), 3);
+    await pointerWheel(page, results, 3);
   }
-  throw new Error("Results cards (enrolled, chance to win, uplift) were not fully in view");
+  const visible = ((await page.evaluate(() => document.body.innerText ?? "")) ?? "").replace(/\s+/g, " ").slice(0, 400);
+  throw new Error(
+    redactSecrets(`Results cards (enrolled, chance to win, uplift) were not fully in view (${visible})`),
+  );
 }
 
 async function waitSkillRunLog(timeoutMs: number): Promise<string> {
@@ -2247,6 +2254,7 @@ async function recordT4(): Promise<void> {
     const listed = await lift.listExperiments();
     const experimentName = listed.find((row) => row.id === experimentId)?.name ?? "";
     if (!experimentName) throw new Error(`experiment ${experimentId} not listed`);
+    await ensureChromeGeometry(chromePid, 1920, 1180, page);
     await openExperimentsViaSidebar(page);
     await sleep(3200);
     const target = experimentOpenTarget(experimentId, listed);

@@ -30,6 +30,9 @@ export function approvalPhrase(experimentId: number): string {
   return `APPROVE ${experimentId}`;
 }
 
+export const RECORDING_STANDIN_LINE =
+  "approved by: recording harness (stand-in for the human approver)";
+
 export async function requireTypedApproval(
   experimentId: number,
   io: ApprovalIo = defaultApprovalIo(),
@@ -45,6 +48,9 @@ export async function requireTypedApproval(
   const line = (await io.readLine()).trim();
   if (line !== expected) {
     throw new Error(`Approval phrase did not match (expected ${expected}).`);
+  }
+  if (process.env.LIFT_RECORDING_STANDIN === "1") {
+    stdout.write(`${RECORDING_STANDIN_LINE}\n`);
   }
 }
 

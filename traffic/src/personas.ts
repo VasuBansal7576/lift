@@ -160,7 +160,7 @@ export async function runKeyboard(page: Page): Promise<AttemptResult> {
   if (!unfocused || !focused || !focusIndicatorVisible(focused, unfocused)) {
     return {
       converted: false,
-      blockedBy: ["div_button"],
+      blockedBy: ["focus_visible"],
       reason: "Place order has no visible focus indicator (WCAG 2.4.7)",
     };
   }

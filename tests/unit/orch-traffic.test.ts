@@ -11,7 +11,7 @@ import {
   cookieMatchesIdentity,
   focusIndicatorVisible,
   personaConvertsOnSurface,
-  simulateArmRate,
+  type PersonaSurface,
 } from "../../orchestrator/src/traffic-guard.ts";
 import { resolveOrchSpecPath } from "../../shared/orch-site.ts";
 import { EventLog } from "../../orchestrator/src/log.ts";
@@ -54,10 +54,6 @@ describe("traffic identity + marker", () => {
 
   it("treats two named arms equally when the served surface is the same", () => {
     expect(SHARED_KEEP_RATE).toBe(0.9);
-    const a = simulateArmRate({ surface: OPEN_SURFACE, n: 4000, seed: 42, arm: "full-v1" });
-    const b = simulateArmRate({ surface: OPEN_SURFACE, n: 4000, seed: 42, arm: "g2-focus" });
-    expect(Math.abs(a.rate - b.rate)).toBeLessThan(0.04);
-    expect(a.rate).toBeGreaterThan(0.7);
     expect(personaConvertsOnSurface("keyboard", OPEN_SURFACE)).toBe(true);
     expect(personaConvertsOnSurface("keyboard", { ...OPEN_SURFACE, focusVisible: false })).toBe(false);
   });
@@ -77,21 +73,6 @@ describe("traffic identity + marker", () => {
     };
     expect(focusIndicatorVisible(visible, hidden)).toBe(true);
     expect(focusIndicatorVisible(hidden, hidden)).toBe(false);
-    const withRing = { ...OPEN_SURFACE, focusVisible: true };
-    expect(simulateArmRate({ surface: withRing, n: 2000, seed: 3, arm: "alpha" }).rate).toBeCloseTo(
-      simulateArmRate({ surface: withRing, n: 2000, seed: 3, arm: "beta" }).rate,
-      1,
-    );
-  });
-
-  it("flips the winner when the accessibility barrier moves to the other arm", () => {
-    const aBlocked = simulateArmRate({ surface: BLOCKED_SURFACE, n: 3000, seed: 7, arm: "arm-a" });
-    const bOpen = simulateArmRate({ surface: OPEN_SURFACE, n: 3000, seed: 7, arm: "arm-b" });
-    expect(bOpen.rate).toBeGreaterThan(aBlocked.rate + 0.12);
-
-    const aOpen = simulateArmRate({ surface: OPEN_SURFACE, n: 3000, seed: 7, arm: "arm-a" });
-    const bBlocked = simulateArmRate({ surface: BLOCKED_SURFACE, n: 3000, seed: 7, arm: "arm-b" });
-    expect(aOpen.rate).toBeGreaterThan(bBlocked.rate + 0.12);
   });
 
   it("only serves orch-specs with valid spec ids", () => {
@@ -126,6 +107,65 @@ describe("writePassedSpecs uses a tmp specs dir", () => {
   });
 });
 
+function fakeBrowser(): Browser {
+  return {
+    newContext: async () => {
+      let cookie = "";
+      return {
+        addCookies: async (cookies: Array<{ value: string }>) => {
+          cookie = cookies[0]?.value ?? "";
+        },
+        cookies: async () => [{ name: "lift_vid", value: cookie }],
+        newPage: async () => ({}) as Page,
+        close: async () => undefined,
+      };
+    },
+    close: async () => undefined,
+  } as unknown as Browser;
+}
+
+function stubFlagsmith(left: string, right: string): TrafficFlagsmith {
+  return {
+    getExperimentFlag: async (_name, identity) => {
+      const index = Number(String(identity).split("-").pop());
+      return {
+        variant: index % 2 === 0 ? left : right,
+        experiment: { inExperiment: true },
+      };
+    },
+    trackEvent: () => undefined,
+    flushEvents: async () => undefined,
+    close: async () => undefined,
+  };
+}
+
+async function runSurfaceTraffic(
+  seed: string,
+  runId: string,
+  n: number,
+  left: string,
+  right: string,
+  surfaceForVariant: (variant: string) => PersonaSurface,
+) {
+  process.env.LIFT_TRAFFIC_SEED = seed;
+  process.env.LIFT_RUN_ID = runId;
+  process.env.LIFT_ORCH_TRAFFIC_CONCURRENCY = "8";
+  return runTrafficAgent(
+    testOrchOptions({ apply: true, trafficN: n, noUi: true }),
+    flag,
+    [],
+    null,
+    new EventLog(false),
+    {
+      flagsmith: stubFlagsmith(left, right),
+      launchBrowser: async () => fakeBrowser(),
+      gotoSite: async () => undefined,
+      waitForAppliedVariant: async (_page, expected) => expected,
+      surfaceForVariant,
+    },
+  );
+}
+
 describe("runTrafficAgent", () => {
   const previousSeed = process.env.LIFT_TRAFFIC_SEED;
   const previousRun = process.env.LIFT_RUN_ID;
@@ -141,54 +181,7 @@ describe("runTrafficAgent", () => {
   });
 
   it("gives equal conversion rates to the same surface under different variant names", async () => {
-    process.env.LIFT_TRAFFIC_SEED = "42";
-    process.env.LIFT_RUN_ID = "equalrate";
-    process.env.LIFT_ORCH_TRAFFIC_CONCURRENCY = "8";
-    const conversions: string[] = [];
-    const flagsmith: TrafficFlagsmith = {
-      getExperimentFlag: async (_name, identity) => {
-        const index = Number(String(identity).split("-").pop());
-        return {
-          variant: index % 2 === 0 ? "alpha" : "beta",
-          experiment: { inExperiment: true },
-        };
-      },
-      trackEvent: (_event, payload) => {
-        conversions.push(String((payload as { identifier?: string }).identifier ?? ""));
-      },
-      flushEvents: async () => undefined,
-      close: async () => undefined,
-    };
-    const fakeBrowser = {
-      newContext: async () => {
-        let cookie = "";
-        return {
-          addCookies: async (cookies: Array<{ value: string }>) => {
-            cookie = cookies[0]?.value ?? "";
-          },
-          cookies: async () => [{ name: "lift_vid", value: cookie }],
-          newPage: async () => ({}) as Page,
-          close: async () => undefined,
-        };
-      },
-      close: async () => undefined,
-    } as unknown as Browser;
-
-    const visits = await runTrafficAgent(
-      testOrchOptions({ apply: true, trafficN: 80, noUi: true }),
-      flag,
-      [],
-      null,
-      new EventLog(false),
-      {
-        flagsmith,
-        launchBrowser: async () => fakeBrowser,
-        gotoSite: async () => undefined,
-        waitForAppliedVariant: async (_page, expected) => expected,
-        runPersona: async () => ({ converted: true, blockedBy: [], reason: "stub converted" }),
-      },
-    );
-
+    const visits = await runSurfaceTraffic("42", "equalrate", 80, "alpha", "beta", () => OPEN_SURFACE);
     expect(visits).toHaveLength(80);
     const alpha = visits.filter((item) => item.variant === "alpha");
     const beta = visits.filter((item) => item.variant === "beta");
@@ -197,6 +190,26 @@ describe("runTrafficAgent", () => {
     const alphaRate = alpha.filter((item) => item.converted).length / alpha.length;
     const betaRate = beta.filter((item) => item.converted).length / beta.length;
     expect(Math.abs(alphaRate - betaRate)).toBeLessThan(0.15);
-    expect(conversions.length).toBe(visits.filter((item) => item.converted).length);
+    expect(alphaRate).toBeGreaterThan(0.7);
+  });
+
+  it("flips the winner when the accessibility barrier moves to the other arm", async () => {
+    const first = await runSurfaceTraffic("7", "flip-a", 80, "arm-a", "arm-b", (variant) =>
+      variant === "arm-a" ? BLOCKED_SURFACE : OPEN_SURFACE,
+    );
+    const aBlocked = first.filter((item) => item.variant === "arm-a");
+    const bOpen = first.filter((item) => item.variant === "arm-b");
+    const aBlockedRate = aBlocked.filter((item) => item.converted).length / aBlocked.length;
+    const bOpenRate = bOpen.filter((item) => item.converted).length / bOpen.length;
+    expect(bOpenRate).toBeGreaterThan(aBlockedRate + 0.12);
+
+    const second = await runSurfaceTraffic("7", "flip-b", 80, "arm-a", "arm-b", (variant) =>
+      variant === "arm-a" ? OPEN_SURFACE : BLOCKED_SURFACE,
+    );
+    const aOpen = second.filter((item) => item.variant === "arm-a");
+    const bBlocked = second.filter((item) => item.variant === "arm-b");
+    const aOpenRate = aOpen.filter((item) => item.converted).length / aOpen.length;
+    const bBlockedRate = bBlocked.filter((item) => item.converted).length / bBlocked.length;
+    expect(aOpenRate).toBeGreaterThan(bBlockedRate + 0.12);
   });
 });

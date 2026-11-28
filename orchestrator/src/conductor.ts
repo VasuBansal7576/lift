@@ -1,8 +1,8 @@
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import type { PatchSpec } from "../../shared/patch-spec.ts";
 import { serveSites } from "../../agent/src/serve.ts";
-import { runAnalyst } from "./agents/analyst.ts";
+import { formatGen2Inconclusive, runAnalyst } from "./agents/analyst.ts";
 import {
   assertApproveArgs,
   pauseForHumanApproval,
@@ -11,12 +11,13 @@ import {
 } from "./agents/approval.ts";
 import {
   cleanupOrchFlags,
+  controlArmLabel,
   loadFlagSetupFromExperiment,
   pauseExperiment,
   runFlagAgent,
 } from "./agents/flag.ts";
 import { runGatekeeper } from "./agents/gatekeeper.ts";
-import { runMutator } from "./agents/mutator.ts";
+import { championFocusCeilingNote, runMutator } from "./agents/mutator.ts";
 import { runRollout } from "./agents/rollout.ts";
 import { runScanner } from "./agents/scanner.ts";
 import { runTrafficAgent } from "./agents/traffic.ts";
@@ -49,6 +50,36 @@ function saveState(state: PersistedState): void {
   writeFileSync(path, `${JSON.stringify(state, null, 2)}\n`);
 }
 
+function loadPersistedState(): PersistedState | null {
+  try {
+    return JSON.parse(readFileSync(statePath(), "utf8")) as PersistedState;
+  } catch {
+    return null;
+  }
+}
+
+export function extraRoundsFromEnv(raw = process.env.LIFT_ORCH_MAX_EXTRA_ROUNDS): number {
+  if (raw == null || String(raw).trim() === "") return 0;
+  const n = Math.floor(Number(raw));
+  return Number.isFinite(n) ? Math.max(0, n) : 0;
+}
+
+export function identitiesNeeded(visits: number, extraRounds: number): number {
+  if (extraRounds === 0) return Math.max(50, Math.ceil(visits * 0.98));
+  return Math.max(50, Math.floor(visits * 0.4));
+}
+
+export function trafficNForGeneration(opts: OrchOptions, generation: number): number {
+  if (generation >= 2) {
+    const raw = process.env.LIFT_ORCH_TRAFFIC_N_GEN2?.trim();
+    if (raw) {
+      const n = Math.floor(Number(raw));
+      if (Number.isFinite(n) && n >= 4) return n;
+    }
+  }
+  return opts.trafficN;
+}
+
 function flagsmithHttp(opts: OrchOptions): FlagsmithHttp {
   return new FlagsmithHttp({
     baseUrl: opts.adminApiUrl || opts.apiUrl,
@@ -75,10 +106,15 @@ async function collectUntilWinner(
 ): Promise<{ visits: TrafficVisit[]; recommendation: AnalystRecommendation }> {
   let visits = await runTrafficAgent(opts, flag, passed, controlSpec, log);
   log.setPhase("analysing");
-  let minIdentities = Math.max(50, Math.floor(visits.length * 0.4));
+  const maxExtra = extraRoundsFromEnv();
+  let minIdentities = identitiesNeeded(visits.length, maxExtra);
+  log.emit(
+    "analyst",
+    "info",
+    `Waiting for Flagsmith identities >= ${minIdentities} (visits=${visits.length}, extraRounds=${maxExtra})`,
+  );
   let results = await waitForResults(opts, flag.experimentId, opts.resultsWaitMs, undefined, minIdentities);
   let recommendation = runAnalyst(results, log, opts.threshold);
-  const maxExtra = Math.max(0, Math.floor(Number(process.env.LIFT_ORCH_MAX_EXTRA_ROUNDS ?? 6)));
   let extra = 0;
   while (recommendation.kind !== "winner" && extra < maxExtra) {
     extra += 1;
@@ -94,7 +130,7 @@ async function collectUntilWinner(
     const previousCount = resultsIdentityCount(results);
     minIdentities = resultsAreReady(results, 0)
       ? previousCount + 1
-      : Math.max(50, Math.floor(visits.length * 0.4), previousCount);
+      : Math.max(identitiesNeeded(visits.length, maxExtra), previousCount);
     results = await waitForResults(opts, flag.experimentId, opts.resultsWaitMs, undefined, minIdentities);
     recommendation = runAnalyst(results, log, opts.threshold);
   }
@@ -136,6 +172,10 @@ export async function runOrchestrator(
     return state;
   }
 
+  if (opts.resultsExperimentId) {
+    return printExperimentResults(opts, log, started);
+  }
+
   let ui: UiServer | undefined;
   if (!opts.noUi) {
     ui = await startUiServer(log, opts.uiPort);
@@ -168,8 +208,27 @@ export async function runOrchestrator(
     const generations: GenerationRecord[] = [];
     let previousChampion: PatchSpec | null = null;
     let previousFlag: FlagSetup | undefined;
+    const startGen = Math.max(1, Math.min(opts.generations, opts.fromGeneration || 1));
+    if (startGen >= 2) {
+      const previous = loadPersistedState();
+      if (!previous?.generations?.length) {
+        throw new Error("--from-generation requires run-state.json from a prior generation");
+      }
+      generations.push(...previous.generations.filter((item) => item.generation < startGen));
+      const last = generations[generations.length - 1];
+      previousChampion = last ? pickChampion(last) : null;
+      previousFlag = last?.flag;
+      if (!previousChampion || !previousFlag) {
+        throw new Error(`Generation ${startGen} requires a Flagsmith winner from generation ${startGen - 1}`);
+      }
+      log.emit(
+        "conductor",
+        "info",
+        `Resuming at generation ${startGen}; champion ${previousChampion.id} from experiment ${previousFlag.experimentId}`,
+      );
+    }
 
-    for (let generation = 1; generation <= opts.generations; generation += 1) {
+    for (let generation = startGen; generation <= opts.generations; generation += 1) {
       if (generation >= 2) {
         if (!previousChampion || !previousFlag) {
           throw new Error("Generation 2 requires a Flagsmith winner from generation 1 (no axe-hit fallback).");
@@ -182,6 +241,12 @@ export async function runOrchestrator(
             `Paused gen-${generation - 1} experiment ${previousFlag.experimentId} before generation ${generation}`,
           );
         }
+        log.emit(
+          "conductor",
+          "info",
+          `${controlArmLabel(generation, previousChampion.id)} (payload key remains "control")`,
+        );
+        log.emit("conductor", "info", championFocusCeilingNote(previousChampion));
       }
 
       log.setPhase("scanning");
@@ -254,10 +319,28 @@ export async function runOrchestrator(
       let visits: TrafficVisit[] | undefined;
       let recommendation: AnalystRecommendation | undefined;
       if (opts.apply && !flag.dryRun) {
+        const genOpts = { ...opts, trafficN: trafficNForGeneration(opts, generation) };
+        if (generation >= 2) {
+          log.emit(
+            "conductor",
+            "info",
+            `gen-2 traffic-n ${genOpts.trafficN} (fixed horizon, disclosed)`,
+          );
+        }
         log.setPhase("traffic");
-        const collected = await collectUntilWinner(opts, flag, passed, controlSpec, log);
+        const collected = await collectUntilWinner(genOpts, flag, passed, controlSpec, log);
         visits = collected.visits;
         recommendation = collected.recommendation;
+        if (generation === 1 && recommendation.kind === "winner") {
+          log.emit(
+            "conductor",
+            "info",
+            `gen-1 champion ${recommendation.arm} chance_to_win=${recommendation.chanceToWin.toFixed(3)}`,
+          );
+        }
+        if (generation >= 2 && recommendation.kind === "keep_collecting") {
+          log.emit("analyst", "wait", formatGen2Inconclusive(recommendation, visits.length));
+        }
       } else {
         log.emit("conductor", "info", "Skipping traffic and analyst (dry-run)");
       }
@@ -378,6 +461,48 @@ async function approveExisting(
   };
   log.setPhase("complete");
   log.emit("conductor", "done", `Rolled out ${result.winner}. Experiment ${result.experimentId} completed.`);
+  saveState(state);
+  log.snapshot = state;
+  log.writeLive();
+  return state;
+}
+
+export async function printExperimentResults(
+  opts: OrchOptions,
+  log: EventLog,
+  started = Date.now(),
+): Promise<PersistedState> {
+  const experimentId = opts.resultsExperimentId as number;
+  if (!Number.isInteger(experimentId) || experimentId <= 0) {
+    throw new Error("--results requires a positive experiment id");
+  }
+  log.emit("analyst", "start", `CLI --results ${experimentId}`);
+  const envelope = await fetchExperimentResults(opts, experimentId, true);
+  const recommendation = runAnalyst(envelope, log, opts.threshold);
+  for (const arm of recommendation.arms) {
+    const n = arm.n ?? "n/a";
+    const sum = arm.sum ?? "n/a";
+    log.emit(
+      "analyst",
+      "info",
+      `${arm.key} n=${n} sum=${sum} chance_to_win=${arm.chanceToWin.toFixed(3)}`,
+    );
+  }
+  const timeSaved = measureTimeSaved(Date.now() - started);
+  const state: PersistedState = {
+    phase: recommendation.kind === "winner" ? "WAITING_FOR_HUMAN_APPROVAL" : "KEEP_COLLECTING",
+    siteUrl: opts.siteUrl,
+    flagName: opts.flagName,
+    metricEvent: opts.metricEvent,
+    threshold: opts.threshold,
+    generations: [],
+    events: log.events,
+    recommendation,
+    timeSaved,
+    startedAt: new Date(started).toISOString(),
+    finishedAt: new Date().toISOString(),
+  };
+  log.setPhase(state.phase);
   saveState(state);
   log.snapshot = state;
   log.writeLive();

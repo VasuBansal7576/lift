@@ -78,6 +78,13 @@ describe("analyst threshold", () => {
     expect(formatGen2Inconclusive(rec, 400)).toBe(
       "Gen-2 inconclusive (chance_to_win 0.620 < 0.95 after 400 visits); champion stays",
     );
+    const rec90 = recommendWinner(
+      [{ key: "g2-focus", chanceToWin: 0.62, n: 100, sum: 80, lift: 0.01 }],
+      0.9,
+    );
+    expect(formatGen2Inconclusive(rec90, 80)).toBe(
+      "Gen-2 inconclusive (chance_to_win 0.620 < 0.90 after 80 visits); champion stays",
+    );
   });
 
   it("keeps collecting when Flagsmith has no inference yet", () => {

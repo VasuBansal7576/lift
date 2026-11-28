@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
+import { stdout } from "node:process";
 import {
   APPROVAL_PHASE,
   KEEP_COLLECTING_PHASE,
+  RECORDING_STANDIN_LINE,
   approvalSummary,
   assertApproveArgs,
   requireTypedApproval,
@@ -58,6 +60,25 @@ describe("human approval gate", () => {
     await expect(
       requireTypedApproval(12, { isTTY: false, readLine: async () => "APPROVE 12" }),
     ).rejects.toThrow(/TTY/);
+  });
+
+  it("prints the recording stand-in disclosure after a matching APPROVE", async () => {
+    const previous = process.env.LIFT_RECORDING_STANDIN;
+    process.env.LIFT_RECORDING_STANDIN = "1";
+    const chunks: string[] = [];
+    const orig = stdout.write.bind(stdout);
+    stdout.write = ((chunk: string | Uint8Array) => {
+      chunks.push(String(chunk));
+      return true;
+    }) as typeof stdout.write;
+    try {
+      await requireTypedApproval(12, { isTTY: true, readLine: async () => "APPROVE 12" });
+      expect(chunks.join("")).toContain(RECORDING_STANDIN_LINE);
+    } finally {
+      stdout.write = orig;
+      if (previous === undefined) delete process.env.LIFT_RECORDING_STANDIN;
+      else process.env.LIFT_RECORDING_STANDIN = previous;
+    }
   });
 
   it("summarises flag and experiment ids", () => {

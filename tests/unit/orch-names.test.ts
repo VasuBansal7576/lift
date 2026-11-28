@@ -9,7 +9,7 @@ import {
   isOrchDescription,
   isValidSpecId,
 } from "../../orchestrator/src/names.ts";
-import { parseApproveArg, parseArgv } from "../../orchestrator/src/config.ts";
+import { parseApproveArg, parseArgv, parseResultsArg } from "../../orchestrator/src/config.ts";
 
 describe("orch names", () => {
   it("requires lift_orch_ prefix and a description marker", () => {
@@ -40,5 +40,15 @@ describe("parseArgv --approve", () => {
 
   it("rejects a flag name without the lift_orch_ prefix", () => {
     expect(() => parseArgv(["--flag-name", "checkout_orch_a11y"])).toThrow(/lift_orch_/);
+  });
+
+  it("parses --results and --from-generation", () => {
+    expect(parseResultsArg(["--results", "53"])).toBe(53);
+    expect(parseResultsArg(["--results=9"])).toBe(9);
+    expect(parseResultsArg(["--apply"])).toBeNull();
+    const parsed = parseArgv(["--results", "12", "--from-generation", "2", "--generations", "2"]);
+    expect(parsed.resultsExperimentId).toBe(12);
+    expect(parsed.fromGeneration).toBe(2);
+    expect(parsed.generations).toBe(2);
   });
 });

@@ -80,7 +80,10 @@ export interface ArmRateResult {
   rate: number;
 }
 
-/** Seeded Monte Carlo of persona mix + shared keep on one surface. Arm name does not change the keep rate. */
+/**
+ * Test-only Monte Carlo model. Production traffic uses `runTrafficAgent`
+ * (optionally with `surfaceForVariant`). Arm name does not change the keep rate.
+ */
 export function simulateArmRate(input: {
   surface: PersonaSurface;
   n: number;

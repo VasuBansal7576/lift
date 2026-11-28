@@ -6,7 +6,10 @@ import { REPO_ROOT } from "./paths.ts";
 import type { OrchOptions } from "./types.ts";
 
 loadEnv({ path: resolve(ROOT, ".env") });
-loadEnv({ path: "/tmp/lift-flagsmith.env" });
+const flagsmithEnvPath = process.env.LIFT_FLAGSMITH_ENV?.trim();
+if (flagsmithEnvPath) {
+  loadEnv({ path: flagsmithEnvPath });
+}
 
 function env(name: string, fallback = ""): string {
   return (process.env[name] ?? fallback).trim();
@@ -37,23 +40,33 @@ function apiBase(raw: string): string {
   return raw.replace(/\/?$/, "/");
 }
 
-export function parseApproveArg(argv: string[]): { approve: boolean; approveExperimentId: number | null } {
-  const index = argv.findIndex((item) => item === "--approve" || item.startsWith("--approve="));
-  if (index < 0) return { approve: false, approveExperimentId: null };
+function parsePositiveIdArg(argv: string[], name: string): number | null {
+  const index = argv.findIndex((item) => item === name || item.startsWith(`${name}=`));
+  if (index < 0) return null;
   const token = argv[index];
-  const raw = token.startsWith("--approve=")
-    ? token.slice("--approve=".length)
+  const raw = token.startsWith(`${name}=`)
+    ? token.slice(`${name}=`.length)
     : argv[index + 1] && !argv[index + 1].startsWith("--")
       ? argv[index + 1]
       : undefined;
   if (!raw) {
-    throw new Error("--approve requires an experiment id, e.g. --approve 12");
+    throw new Error(`${name} requires a positive experiment id, e.g. ${name} 12`);
   }
   const id = Number(raw);
   if (!Number.isInteger(id) || id <= 0) {
-    throw new Error("--approve requires a positive experiment id");
+    throw new Error(`${name} requires a positive experiment id`);
   }
+  return id;
+}
+
+export function parseApproveArg(argv: string[]): { approve: boolean; approveExperimentId: number | null } {
+  const id = parsePositiveIdArg(argv, "--approve");
+  if (id == null) return { approve: false, approveExperimentId: null };
   return { approve: true, approveExperimentId: id };
+}
+
+export function parseResultsArg(argv: string[]): number | null {
+  return parsePositiveIdArg(argv, "--results");
 }
 
 export function parseArgv(argv: string[] = process.argv.slice(2)): OrchOptions {
@@ -75,9 +88,14 @@ export function parseArgv(argv: string[] = process.argv.slice(2)): OrchOptions {
   ).replace(/\/$/, "");
   const uiPort = Math.max(1, Math.floor(Number(argValue(argv, "--ui-port") || env("LIFT_ORCH_UI_PORT", "4177"))));
   const { approve, approveExperimentId } = parseApproveArg(argv);
+  const resultsExperimentId = parseResultsArg(argv);
   const cleanup = hasFlag(argv, "--cleanup");
+  const fromGeneration = Math.max(
+    1,
+    Math.min(3, Math.floor(Number(argValue(argv, "--from-generation") || "1"))),
+  );
   const flagName = argValue(argv, "--flag-name") || env("LIFT_ORCH_FLAG", "lift_orch_checkout");
-  if (!cleanup && !approve) {
+  if (!cleanup && !approve && resultsExperimentId == null) {
     assertOrchFlagName(flagName);
   }
 
@@ -85,7 +103,9 @@ export function parseArgv(argv: string[] = process.argv.slice(2)): OrchOptions {
     apply: hasFlag(argv, "--apply"),
     approve,
     approveExperimentId,
+    resultsExperimentId,
     cleanup,
+    fromGeneration,
     allowRemote: hasFlag(argv, "--allow-remote"),
     generations,
     siteUrl,

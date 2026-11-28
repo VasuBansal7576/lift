@@ -12,10 +12,12 @@ Usage:
 Options:
   --apply                 Create the Flagsmith flag, metric, and experiment (default: dry-run)
   --approve <id>          Roll out after a TTY prompt typing APPROVE <id>
+  --results <id>          Fetch Flagsmith /results and print the analyst decision line
   --cleanup               Delete lift_orch_ flags marked as orchestrator-owned
   --allow-remote          Allow non-loopback FLAGSMITH_API_URL / site URL
   --generations N         1 (default) or 2 for the L2 evolutionary step
-  --traffic-n N           Simulated identities per generation (default 220; recordings use 1000 for T2, 400 for L2)
+  --from-generation N     Resume at generation N using run-state.json (L2 split)
+  --traffic-n N           Simulated identities per generation (default 220; recordings use 1000 for T2, 400 for L2 gen-1, 240 for gen-2)
   --threshold 0.95        chance_to_win required to recommend a winner
   --site-url URL          Demo page (default http://127.0.0.1:4174/checkout)
   --ui-port N             Timeline UI (default 4177)
@@ -28,13 +30,14 @@ FLAGSMITH_SERVER_KEY, FLAGSMITH_PROJECT_ID. Keys are never printed.
 No default Flagsmith credentials — set them in the environment.
 
 The Flag agent drives Flagsmith (CLI v2 + Admin API). Mutator is a
-deterministic template mutator; LLM path available with a key.
+deterministic template mutator; LLM path available with GROQ_API_KEY,
+GEMINI_API_KEY, or LIFT_LLM_API_URL + LIFT_LLM_API_KEY.
 
 Human approval: a winner pauses at WAITING_FOR_HUMAN_APPROVAL. Below 0.95
 the phase is KEEP_COLLECTING. Rollout only happens on a second invocation
 with --approve <experimentId> AND typing APPROVE <id> on a TTY. There is
-no non-interactive bypass. Recordings use LIFT_ORCH_MAX_EXTRA_ROUNDS=0
-(one pre-registered look).
+no non-interactive bypass. LIFT_ORCH_MAX_EXTRA_ROUNDS defaults to 0
+(one pre-registered look; extra rounds are opt-in).
 `;
 }
 

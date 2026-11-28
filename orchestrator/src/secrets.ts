@@ -29,7 +29,7 @@ export function stripSecretsFromText(text: string): string {
   return text
     .replace(/(Api-Key|Bearer|Token)\s+\S+/gi, "$1 <redacted>")
     .replace(
-      /\b(FLAGSMITH_(?:ADMIN_API_TOKEN|API_KEY|SERVER_KEY|ENVIRONMENT_KEY)|GROQ_API_KEY|GEMINI_API_KEY|LIFT_LLM_API_KEY)=[^\s]+/gi,
+      /\b(FLAGSMITH_(?:ADMIN_API_TOKEN|API_KEY|SERVER_KEY|ENVIRONMENT_KEY)|GROQ_API_KEY|GEMINI_API_KEY|LIFT_LLM_API_KEY|LIFT_LLM_API_URL)=[^\s]+/gi,
       "$1=<redacted>",
     );
 }

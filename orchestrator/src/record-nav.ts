@@ -26,4 +26,5 @@ export function viewportToScreen(box: ViewBox, win: WindowChrome): { x: number; 
 
 export const RECORDING_TRAFFIC_N_T2 = 1000;
 export const RECORDING_TRAFFIC_N_L2 = 400;
+export const RECORDING_TRAFFIC_N_GEN2 = 240;
 export const RECORDING_EXTRA_ROUNDS = 0;

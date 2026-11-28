@@ -201,9 +201,11 @@ export interface OrchOptions {
   apply: boolean;
   approve: boolean;
   approveExperimentId: number | null;
+  resultsExperimentId: number | null;
   cleanup: boolean;
   allowRemote: boolean;
   generations: number;
+  fromGeneration: number;
   siteUrl: string;
   uiPort: number;
   trafficN: number;

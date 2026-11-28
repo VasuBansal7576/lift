@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import { parsePatchSpec } from "../../shared/patch-spec.ts";
 import {
   badContrastSpec,
+  championFocusCeilingNote,
+  championHasFocusVisibleOp,
   contrastSpec,
   focusOutlineChallenger,
   fullTreatmentSpec,
@@ -60,11 +62,57 @@ describe("mutator templates", () => {
   });
 
   it("skips LLM when no key is present", async () => {
+    const previousKey = process.env.LIFT_LLM_API_KEY;
+    const previousUrl = process.env.LIFT_LLM_API_URL;
+    const previousGroq = process.env.GROQ_API_KEY;
+    const previousGemini = process.env.GEMINI_API_KEY;
+    delete process.env.LIFT_LLM_API_KEY;
+    delete process.env.LIFT_LLM_API_URL;
+    delete process.env.GROQ_API_KEY;
+    delete process.env.GEMINI_API_KEY;
     const log = new EventLog(false);
-    const extra = await maybeLlmCandidates(axe, log);
-    expect(extra).toEqual([]);
-    expect(log.events.some((event) => /deterministic template mutator; LLM path available with a key/.test(event.message))).toBe(
-      true,
-    );
+    try {
+      const extra = await maybeLlmCandidates(axe, log);
+      expect(extra).toEqual([]);
+      expect(log.events.some((event) => /deterministic template mutator; LLM path available with a key/.test(event.message))).toBe(
+        true,
+      );
+    } finally {
+      if (previousKey === undefined) delete process.env.LIFT_LLM_API_KEY;
+      else process.env.LIFT_LLM_API_KEY = previousKey;
+      if (previousUrl === undefined) delete process.env.LIFT_LLM_API_URL;
+      else process.env.LIFT_LLM_API_URL = previousUrl;
+      if (previousGroq === undefined) delete process.env.GROQ_API_KEY;
+      else process.env.GROQ_API_KEY = previousGroq;
+      if (previousGemini === undefined) delete process.env.GEMINI_API_KEY;
+      else process.env.GEMINI_API_KEY = previousGemini;
+    }
+  });
+
+  it("requires LIFT_LLM_API_URL with LIFT_LLM_API_KEY", async () => {
+    const previousKey = process.env.LIFT_LLM_API_KEY;
+    const previousUrl = process.env.LIFT_LLM_API_URL;
+    process.env.LIFT_LLM_API_KEY = "sk-test";
+    delete process.env.LIFT_LLM_API_URL;
+    const log = new EventLog(false);
+    try {
+      const extra = await maybeLlmCandidates(axe, log);
+      expect(extra).toEqual([]);
+      expect(log.events.some((event) => /LIFT_LLM_API_URL/.test(event.message))).toBe(true);
+    } finally {
+      if (previousKey === undefined) delete process.env.LIFT_LLM_API_KEY;
+      else process.env.LIFT_LLM_API_KEY = previousKey;
+      if (previousUrl === undefined) delete process.env.LIFT_LLM_API_URL;
+      else process.env.LIFT_LLM_API_URL = previousUrl;
+    }
+  });
+
+  it("derives the gen-2 ceiling note from whether the champion already has a focus-visible op", () => {
+    const champion = fullTreatmentSpec("full-v1");
+    expect(championHasFocusVisibleOp(champion)).toBe(false);
+    expect(championFocusCeilingNote(champion)).toMatch(/UA :focus-visible on Place order/);
+    const outlined = focusOutlineChallenger(champion, "g2-focus");
+    expect(championHasFocusVisibleOp(outlined)).toBe(true);
+    expect(championFocusCeilingNote(outlined)).toMatch(/includes a focus-visible outline/);
   });
 });

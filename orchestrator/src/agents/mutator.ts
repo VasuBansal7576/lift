@@ -139,6 +139,28 @@ export function cursorChallenger(base: PatchSpec, id: string): PatchSpec {
   ]);
 }
 
+export function championHasFocusVisibleOp(champion: PatchSpec): boolean {
+  return champion.ops.some((op) => {
+    if (op.op !== "injectCSS") return false;
+    return op.rules.some((rule) => {
+      const selector = rule.selector;
+      return Boolean(
+        selector &&
+          typeof selector === "object" &&
+          "state" in selector &&
+          selector.state === "focus-visible",
+      );
+    });
+  });
+}
+
+export function championFocusCeilingNote(champion: PatchSpec): string {
+  if (championHasFocusVisibleOp(champion)) {
+    return `Champion ${champion.id} includes a focus-visible outline; gen-2 challengers must beat it on measured personas`;
+  }
+  return `Champion already at the measured ceiling: UA :focus-visible on Place order; gen-2 challengers do not change persona outcomes`;
+}
+
 function candidate(
   patch: PatchSpec,
   kind: CandidateKind,
@@ -234,6 +256,23 @@ async function groqComplete(prompt: string, key: string): Promise<string> {
   return json.choices?.[0]?.message?.content ?? "";
 }
 
+async function genericComplete(prompt: string, url: string, key: string): Promise<string> {
+  const res = await fetch(url, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${key}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: process.env.LIFT_LLM_MODEL || "gpt-4o-mini",
+      temperature: 0,
+      messages: [{ role: "user", content: prompt }],
+    }),
+  });
+  const json = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> };
+  return json.choices?.[0]?.message?.content ?? "";
+}
+
 async function geminiComplete(prompt: string, key: string): Promise<string> {
   const res = await fetch(
     `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${encodeURIComponent(key)}`,
@@ -267,9 +306,14 @@ export async function maybeLlmCandidates(
 ): Promise<CandidateSpec[]> {
   const groq = process.env.GROQ_API_KEY?.trim();
   const gemini = process.env.GEMINI_API_KEY?.trim();
-  const generic = process.env.LIFT_LLM_API_KEY?.trim();
-  if (!client && !groq && !gemini && !generic) {
-    log.emit("mutator", "info", "deterministic template mutator; LLM path available with a key");
+  const genericUrl = process.env.LIFT_LLM_API_URL?.trim();
+  const genericKey = process.env.LIFT_LLM_API_KEY?.trim();
+  if (!client && !groq && !gemini && !(genericUrl && genericKey)) {
+    if (genericKey && !genericUrl) {
+      log.emit("mutator", "info", "LIFT_LLM_API_KEY set without LIFT_LLM_API_URL; skipping generic LLM");
+    } else {
+      log.emit("mutator", "info", "deterministic template mutator; LLM path available with a key");
+    }
     return [];
   }
   const prompt = `Return JSON only: a Lift PatchSpec (id, version: 0, ops) that fixes these axe violations without using injectCSS color equal to background: ${JSON.stringify(axe.violations.map((v) => v.id))}`;
@@ -280,7 +324,7 @@ export async function maybeLlmCandidates(
         ? await groqComplete(prompt, groq)
         : gemini
           ? await geminiComplete(prompt, gemini)
-          : "";
+          : await genericComplete(prompt, genericUrl as string, genericKey as string);
     const parsed = extractSpec(text);
     if (!parsed) {
       log.emit("mutator", "warn", "LLM candidate ignored (invalid PatchSpec)");
@@ -305,12 +349,8 @@ export async function runMutator(
     "start",
     `deterministic template mutator; LLM path available with a key (generation ${generation})`,
   );
-  if (generation >= 2) {
-    log.emit(
-      "mutator",
-      "info",
-      "Champion already at the measured ceiling: UA :focus-visible on Place order; gen-2 challengers do not change persona outcomes",
-    );
+  if (generation >= 2 && opts?.champion) {
+    log.emit("mutator", "info", championFocusCeilingNote(opts.champion));
   }
   const templates = templatesFromViolations(axe, generation, opts?.champion);
   const llm = generation === 1 ? await maybeLlmCandidates(axe, log) : [];

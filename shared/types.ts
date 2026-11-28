@@ -21,6 +21,7 @@ export const BARRIER_IDS = [
   "hover_menu",
   "unlabeled_icon",
   "div_button",
+  "focus_visible",
   "missing_labels",
   "unlabeled_terms",
   "low_contrast",

@@ -82,7 +82,7 @@ export function formatGen2Inconclusive(rec: AnalystRecommendation, visits: numbe
   const chance =
     rec.kind === "winner" ? rec.chanceToWin : rec.kind === "keep_collecting" ? rec.chanceToWin : undefined;
   const x = chance == null ? "n/a" : chance.toFixed(3);
-  return `Gen-2 inconclusive (chance_to_win ${x} < 0.95 after ${visits} visits); champion stays`;
+  return `Gen-2 inconclusive (chance_to_win ${x} < ${rec.threshold.toFixed(2)} after ${visits} visits); champion stays`;
 }
 
 export function runAnalyst(

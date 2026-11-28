@@ -15,6 +15,8 @@ import {
   appliedVariantMatches,
   applySharedKeep,
   cookieMatchesIdentity,
+  personaConvertsOnSurface,
+  type PersonaSurface,
 } from "../traffic-guard.ts";
 import type { FlagSetup, GateResult, OrchOptions, TrafficVisit } from "../types.ts";
 
@@ -38,6 +40,8 @@ export interface TrafficAgentDeps {
   runPersona?: typeof runPersona;
   gotoSite?: typeof gotoSite;
   waitForAppliedVariant?: (page: Page, expected: string) => Promise<string>;
+  /** Surface-driven stub: skip the live persona and convert from the served surface. */
+  surfaceForVariant?: (variant: string) => PersonaSurface;
 }
 
 export function variantKeyFromFlag(flag: {
@@ -105,12 +109,12 @@ async function mapPool(count: number, limit: number, fn: (index: number) => Prom
   await Promise.all(Array.from({ length: n }, () => worker()));
 }
 
-function timeoutRateByArm(visits: TrafficVisit[]): Map<string, { n: number; timeouts: number }> {
-  const byArm = new Map<string, { n: number; timeouts: number }>();
+function failureRateByArm(visits: TrafficVisit[]): Map<string, { n: number; failures: number }> {
+  const byArm = new Map<string, { n: number; failures: number }>();
   for (const visit of visits) {
-    const row = byArm.get(visit.variant) ?? { n: 0, timeouts: 0 };
+    const row = byArm.get(visit.variant) ?? { n: 0, failures: 0 };
     row.n += 1;
-    if (/timed out/i.test(visit.reason)) row.timeouts += 1;
+    if (/timed out/i.test(visit.reason) || /persona failed/i.test(visit.reason)) row.failures += 1;
     byArm.set(visit.variant, row);
   }
   return byArm;
@@ -211,20 +215,34 @@ export async function runTrafficAgent(
 
         let attempt: AttemptResult;
         try {
-          attempt = await Promise.race([
-            runPersonaImpl(page, persona),
-            new Promise<AttemptResult>((resolve) => {
-              setTimeout(
-                () =>
-                  resolve({
-                    converted: false,
-                    blockedBy: [],
-                    reason: `persona timed out after ${PERSONA_BUDGET_MS}ms`,
-                  }),
-                PERSONA_BUDGET_MS,
-              );
-            }),
-          ]);
+          if (deps.surfaceForVariant) {
+            const ok = personaConvertsOnSurface(persona, deps.surfaceForVariant(variant));
+            attempt = {
+              converted: ok,
+              blockedBy: ok ? [] : [],
+              reason: ok ? "surface stub converted" : "surface stub blocked",
+            };
+          } else {
+            let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+            try {
+              attempt = await Promise.race([
+                runPersonaImpl(page, persona),
+                new Promise<AttemptResult>((resolve) => {
+                  timeoutHandle = setTimeout(
+                    () =>
+                      resolve({
+                        converted: false,
+                        blockedBy: [],
+                        reason: `persona timed out after ${PERSONA_BUDGET_MS}ms`,
+                      }),
+                    PERSONA_BUDGET_MS,
+                  );
+                }),
+              ]);
+            } finally {
+              if (timeoutHandle) clearTimeout(timeoutHandle);
+            }
+          }
         } catch (err) {
           attempt = {
             converted: false,
@@ -267,18 +285,18 @@ export async function runTrafficAgent(
     await flagsmith.close(5000);
   }
 
-  const timeoutRows = timeoutRateByArm(visits);
-  for (const [arm, row] of timeoutRows) {
-    const rate = row.n === 0 ? 0 : row.timeouts / row.n;
+  const failureRows = failureRateByArm(visits);
+  for (const [arm, row] of failureRows) {
+    const rate = row.n === 0 ? 0 : row.failures / row.n;
     log.emit(
       "traffic",
       rate > PERSONA_TIMEOUT_ABORT_RATE ? "warn" : "info",
-      `persona timeouts arm=${arm} ${row.timeouts}/${row.n} (${(rate * 100).toFixed(1)}%)`,
-      { arm, timeouts: row.timeouts, n: row.n, rate },
+      `persona timeouts/failures arm=${arm} ${row.failures}/${row.n} (${(rate * 100).toFixed(1)}%)`,
+      { arm, failures: row.failures, n: row.n, rate },
     );
     if (rate > PERSONA_TIMEOUT_ABORT_RATE) {
       throw new TrafficAbortError(
-        `persona timeout rate ${(rate * 100).toFixed(1)}% on ${arm} exceeds ${PERSONA_TIMEOUT_ABORT_RATE * 100}%`,
+        `persona timeout/failure rate ${(rate * 100).toFixed(1)}% on ${arm} exceeds ${PERSONA_TIMEOUT_ABORT_RATE * 100}%`,
       );
     }
   }

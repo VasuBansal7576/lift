@@ -2079,13 +2079,15 @@ async function waitSkillRunLogContains(
 
 async function revealResultsCards(page: Page): Promise<void> {
   const groups = [
-    /enrolled|participants|sample size|unique users|identities/i,
+    /enrolled|participants|sample size|unique users|identities|users/i,
     /chance to (win|beat)|p\(best\)|probability/i,
     /uplift|improvement|conversion rate/i,
   ];
-  const results = page.getByText("Results", { exact: true }).first();
-  await results.waitFor({ state: "visible", timeout: 10_000 });
-  for (let i = 0; i < 16; i += 1) {
+  await page.getByText("Results", { exact: true }).first().waitFor({ state: "visible", timeout: 10_000 });
+  const pagePoint = await viewportToScreen(page, 960, 520);
+  await glidePointerTo(pagePoint.x, pagePoint.y);
+  await sleep(550);
+  for (let i = 0; i < 20; i += 1) {
     const inner = await page.evaluate(() => ({ w: window.innerWidth, h: window.innerHeight }));
     let allIn = true;
     for (const needle of groups) {
@@ -2097,9 +2099,13 @@ async function revealResultsCards(page: Page): Promise<void> {
       }
     }
     if (allIn) return;
-    await pointerWheel(page, results, 3);
+    for (let w = 0; w < 4; w += 1) {
+      await sh("xdotool", ["click", "5"]);
+      await sleep(80);
+    }
+    await sleep(200);
   }
-  const visible = ((await page.evaluate(() => document.body.innerText ?? "")) ?? "").replace(/\s+/g, " ").slice(0, 400);
+  const visible = ((await page.evaluate(() => document.body.innerText ?? "")) ?? "").replace(/\s+/g, " ").slice(-800);
   throw new Error(
     redactSecrets(`Results cards (enrolled, chance to win, uplift) were not fully in view (${visible})`),
   );

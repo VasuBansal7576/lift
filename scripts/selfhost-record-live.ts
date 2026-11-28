@@ -2079,9 +2079,9 @@ async function waitSkillRunLogContains(
 
 async function revealResultsCards(page: Page): Promise<void> {
   const groups = [
-    /enrolled|participants|sample size|unique users|identities|users/i,
-    /chance to (win|beat)|p\(best\)|probability/i,
-    /uplift|improvement|conversion rate/i,
+    /users enrolled|enrolled/i,
+    /chance to be best|chance to (win|beat)|win probability/i,
+    /lift vs control|uplift|improvement/i,
   ];
   await page.getByText("Results", { exact: true }).first().waitFor({ state: "visible", timeout: 10_000 });
   const pagePoint = await viewportToScreen(page, 960, 520);

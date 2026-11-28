@@ -126,6 +126,10 @@ Eight fixture sites (checkout, signup, pricing, newsletter, donate, booking, log
 - Completing from local math requires `LIFT_ALLOW_LOCAL_DECISION=true` and is labelled everywhere.
 - Abandoned experiment IDs are 615, 617, 620, 622, 623, and the unused IDs in 626–651: 626, 627, 628, 629, 630, 631, 633, 634, 636, 638, 639, 641, 643, 645, 646, 648, 649 and 650. The cause of those gaps is unknown. Current dashboard experiments in that range are 632, 635, 637, 640, 642, 644, 647 and 651. Superseded experiment IDs are 586, 593, 605, 613, 614, 616, 618, 619, 621, 624 and 625.
 
+## Layer 3 (Cognitive Overload Balancer)
+
+On-device stress scoring writes one identity trait, `overstimulated` (not `is_sensory_safe`). Flagsmith segment `sensory_safe` uses the rule **overstimulated Exactly Matches true** and enables flag `l3_sensory_safe`. See [docs/l3.md](docs/l3.md). Bootstrap is idempotent: it updates that segment in place and does not create duplicates.
+
 ## Credit
 
 Lift’s barrier catalogue and persona idea follow [curbcut](https://github.com/VasuBansal7576/curbcut), which repairs accessibility barriers on live sites from the outside and proves them with Kane CLI. Lift is the Flagsmith-experiment half of that story: the same class of WCAG fixes, shipped as flags and tested on conversions.

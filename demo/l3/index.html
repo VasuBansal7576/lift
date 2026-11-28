@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Northline Flash Sale — Lift L3 Cognitive Overload Balancer</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body data-site="l3">
+  <p class="sim-banner" role="note">Stress input simulated for the demo (slider and scripted pointer). Only the boolean trait overstimulated is sent to Flagsmith.</p>
+  <p id="lift-l3-offline" class="offline-banner" hidden>
+    Flagsmith unreachable. Staying in the normal flag-off state. Sensory-Safe was not applied locally.
+  </p>
+
+  <div class="promo" data-lift-promo>
+    FLASH SALE 50% OFF — ONLY 00:07 LEFT — BUY BUY BUY
+    <span>Sticky promo banner</span>
+    <button type="button" id="promo-focus">Promo offer</button>
+  </div>
+
+  <header class="masthead">
+    <a class="wordmark" href="./">Northline Market</a>
+    <button type="button" class="checkout-btn" id="checkout" data-lift-essential>Checkout</button>
+    <button type="button" id="lift-l3-opt-out" hidden>Exit Sensory-Safe</button>
+    <button type="button" id="lift-l3-opt-in" hidden>Allow calmer view again</button>
+  </header>
+
+  <div class="flash-bar" aria-hidden="true">
+    <span class="marquee">LIMITED DROP · NEON JACKET · ADD TO CART · LIMITED DROP · NEON JACKET · ADD TO CART · </span>
+  </div>
+
+  <section class="hero" aria-label="Autoplaying campaign hero">
+    <div class="hero-fallback" data-lift-carousel></div>
+    <video id="hero-video" autoplay muted loop playsinline poster="">
+      <source src="./hero.webm" type="video/webm">
+    </video>
+    <h1>Weekend drop. Everything is moving. Everything is loud.</h1>
+  </section>
+
+  <div class="layout">
+    <main tabindex="-1">
+      <div class="carousel" data-lift-carousel id="deal-carousel" aria-label="Rotating deals">
+        <div class="carousel-track" id="carousel-track">
+          <p>DEAL 1 — 80% OFF IF YOU CLICK NOW</p>
+          <p>DEAL 2 — FREE SHIPPING FOR 12 SECONDS</p>
+          <p>DEAL 3 — YOUR CART IS ABOUT TO EXPIRE</p>
+        </div>
+      </div>
+
+      <section class="biometric">
+        <label for="lift-biometric">
+          Simulated heart-rate / wearable stress (demo only — not a real biometric)
+          <input id="lift-biometric" type="range" min="0" max="100" value="18" aria-describedby="bio-hint">
+        </label>
+        <p id="bio-hint" class="hint">
+          This slider stands in for a wearable. It is labelled simulated on purpose. Raw values stay in the page; Flagsmith only ever receives the boolean trait <code>overstimulated</code>.
+        </p>
+      </section>
+
+      <article class="long-copy" data-lift-long>
+        <p class="lift-summary" data-lift-summary hidden>
+          Plain-language summary: this page is a loud flash-sale fixture. Sensory-Safe pauses motion, hides marketing banners, and keeps checkout usable. No new offer is being made.
+        </p>
+        <div class="dense">
+          <h2>Dense campaign copy</h2>
+          <p>
+            Northline’s ridge canvas jacket is waxed cotton with taped seams, a two-way zip, and a hood that actually stays up in sideways rain. The flash-sale overlay, the countdown, the rotating deals, and the autoplaying hero are here to overload the page on purpose. Lift’s Layer 3 watches only on-device signals: erratic mouse jitter (path length over displacement plus direction-change rate), rage clicks (three or more clicks in 700 ms inside a 30 px radius), rapid scroll reversals, and the simulated biometric slider. Those samples are scored in a 5 second window with weights 0.30 / 0.25 / 0.25 / 0.20 and then forgotten.
+          </p>
+          <p>
+            When the combined score stays at or above 0.62 for 1.5 seconds, the runtime calls Flagsmith’s JS SDK <code>setTrait('overstimulated', true)</code> on the sticky <code>lift_vid</code> identity. Flagsmith evaluates the <code>sensory_safe</code> segment rule <code>overstimulated == true</code> and serves the <code>l3_sensory_safe</code> flag. The page reads that flag. It does not apply the mode from a local <code>if (score)</code>. Returning to calm requires the score to stay below 0.38 for 8 seconds, plus a cooldown, and the restore fades over about 2 seconds.
+          </p>
+          <p>
+            Returning visitors keep the same identity via the <code>lift_vid</code> cookie or a <code>?lift_identity=lift-&lt;uuid&gt;</code> value. Checkout is marked <code>data-lift-essential</code> so Sensory-Safe never hides it, never strips focus, and never changes its role or accessible name. Only <code>data-lift-promo</code> and <code>data-lift-marketing</code> hide. Cookie consent, errors, and legal copy stay visible. Press Escape or “Exit Sensory-Safe” to opt out.
+          </p>
+        </div>
+      </article>
+
+      <article class="long-copy" data-lift-long>
+        <p class="lift-summary" data-lift-summary hidden>
+          Returns and shipping: 30-day returns, tracked shipping, no extra marketing step at checkout.
+        </p>
+        <div class="dense">
+          <h2>Returns, shipping, and small print</h2>
+          <p>
+            Orders placed during a simulated flash sale still ship with the same 30-day return window as a normal Northline order. Waxed cotton should be wiped, not machine washed. Taped seams are not a warranty against sitting in a river. Tracking numbers are emailed. None of this copy is a real offer; it exists so the summary above has something long to replace when Sensory-Safe is on.
+          </p>
+          <p>
+            Additional filler keeps the column dense: sizing runs regular; the field-tan colour reads darker when wet; replacement snaps can be posted; gift receipts omit prices; warehouse processing is two working days; rural addresses add a day; duties are the buyer’s when the destination is outside the demo’s imaginary country; the carousel will keep spinning until Flagsmith says otherwise.
+          </p>
+        </div>
+      </article>
+    </main>
+
+    <aside>
+      <h2>Why this page is busy</h2>
+      <p>Autoplay, a stepping carousel, a sticky promo, a cookie sheet, and a marketing popup. Sensory-Safe should pause, hide, and summarise without touching checkout.</p>
+      <ol>
+        <li>Move the cursor in jagged loops</li>
+        <li>Rage-click the hero</li>
+        <li>Thrash the scroll wheel</li>
+        <li>Raise the simulated biometric slider</li>
+      </ol>
+    </aside>
+  </div>
+
+  <p class="confirm" id="order-confirm" role="status">Order confirmed. The jacket is on its way. (Demo only.)</p>
+  <p class="error-surface" data-lift-error role="alert">Card declined. This error surface must stay visible in Sensory-Safe.</p>
+  <p class="legal-surface" data-lift-legal>Legal: demo terms, returns, and privacy. Not a marketing banner.</p>
+  <video id="user-video" controls muted playsinline width="240">
+    <source src="./hero.webm" type="video/webm">
+  </video>
+  <button type="button" id="play-user-video">Play clip</button>
+
+  <div class="cookie" data-lift-cookie>
+    <p>We use cookies to retarget this flash sale across the entire internet. Accept to keep shopping.</p>
+    <button type="button" id="accept-cookies">Accept cookies</button>
+  </div>
+
+  <div class="popup" data-lift-marketing>
+    Wait! 10% more off if you subscribe before the carousel stops.
+  </div>
+
+  <div id="lift-l3-hud" aria-hidden="true"></div>
+  <div id="lift-l3-live" class="lift-visually-hidden" aria-live="polite"></div>
+
+  <script type="module" src="/runtime/l3-balancer.js"></script>
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

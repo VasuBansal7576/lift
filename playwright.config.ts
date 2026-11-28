@@ -12,10 +12,35 @@ export default defineConfig({
     baseURL: origin,
     headless: true,
   },
-  webServer: {
-    command: `npx tsx scripts/serve-site.ts --port ${port} --allow-mock`,
-    url: origin,
-    reuseExistingServer: !process.env.CI,
-    timeout: 30_000,
-  },
+  projects: [
+    {
+      name: "site",
+      testIgnore: /l3-balancer/,
+      use: { baseURL: origin },
+    },
+    {
+      name: "l3-live",
+      testMatch: /l3-balancer/,
+      use: { baseURL: "http://127.0.0.1:4176" },
+    },
+    {
+      name: "l3-stub",
+      testMatch: /l3-balancer/,
+      use: { baseURL: "http://127.0.0.1:4176" },
+    },
+  ],
+  webServer: [
+    {
+      command: `npx tsx scripts/serve-site.ts --port ${port} --allow-mock`,
+      url: origin,
+      reuseExistingServer: !process.env.CI,
+      timeout: 30_000,
+    },
+    {
+      command: "npx tsx scripts/serve-l3.ts --port 4176",
+      url: "http://127.0.0.1:4176",
+      reuseExistingServer: false,
+      timeout: 30_000,
+    },
+  ],
 });

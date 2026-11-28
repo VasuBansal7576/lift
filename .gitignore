@@ -11,6 +11,7 @@ data/*.jsonl
 data/*.json
 !data/.gitkeep
 sites/*/config.json
+demo/l3/config.json
 orchestrator/data/*.json
 orchestrator/data/*.jsonl
 orchestrator/data/specs/*.json

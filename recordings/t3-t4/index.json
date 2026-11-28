@@ -1,0 +1,9 @@
+{
+  "ok": true,
+  "clips": {
+    "t3-selfhost-up": "recordings/t3-t4/t3-selfhost-up.mp4",
+    "t3-site-reads-selfhosted-flag": "recordings/t3-t4/t3-site-reads-selfhosted-flag.mp4",
+    "t3-dashboard": "recordings/t3-t4/t3-dashboard.mp4",
+    "t4-skill-run": "recordings/t3-t4/t4-skill-run.mp4"
+  }
+}

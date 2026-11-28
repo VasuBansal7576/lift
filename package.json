@@ -28,6 +28,9 @@
     "l3:bootstrap": "tsx scripts/l3-bootstrap.ts",
     "l3:demo": "tsx scripts/serve-l3.ts",
     "l3:record": "tsx scripts/l3-record.ts",
+    "edge:dev": "wrangler dev --config edge/wrangler.toml --persist-to edge/.wrangler/state",
+    "edge:put-spec": "tsx edge/put-spec.ts",
+    "edge:record": "node edge/record/live.mjs",
     "orch": "tsx orchestrator/src/cli.ts",
     "orch:approve": "tsx orchestrator/src/cli.ts --approve",
     "orch:selfhost": "bash orchestrator/scripts/flagsmith-selfhost.sh"
@@ -47,6 +50,7 @@
     "ajv": "^8.20.0",
     "tsx": "^4.19.3",
     "typescript": "^5.8.2",
-    "vitest": "^5.1.2"
+    "vitest": "^5.1.2",
+    "wrangler": "^4.50.0"
   }
 }

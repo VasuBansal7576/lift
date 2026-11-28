@@ -1,0 +1,30 @@
+name = "lift-edge"
+main = "../../edge/worker.js"
+compatibility_date = "2025-11-27"
+workers_dev = false
+
+# Isolated from edge/.dev.vars. Wrangler loads tests/e2e/.dev.vars next to this
+# config (gitignored). ORIGIN is the --edge-origin site on 4175.
+
+[dev]
+ip = "127.0.0.1"
+port = 8787
+local_protocol = "http"
+
+[vars]
+ORIGIN = "http://127.0.0.1:4175"
+FLAGSMITH_API_URL = "http://127.0.0.1:18787/api/v1/"
+FLAGSMITH_FLAG_NAME = "lift_edge_spec"
+FLAGSMITH_SDK_URL = "https://cdn.jsdelivr.net/npm/@flagsmith/flagsmith@12.4.0/+esm"
+FLAGSMITH_EVAL_TIMEOUT_MS = "300"
+
+[[kv_namespaces]]
+binding = "SPECS"
+id = "00000000000000000000000000000001"
+
+[assets]
+directory = "../../edge/runtime-assets"
+binding = "ASSETS"
+run_worker_first = true
+html_handling = "none"
+not_found_handling = "none"

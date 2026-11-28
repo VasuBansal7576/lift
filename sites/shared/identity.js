@@ -72,6 +72,7 @@ export function readCookieIdentity(header) {
 export function cookieWriteValue(id, secure) {
   // Path=/ is host-wide. On a GitHub Pages host (*.github.io) that is one cookie
   // for every project site on the same user/org domain — fine for the demo.
+  // Not HttpOnly: the page (and the Flagsmith JS SDK) must be able to read lift_vid.
   const base = `${IDENTITY_COOKIE}=${encodeURIComponent(id)}; Path=/; Max-Age=${IDENTITY_MAX_AGE_SEC}; SameSite=Lax`;
   return secure ? `${base}; Secure` : base;
 }

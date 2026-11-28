@@ -1632,25 +1632,10 @@ async function recordT3Up(): Promise<void> {
       throw new Error("proof-up command was not received by the terminal");
     }
     const deadline = Date.now() + 360_000;
-    const wallpaper = [
-      { x: 1400, y: 420 },
-      { x: 1680, y: 640 },
-      { x: 1520, y: 880 },
-      { x: 1740, y: 520 },
-    ];
-    let wallpaperAt = 0;
-    let lastGlide = 0;
     while (Date.now() < deadline) {
       await abortIfServerKeyLeaked();
       if (existsSync("/tmp/lift-proof-up.done")) break;
-      if (Date.now() - lastGlide > 2800) {
-        const dest = wallpaper[wallpaperAt % wallpaper.length];
-        wallpaperAt += 1;
-        await glidePointerTo(dest.x, dest.y);
-        lastGlide = Date.now();
-      } else {
-        await sleep(350);
-      }
+      await sleep(350);
     }
     if (!existsSync("/tmp/lift-proof-up.done")) throw new Error("proof compose up did not finish");
     await abortIfServerKeyLeaked();

@@ -66,7 +66,12 @@ poll() {
     local filled=$((i % 28 + 4))
     local bar
     bar=$(printf '%*s' "$filled" | tr ' ' '#')$(printf '%*s' $((32 - filled)) | tr ' ' '.')
-    printf '\r\033[2K%s' "health-poll ${i} HTTP ${http_code} ${bar}"
+    local msg="health-poll ${i} HTTP ${http_code} ${bar}"
+    if (( i % 2 == 0 )); then
+      printf '\r\033[2K\033[7m%s\033[0m' "$msg"
+    else
+      printf '\r\033[2K%s' "$msg"
+    fi
     if [ "$http_code" = "200" ]; then
       printf '\n'
       echo "body: $(tr -d '\n' </tmp/lift-proof-health.body)"
@@ -86,13 +91,13 @@ poll() {
 
 "${COMPOSE[@]}" down -v --remove-orphans || true
 
-progress_line() {
+scroll_line() {
   local label="$1"
   local i="$2"
   local filled=$((i % 28 + 4))
   local bar
   bar=$(printf '%*s' "$filled" | tr ' ' '#')$(printf '%*s' $((32 - filled)) | tr ' ' '.')
-  printf '\r\033[2K%s' "${label} ${i} ${bar}"
+  printf '%s %s %s\n' "$label" "$i" "$bar"
 }
 
 tick() {
@@ -100,7 +105,7 @@ tick() {
   local i=0
   while true; do
     i=$((i + 1))
-    progress_line "$label" "$i"
+    scroll_line "$label" "$i"
     sleep 1
   done
 }
@@ -113,8 +118,7 @@ run_up() {
   "${COMPOSE[@]}" up -d --quiet-pull "$@"
   kill "$tick_pid" 2>/dev/null || true
   wait "$tick_pid" 2>/dev/null || true
-  progress_line "${label} done" 1
-  printf '\n'
+  scroll_line "${label} done" 1
 }
 
 run_up "postgres up" postgres
@@ -124,11 +128,10 @@ migrate_wait=0
 for _ in $(seq 1 120); do
   migrate_wait=$((migrate_wait + 1))
   status=$(docker inspect -f '{{.State.Status}}' "$migrate_name" 2>/dev/null || echo missing)
-  progress_line "migrate-db wait ${status}" "$migrate_wait"
+  scroll_line "migrate-db wait ${status}" "$migrate_wait"
   if [[ "$status" == "exited" ]]; then
     code=$(docker inspect -f '{{.State.ExitCode}}' "$migrate_name" 2>/dev/null || echo 1)
     if [[ "$code" != "0" ]]; then
-      printf '\n'
       echo "migrate-db exited ${code}" >&2
       exit 1
     fi
@@ -139,7 +142,6 @@ for _ in $(seq 1 120); do
   fi
   sleep 1
 done
-printf '\n'
 run_up "flagsmith up"
 
 poll

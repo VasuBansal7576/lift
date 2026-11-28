@@ -80,6 +80,24 @@ describe("W2 FLAGSMITH_HTTP_PORT wiring", () => {
     expect(yml).toContain("localhost:${FLAGSMITH_HTTP_PORT:-8010}");
   });
 
+  it("health-poll in-place line stays under 72 columns", () => {
+    const out = spawnSync(
+      "bash",
+      [
+        "-c",
+        `filled=$((37 % 28 + 4)); bar=$(printf '%*s' "$filled" | tr ' ' '#')$(printf '%*s' $((32 - filled)) | tr ' ' '.'); printf '\\r\\033[2K%s' "health-poll 37 HTTP 000 \${bar}"`,
+      ],
+      { encoding: "utf8" },
+    );
+    const visible = out.stdout.replace(/\r|\x1b\[[0-9]*K/g, "");
+    expect(visible.length).toBeLessThan(72);
+    expect(visible).toMatch(/^health-poll 37 HTTP 000 /);
+    expect(visible).not.toMatch(/\n/);
+    const src = readFileSync(PROOF_UP, "utf8");
+    expect(src).toContain("\\r\\033[2K");
+    expect(src).not.toContain("%-80s");
+  });
+
   it("cold-starts by down -v before up when run on its own", () => {
     const out = spawnSync("bash", [PROOF_UP], {
       env: {

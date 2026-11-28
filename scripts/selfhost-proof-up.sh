@@ -2,13 +2,13 @@
 # Cold-start a SEPARATE Flagsmith compose project for the T3 recording.
 # Never stops or downs the shared lift-selfhost stack on 127.0.0.1:8000.
 set -euo pipefail
-if [[ -z "${LIFT_STDBUF:-}" && ! -t 1 ]]; then
+if [[ -z "${LIFT_STDBUF:-}" ]]; then
   export LIFT_STDBUF=1
-  exec stdbuf -oL -eL bash "$0" "$@"
+  exec stdbuf -o0 -e0 bash "$0" "$@"
 fi
 if [[ -z "${LIFT_PROOF_UP_TEE:-}" ]]; then
   export LIFT_PROOF_UP_TEE=1
-  exec > >(tee /tmp/lift-proof-up.log)
+  exec > >(stdbuf -o0 tee /tmp/lift-proof-up.log)
   exec 2>&1
 fi
 cd "$(dirname "$0")/.."
@@ -66,7 +66,7 @@ poll() {
     local filled=$((i % 28 + 4))
     local bar
     bar=$(printf '%*s' "$filled" | tr ' ' '#')$(printf '%*s' $((32 - filled)) | tr ' ' '.')
-    printf '\r\033[K%-80s' "health-poll ${i} HTTP ${http_code} ${bar}"
+    printf '\r\033[2K%s' "health-poll ${i} HTTP ${http_code} ${bar}"
     if [ "$http_code" = "200" ]; then
       printf '\n'
       echo "body: $(tr -d '\n' </tmp/lift-proof-health.body)"
@@ -92,7 +92,7 @@ progress_line() {
   local filled=$((i % 28 + 4))
   local bar
   bar=$(printf '%*s' "$filled" | tr ' ' '#')$(printf '%*s' $((32 - filled)) | tr ' ' '.')
-  printf '\r\033[K%-80s' "${label} ${i} ${bar}"
+  printf '\r\033[2K%s' "${label} ${i} ${bar}"
 }
 
 tick() {
@@ -114,6 +114,7 @@ run_up() {
   kill "$tick_pid" 2>/dev/null || true
   wait "$tick_pid" 2>/dev/null || true
   progress_line "${label} done" 1
+  printf '\n'
 }
 
 run_up "postgres up" postgres
@@ -138,6 +139,7 @@ for _ in $(seq 1 120); do
   fi
   sleep 1
 done
+printf '\n'
 run_up "flagsmith up"
 
 poll

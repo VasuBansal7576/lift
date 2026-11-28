@@ -111,9 +111,34 @@ export function collectDomSecretScanText(doc: SecretScanRoot): string {
   return parts.join("\n");
 }
 
-/** Zero-arg page.evaluate entry; uses the document in the page context. */
+/** Zero-arg page.evaluate entry; must be self-contained for Playwright. */
 export function scanPageSecrets(): string {
-  return collectDomSecretScanText(globalThis.document as unknown as SecretScanRoot);
+  const parts: string[] = [];
+  const walk = (root: Document | ShadowRoot): void => {
+    const body = "body" in root ? root.body : null;
+    parts.push(body?.innerText ?? "", ("documentElement" in root ? root.documentElement?.textContent : root.textContent) ?? "");
+    for (const node of Array.from(root.querySelectorAll("*"))) {
+      const tag = node.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") {
+        parts.push((node as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement).value ?? "");
+      }
+      for (const attr of Array.from(node.attributes)) parts.push(attr.value);
+      if (node.shadowRoot) {
+        parts.push(node.shadowRoot.textContent ?? "");
+        walk(node.shadowRoot);
+      }
+    }
+    for (const iframe of Array.from(root.querySelectorAll("iframe"))) {
+      try {
+        const nested = iframe.contentDocument;
+        if (nested) walk(nested);
+      } catch {
+        /* cross-origin */
+      }
+    }
+  };
+  walk(document);
+  return parts.join("\n");
 }
 
 /** Paths under dir whose contents are scanned during a live capture. */

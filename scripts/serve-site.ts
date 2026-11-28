@@ -3,6 +3,9 @@ import { readFile } from "node:fs/promises";
 import { extname, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { getSite, placeholderSiteConfig } from "../shared/catalog.ts";
+import { parseIncomingUrl } from "../shared/request-url.ts";
+import { resolveRuntimePath } from "../shared/runtime-static.ts";
+import { resolveVendorPath } from "../shared/vendor-static.ts";
 
 const rootDir = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const dashboard = process.argv.includes("--dashboard");
@@ -25,8 +28,12 @@ const MIME: Record<string, string> = {
   ".svg": "image/svg+xml",
 };
 
-function overlayAllowMock(parsed: Record<string, unknown>): string {
-  return JSON.stringify({ ...parsed, allowMock: true });
+function overlaySiteConfig(parsed: Record<string, unknown>): string {
+  const extra: Record<string, unknown> = {};
+  if (allowMock) extra.allowMock = true;
+  if (process.env.LIFT_ALLOW_BOT_OVERRIDE === "true") extra.allowBotOverride = true;
+  if (process.env.LIFT_DISABLE_AUTOFILL === "true") extra.disableAutofill = true;
+  return JSON.stringify({ ...parsed, ...extra });
 }
 
 function placeholderFor(relative: string): Record<string, unknown> {
@@ -40,39 +47,82 @@ function placeholderFor(relative: string): Record<string, unknown> {
 }
 
 const server = createServer(async (req, res) => {
-  const url = new URL(req.url ?? "/", `http://127.0.0.1:${port}`);
-  if (!dashboard && url.pathname === "/") {
-    res.writeHead(302, { Location: `/checkout/${url.search}` });
-    res.end();
-    return;
-  }
-  let relative = url.pathname === "/" ? "index.html" : url.pathname.slice(1);
-  if (relative.endsWith("/")) relative += "index.html";
-  const filePath = resolve(siteRoot, relative);
-  if (!isInsideRoot(siteRoot, filePath)) {
-    res.writeHead(403);
-    res.end("forbidden");
-    return;
-  }
-  if (!dashboard && allowMock && relative.endsWith("config.json")) {
-    let parsed: Record<string, unknown> = {};
-    try {
-      parsed = JSON.parse(await readFile(filePath, "utf8")) as Record<string, unknown>;
-    } catch {
-      parsed = placeholderFor(relative);
-    }
-    const body = overlayAllowMock(parsed);
-    res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
-    res.end(body);
-    return;
-  }
   try {
-    const body = await readFile(filePath);
-    res.writeHead(200, { "Content-Type": MIME[extname(filePath)] ?? "application/octet-stream" });
-    res.end(body);
+    const url = parseIncomingUrl(req.url, `http://127.0.0.1:${port}`);
+    if (!url) {
+      res.writeHead(400);
+      res.end("bad request");
+      return;
+    }
+    let runtimePath: string | null = null;
+    try {
+      runtimePath = resolveRuntimePath(url.pathname, rootDir);
+    } catch {
+      runtimePath = null;
+    }
+    if (runtimePath) {
+      try {
+        const body = await readFile(runtimePath);
+        res.writeHead(200, { "Content-Type": MIME[extname(runtimePath)] ?? "application/octet-stream" });
+        res.end(body);
+      } catch {
+        res.writeHead(404);
+        res.end("not found");
+      }
+      return;
+    }
+    const vendorPath = resolveVendorPath(url.pathname);
+    if (vendorPath) {
+      try {
+        const body = await readFile(vendorPath);
+        res.writeHead(200, { "Content-Type": MIME[extname(vendorPath)] ?? "application/octet-stream" });
+        res.end(body);
+      } catch {
+        res.writeHead(404);
+        res.end("not found");
+      }
+      return;
+    }
+    if (!dashboard && url.pathname === "/") {
+      res.writeHead(302, { Location: `/checkout/${url.search}` });
+      res.end();
+      return;
+    }
+    let relative = url.pathname === "/" ? "index.html" : url.pathname.slice(1);
+    if (relative.endsWith("/")) relative += "index.html";
+    const filePath = resolve(siteRoot, relative);
+    if (!isInsideRoot(siteRoot, filePath)) {
+      res.writeHead(403);
+      res.end("forbidden");
+      return;
+    }
+    if (!dashboard && relative.endsWith("config.json")) {
+      let parsed: Record<string, unknown> | null = null;
+      try {
+        parsed = JSON.parse(await readFile(filePath, "utf8")) as Record<string, unknown>;
+      } catch {
+        if (allowMock) parsed = placeholderFor(relative);
+      }
+      if (parsed) {
+        const body = overlaySiteConfig(parsed);
+        res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
+        res.end(body);
+        return;
+      }
+    }
+    try {
+      const body = await readFile(filePath);
+      res.writeHead(200, { "Content-Type": MIME[extname(filePath)] ?? "application/octet-stream" });
+      res.end(body);
+    } catch {
+      res.writeHead(404);
+      res.end("not found");
+    }
   } catch {
-    res.writeHead(404);
-    res.end("not found");
+    if (!res.headersSent) {
+      res.writeHead(500);
+      res.end("error");
+    }
   }
 });
 

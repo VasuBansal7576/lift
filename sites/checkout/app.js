@@ -1,3 +1,5 @@
+import { browserIdentityEnv, resolveVisitorId } from "../shared/identity.js";
+
 const FLAG_NAME = "checkout_a11y";
 const SDK_URL = "https://cdn.jsdelivr.net/npm/@flagsmith/flagsmith@12.4.0/+esm";
 
@@ -42,6 +44,16 @@ function allFixes(on) {
     unlabeled_terms: on,
     low_contrast: on,
   };
+}
+
+function applyDisableAutofill(config) {
+  if (config?.disableAutofill !== true) return;
+  const form = document.getElementById("checkout-form");
+  if (!form) return;
+  form.setAttribute("autocomplete", "off");
+  for (const el of form.querySelectorAll("input, select, textarea")) {
+    el.setAttribute("autocomplete", "off");
+  }
 }
 
 function applyFixes(fixes, sourceLabel) {
@@ -195,13 +207,10 @@ function fixesFromFlagsmith(flagsmith, bundledVariant) {
   return fixes;
 }
 
-async function initFromFlagsmith(config) {
+async function initFromFlagsmith(config, identity) {
   if (!config?.flagsmithEnvironmentKey) {
     throw new Error("Missing FLAGSMITH_ENVIRONMENT_KEY");
   }
-  const identity =
-    params().get("lift_identity") ||
-    crypto.randomUUID();
   const { default: flagsmith } = await import(SDK_URL);
   await flagsmith.init({
     environmentID: config.flagsmithEnvironmentKey,
@@ -240,13 +249,17 @@ async function initFromFlagsmith(config) {
 async function main() {
   const mock = params().get("lift_variant");
   const config = await loadConfig();
+  applyDisableAutofill(config);
+  const identity = resolveVisitorId(
+    browserIdentityEnv({ allowBotOverride: config?.allowBotOverride === true }),
+  );
   const allowMock = Boolean(config?.allowMock);
   if (allowMock && (mock === "control" || mock === "treatment")) {
     applyFixes(allFixes(mock === "treatment"), "URL override (no Flagsmith)");
     return;
   }
   try {
-    await initFromFlagsmith(config ?? {});
+    await initFromFlagsmith(config ?? {}, identity);
   } catch (err) {
     setStatus(
       `Flagsmith is required for variant assignment (${err instanceof Error ? err.message : err}).`,

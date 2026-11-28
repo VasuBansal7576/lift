@@ -1,0 +1,85 @@
+{
+  "id": "checkout-treatment-v0",
+  "version": 0,
+  "ops": [
+    {
+      "op": "injectCSS",
+      "id": "checkout-treatment-css",
+      "rules": [
+        {
+          "selector": { "tag": "p", "classes": ["terms", "contrast-fail"] },
+          "declarations": [
+            { "property": "color", "value": "#111" },
+            { "property": "background-color", "value": "#fff" }
+          ]
+        },
+        {
+          "selector": { "id": "shop-trigger" },
+          "declarations": [{ "property": "cursor", "value": "pointer" }]
+        }
+      ]
+    },
+    {
+      "op": "promoteToControl",
+      "selector": "#shop-trigger",
+      "as": "button"
+    },
+    {
+      "op": "setAttribute",
+      "selector": "#shop-trigger",
+      "name": "aria-controls",
+      "value": "shop-menu"
+    },
+    {
+      "op": "toggleDisclosure",
+      "trigger": "#shop-trigger",
+      "panel": "#shop-menu"
+    },
+    {
+      "op": "setAttribute",
+      "selector": "#cart-icon",
+      "name": "aria-label",
+      "value": "View cart and check out"
+    },
+    {
+      "op": "wrapLabel",
+      "selector": "#email",
+      "text": "Email"
+    },
+    {
+      "op": "wrapLabel",
+      "selector": "#card-name",
+      "text": "Name on card"
+    },
+    {
+      "op": "wrapLabel",
+      "selector": "#card-number",
+      "text": "Card number"
+    },
+    {
+      "op": "wrapLabel",
+      "selector": "#card-exp",
+      "text": "Expiry"
+    },
+    {
+      "op": "wrapLabel",
+      "selector": "#card-cvc",
+      "text": "CVC"
+    },
+    {
+      "op": "wrapLabel",
+      "selector": "#terms",
+      "text": "I agree to the terms of sale and understand this order is final."
+    },
+    {
+      "op": "setText",
+      "selector": "#place-order",
+      "text": "Place order"
+    },
+    {
+      "op": "promoteToControl",
+      "selector": "#place-order",
+      "as": "button"
+    }
+  ]
+}

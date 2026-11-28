@@ -3,6 +3,9 @@ import { extname, resolve } from "node:path";
 import { readFile } from "node:fs/promises";
 import { isInsideRoot } from "../../shared/fs-path.ts";
 import { getSite, placeholderSiteConfig } from "../../shared/catalog.ts";
+import { parseIncomingUrl } from "../../shared/request-url.ts";
+import { resolveRuntimePath } from "../../shared/runtime-static.ts";
+import { resolveVendorPath } from "../../shared/vendor-static.ts";
 import { ROOT } from "./config.ts";
 
 const MIME: Record<string, string> = {
@@ -18,8 +21,15 @@ export interface StaticServer {
   reused: boolean;
 }
 
-function overlayAllowMock(parsed: Record<string, unknown>): string {
-  return JSON.stringify({ ...parsed, allowMock: true });
+function overlaySiteConfig(
+  parsed: Record<string, unknown>,
+  opts: { allowMock: boolean },
+): string {
+  const extra: Record<string, unknown> = {};
+  if (opts.allowMock) extra.allowMock = true;
+  if (process.env.LIFT_ALLOW_BOT_OVERRIDE === "true") extra.allowBotOverride = true;
+  if (process.env.LIFT_DISABLE_AUTOFILL === "true") extra.disableAutofill = true;
+  return JSON.stringify({ ...parsed, ...extra });
 }
 
 function configForRelative(relative: string): Record<string, unknown> | null {
@@ -39,46 +49,87 @@ export function serveSites(
   const root = opts?.root ?? resolve(ROOT, "sites");
   const allowMock = opts?.allowMock ?? true;
   const server = createServer(async (req, res) => {
-    const url = new URL(req.url ?? "/", `http://127.0.0.1:${port}`);
-    if (url.pathname === "/") {
-      res.writeHead(302, { Location: `/checkout/${url.search}` });
-      res.end();
-      return;
-    }
-    let relative = url.pathname.slice(1);
-    if (relative.endsWith("/")) relative += "index.html";
-    const filePath = resolve(root, relative);
-    if (!isInsideRoot(root, filePath)) {
-      res.writeHead(403);
-      res.end("forbidden");
-      return;
-    }
     try {
-      const raw = await readFile(filePath);
-      if (allowMock && relative.endsWith("config.json")) {
-        let parsed: Record<string, unknown> = {};
+      const url = parseIncomingUrl(req.url, `http://127.0.0.1:${port}`);
+      if (!url) {
+        res.writeHead(400);
+        res.end("bad request");
+        return;
+      }
+      let runtimePath: string | null = null;
+      try {
+        runtimePath = resolveRuntimePath(url.pathname, ROOT);
+      } catch {
+        runtimePath = null;
+      }
+      if (runtimePath) {
         try {
-          parsed = JSON.parse(raw.toString("utf8")) as Record<string, unknown>;
+          const raw = await readFile(runtimePath);
+          res.writeHead(200, { "Content-Type": MIME[extname(runtimePath)] ?? "text/plain" });
+          res.end(raw);
         } catch {
-          parsed = configForRelative(relative) ?? {};
+          res.writeHead(404);
+          res.end("not found");
         }
-        const body = overlayAllowMock(parsed);
-        res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
-        res.end(body);
         return;
       }
-      res.writeHead(200, { "Content-Type": MIME[extname(filePath)] ?? "text/plain" });
-      res.end(raw);
+      const vendorPath = resolveVendorPath(url.pathname);
+      if (vendorPath) {
+        try {
+          const raw = await readFile(vendorPath);
+          res.writeHead(200, { "Content-Type": MIME[extname(vendorPath)] ?? "text/plain" });
+          res.end(raw);
+        } catch {
+          res.writeHead(404);
+          res.end("not found");
+        }
+        return;
+      }
+      if (url.pathname === "/") {
+        res.writeHead(302, { Location: `/checkout/${url.search}` });
+        res.end();
+        return;
+      }
+      let relative = url.pathname.slice(1);
+      if (relative.endsWith("/")) relative += "index.html";
+      const filePath = resolve(root, relative);
+      if (!isInsideRoot(root, filePath)) {
+        res.writeHead(403);
+        res.end("forbidden");
+        return;
+      }
+      try {
+        const raw = await readFile(filePath);
+        if (relative.endsWith("config.json")) {
+          let parsed: Record<string, unknown> = {};
+          try {
+            parsed = JSON.parse(raw.toString("utf8")) as Record<string, unknown>;
+          } catch {
+            parsed = allowMock ? (configForRelative(relative) ?? {}) : parsed;
+          }
+          const body = overlaySiteConfig(parsed, { allowMock });
+          res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
+          res.end(body);
+          return;
+        }
+        res.writeHead(200, { "Content-Type": MIME[extname(filePath)] ?? "text/plain" });
+        res.end(raw);
+      } catch {
+        if (allowMock && relative.endsWith("config.json")) {
+          const parsed = configForRelative(relative) ?? {};
+          const body = overlaySiteConfig(parsed, { allowMock });
+          res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
+          res.end(body);
+          return;
+        }
+        res.writeHead(404);
+        res.end("not found");
+      }
     } catch {
-      if (allowMock && relative.endsWith("config.json")) {
-        const parsed = configForRelative(relative) ?? {};
-        const body = overlayAllowMock(parsed);
-        res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
-        res.end(body);
-        return;
+      if (!res.headersSent) {
+        res.writeHead(500);
+        res.end("error");
       }
-      res.writeHead(404);
-      res.end("not found");
     }
   });
   return listen(server, port, "sites");

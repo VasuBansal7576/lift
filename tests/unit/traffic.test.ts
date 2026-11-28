@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { mixSeed } from "../../shared/rng.ts";
 import {
   applyBaselineDropout,
+  assertTrafficSiteUrl,
   assignVariant,
   runTraffic,
   variantFromFlag,
@@ -94,5 +95,21 @@ describe("applyBaselineDropout", () => {
       converted: false,
       dropped: true,
     });
+  });
+});
+
+describe("assertTrafficSiteUrl", () => {
+  it("allows loopback without the override flag", () => {
+    expect(() => assertTrafficSiteUrl("http://127.0.0.1:4174/checkout", {})).not.toThrow();
+    expect(() => assertTrafficSiteUrl("http://localhost:4174", {})).not.toThrow();
+  });
+
+  it("fails loudly on a non-loopback host unless LIFT_ALLOW_BOT_OVERRIDE=true", () => {
+    expect(() =>
+      assertTrafficSiteUrl("https://example.github.io/lift", {}),
+    ).toThrow(/not loopback/);
+    expect(() =>
+      assertTrafficSiteUrl("https://example.github.io/lift", { LIFT_ALLOW_BOT_OVERRIDE: "true" }),
+    ).not.toThrow();
   });
 });

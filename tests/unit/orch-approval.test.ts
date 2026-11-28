@@ -62,7 +62,7 @@ describe("human approval gate", () => {
     ).rejects.toThrow(/TTY/);
   });
 
-  it("prints the recording stand-in disclosure after a matching APPROVE", async () => {
+  it("prints the recording stand-in disclosure before the Type APPROVE prompt", async () => {
     const previous = process.env.LIFT_RECORDING_STANDIN;
     process.env.LIFT_RECORDING_STANDIN = "1";
     const chunks: string[] = [];
@@ -73,7 +73,9 @@ describe("human approval gate", () => {
     }) as typeof stdout.write;
     try {
       await requireTypedApproval(12, { isTTY: true, readLine: async () => "APPROVE 12" });
-      expect(chunks.join("")).toContain(RECORDING_STANDIN_LINE);
+      const text = chunks.join("");
+      expect(text).toContain(RECORDING_STANDIN_LINE);
+      expect(text.indexOf(RECORDING_STANDIN_LINE)).toBeLessThan(text.indexOf("Type APPROVE 12"));
     } finally {
       stdout.write = orig;
       if (previous === undefined) delete process.env.LIFT_RECORDING_STANDIN;

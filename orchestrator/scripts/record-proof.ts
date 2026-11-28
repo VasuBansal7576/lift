@@ -16,15 +16,15 @@ import {
   RECORDING_TRAFFIC_N_T2,
   RECORDING_TRAFFIC_N_L2,
   RECORDING_TRAFFIC_N_GEN2,
+  RECORDING_EXTRA_ROUNDS,
 } from "../src/record-nav.ts";
 import type { AnalystRecommendation } from "../src/types.ts";
 
-if (!process.env.LIFT_FLAGSMITH_ENV && existsSync("/tmp/lift-flagsmith.env")) {
-  process.env.LIFT_FLAGSMITH_ENV = "/tmp/lift-flagsmith.env";
+const flagsmithEnvPath = process.env.LIFT_FLAGSMITH_ENV?.trim();
+if (!flagsmithEnvPath) {
+  throw new Error("LIFT_FLAGSMITH_ENV is required (path to the Flagsmith env file)");
 }
-if (process.env.LIFT_FLAGSMITH_ENV) {
-  loadEnv({ path: process.env.LIFT_FLAGSMITH_ENV });
-}
+loadEnv({ path: flagsmithEnvPath });
 
 const OUT = resolve(REPO_ROOT, "recordings/t1-t2");
 const ARTIFACTS = resolve(REPO_ROOT, "artifacts/t1-t2");
@@ -106,7 +106,7 @@ function spawnEmptyXterm(title: string, geometry = "92x28+0+40"): void {
 async function activateXterm(title: string): Promise<void> {
   for (let i = 0; i < 20; i += 1) {
     try {
-      xdo(["search", "--name", title, "windowactivate", "--sync"]);
+      xdo(["search", "--name", `^${title}$`, "windowactivate", "--sync"]);
       return;
     } catch {
       await sleep(150);
@@ -159,9 +159,12 @@ async function visibleReload(page: Page): Promise<void> {
 }
 
 async function pointerClick(page: Page, locator: Locator): Promise<void> {
-  await locator.scrollIntoViewIfNeeded();
   const box = await locator.boundingBox();
   if (!box) throw new Error("pointerClick: no bounding box");
+  const innerHeight = await page.evaluate(() => window.innerHeight);
+  if (box.y < 0 || box.y + 8 > innerHeight) {
+    throw new Error("pointerClick: target is not in view");
+  }
   const win = await page.evaluate(() => ({
     screenX: window.screenX,
     screenY: window.screenY,
@@ -245,7 +248,7 @@ async function resetToNeutral(page: Page): Promise<void> {
 interface LiveSnap {
   phase?: string;
   dashboardExperimentUrl?: string;
-  flag?: { experimentId?: number; flagName?: string; dashboardUrl?: string };
+  flag?: { experimentId?: number; flagId?: number; flagName?: string; dashboardUrl?: string };
   recommendation?: AnalystRecommendation;
   events?: Array<{ agent?: string; kind?: string; message?: string }>;
   generations?: Array<{
@@ -253,7 +256,7 @@ interface LiveSnap {
     recommendation?: AnalystRecommendation;
     gated?: Array<{ specId: string; passed: boolean; reason: string }>;
     rejected?: Array<{ specId: string; reason: string }>;
-    flag?: { experimentId?: number; flagName?: string; dashboardUrl?: string };
+    flag?: { experimentId?: number; flagId?: number; flagName?: string; dashboardUrl?: string };
     visits?: unknown[];
   }>;
 }
@@ -323,6 +326,9 @@ async function pointerClickByName(
     let best: { x: number; y: number; width: number; height: number; area: number; depth: number } | null = null;
     for (const el of nodes) {
       if (!(el instanceof HTMLElement)) continue;
+      const style = getComputedStyle(el);
+      if (style.visibility === "hidden" || style.display === "none" || Number(style.opacity) === 0) continue;
+      if (typeof el.checkVisibility === "function" && !el.checkVisibility()) continue;
       const text = el.innerText || el.textContent || "";
       if (!text.includes(n)) continue;
       const r = el.getBoundingClientRect();
@@ -382,13 +388,28 @@ async function openExperimentOnCamera(
   experimentId: number,
 ): Promise<void> {
   const experiments = page.getByRole("link", { name: /^Experiments$/ });
-  if (await experiments.count()) {
-    await pointerClick(page, experiments.first());
-    await page.waitForTimeout(1000);
-  } else {
+  try {
+    if (await experiments.count()) {
+      await pointerClick(page, experiments.first());
+      await page.waitForTimeout(1000);
+    } else {
+      await typeUrlInOmnibox(page, experimentsListUrl(dashboardUrl));
+    }
+  } catch {
     await typeUrlInOmnibox(page, experimentsListUrl(dashboardUrl));
   }
   assertNotLogin(page, "openExperiment");
+  const search = page.getByPlaceholder(/search/i);
+  if ((await search.count()) && (await search.first().isVisible().catch(() => false))) {
+    try {
+      await pointerClick(page, search.first());
+      await sleep(150);
+      xdo(["type", "--delay", "22", flagName]);
+      await sleep(400);
+    } catch {
+      /* click the filtered or unfiltered row */
+    }
+  }
   try {
     await pointerClickByName(page, flagName, { experimentId });
   } catch {
@@ -400,6 +421,7 @@ async function openExperimentOnCamera(
 }
 
 async function visibleScrollAnalysis(page: Page): Promise<void> {
+  const before = page.url();
   activateChromium();
   await page.bringToFront();
   const win = await page.evaluate(() => ({
@@ -412,58 +434,120 @@ async function visibleScrollAnalysis(page: Page): Promise<void> {
   const y = Math.round(win.screenY + win.outerHeight * 0.55);
   xdo(["mousemove", "--sync", String(x), String(y)]);
   await sleep(150);
-  xdo(["click", "1"]);
-  await sleep(120);
   xdo(["click", "--repeat", "8", "--delay", "90", "5"]);
-  await sleep(200);
+  await sleep(250);
   xdo(["key", "--clearmodifiers", "Page_Down"]);
   await sleep(350);
+  if (page.url() !== before) {
+    throw new Error(`W-6: scroll changed URL from ${before} to ${page.url()}`);
+  }
 }
 
-async function assertFullV1At100(page: Page): Promise<void> {
+async function assertWinnerAt100(page: Page, arm: string): Promise<void> {
   await page
     .locator(".loader, [class*='spinner'], [class*='Spinner']")
     .first()
     .waitFor({ state: "hidden", timeout: 8_000 })
     .catch(() => undefined);
-  const ok = await page
+  const hundredVisible = await page
     .waitForFunction(
-      () => {
-        const text = document.body.innerText || "";
-        if (!/full-v1/i.test(text)) return false;
-        const rows = Array.from(document.querySelectorAll("tr, li, div, span, label, td"));
-        for (const el of rows) {
-          const t = el.textContent || "";
-          if (/full-v1/i.test(t) && /100\s*%/.test(t)) return true;
-        }
-        return /full-v1[\s\S]{0,120}100\s*%/i.test(text) || /100\s*%[\s\S]{0,120}full-v1/i.test(text);
-      },
+      () =>
+        Array.from(document.querySelectorAll("input")).some((el) => {
+          if (!(el instanceof HTMLInputElement)) return false;
+          const r = el.getBoundingClientRect();
+          if (r.width < 4 || r.height < 4) return false;
+          const n = Number(el.value);
+          return Number.isFinite(n) && Math.abs(n - 100) < 0.51;
+        }),
       undefined,
-      { timeout: 15_000 },
+      { timeout: 20_000 },
     )
     .then(() => true)
     .catch(() => false);
-  if (!ok) throw new Error(`W-G: full-v1 at 100% not visible on ${page.url()}`);
+  const body = ((await page.locator("body").innerText().catch(() => "")) || "").toLowerCase();
+  const armVisible = body.includes(arm.toLowerCase());
+  const controlZero = /0\s*%/.test(body);
+  if (!hundredVisible || !armVisible || !controlZero) {
+    throw new Error(
+      `W-1: ${arm} at 100% / control 0% not visible on ${page.url()} (hundred=${hundredVisible} arm=${armVisible} control0=${controlZero})`,
+    );
+  }
 }
 
-async function showRolledOutFeature(page: Page, flagName: string, dashboardUrl: string): Promise<void> {
-  const featuresUrl = dashboardUrl.replace(/\/experiments\/\d+.*$/, "/features");
-  await typeUrlInOmnibox(page, featuresUrl);
-  const search = page.getByPlaceholder(/^Search$/);
-  await search.waitFor({ state: "visible", timeout: 10_000 });
-  await pointerClick(page, search);
-  await sleep(150);
-  xdo(["type", "--delay", "22", flagName]);
-  await sleep(400);
-  try {
-    await pointerClickByName(page, flagName);
-  } catch {
-    await typeUrlInOmnibox(page, dashboardUrl);
+async function assertEnvDefaultWinner(flagId: number, arm: string): Promise<void> {
+  const token = process.env.FLAGSMITH_ADMIN_API_TOKEN || process.env.FLAGSMITH_API_KEY;
+  const key = process.env.FLAGSMITH_ENVIRONMENT_KEY;
+  const projectId = process.env.FLAGSMITH_PROJECT_ID;
+  const base = (process.env.FLAGSMITH_ADMIN_API_URL || process.env.FLAGSMITH_API_URL || "http://127.0.0.1:8000/api/v1/").replace(
+    /\/?$/,
+    "/",
+  );
+  if (!token || !key || !projectId) {
+    throw new Error("W-1: admin API credentials missing for env-default check");
   }
+  const headers = { Authorization: `Api-Key ${token}` };
+  const featRes = await fetch(`${base}projects/${projectId}/features/${flagId}/`, { headers });
+  const feat = (await featRes.json()) as {
+    multivariate_options?: Array<{ id: number; string_value?: string; key?: string }>;
+  };
+  const winner = (feat.multivariate_options ?? []).find(
+    (option) => option.string_value === arm || option.key === arm,
+  );
+  if (!winner) throw new Error(`W-1: feature ${flagId} has no option ${arm}`);
+  const stateRes = await fetch(`${base}environments/${key}/featurestates/?feature=${flagId}`, { headers });
+  const payload = (await stateRes.json()) as {
+    results?: Array<{
+      identity?: unknown;
+      feature_segment?: unknown;
+      multivariate_feature_state_values?: Array<{
+        multivariate_feature_option?: number | { id?: number };
+        percentage_allocation?: number;
+      }>;
+    }>;
+  };
+  const envDefault = (payload.results ?? []).find((row) => row.identity == null && row.feature_segment == null);
+  if (!envDefault) throw new Error(`W-1: no env-default featurestate for feature ${flagId}`);
+  const rows = envDefault.multivariate_feature_state_values ?? [];
+  const match = rows.find((row) => {
+    const option = row.multivariate_feature_option;
+    const id = typeof option === "number" ? option : option?.id;
+    return id === winner.id;
+  });
+  if (!match || Number(match.percentage_allocation) !== 100) {
+    throw new Error(`W-1: env-default ${arm} is ${match?.percentage_allocation ?? "missing"}% not 100%`);
+  }
+}
+
+function featureEditUrl(dashboardUrl: string, flagId: number): string {
+  const features = dashboardUrl.replace(/\/experiments\/\d+.*$/, "/features");
+  const sep = features.includes("?") ? "&" : "?";
+  return `${features}${sep}feature=${flagId}`;
+}
+
+async function showRolledOutFeature(
+  page: Page,
+  flagName: string,
+  dashboardUrl: string,
+  flagId: number,
+  arm: string,
+): Promise<void> {
+  await typeUrlInOmnibox(page, featureEditUrl(dashboardUrl, flagId));
   await page.getByRole("heading").first().waitFor({ state: "visible", timeout: 10_000 });
-  assertNotLogin(page, "features winner");
-  await visibleReload(page);
-  await assertFullV1At100(page);
+  assertNotLogin(page, `features ${flagName}`);
+  await page.getByText(/edit feature/i).first().waitFor({ state: "visible", timeout: 10_000 });
+  const weight = page.getByText(/environment weight/i).first();
+  if (!(await weight.isVisible().catch(() => false))) {
+    const valueTab = page.getByRole("tab", { name: /^Value$/i }).first();
+    if (await valueTab.count()) {
+      await pointerClick(page, valueTab);
+      await sleep(400);
+    }
+  }
+  await weight.waitFor({ state: "visible", timeout: 10_000 });
+  await page.locator("input[type='number']").first().waitFor({ state: "visible", timeout: 10_000 });
+  await sleep(500);
+  await assertWinnerAt100(page, arm);
+  await assertEnvDefaultWinner(flagId, arm);
 }
 
 async function withClip(name: string, fn: () => Promise<void>): Promise<string> {
@@ -483,15 +567,39 @@ function orchCommand(args: string[]): string {
   return `cd ${REPO_ROOT} && npx tsx orchestrator/src/cli.ts ${args.join(" ")} 2>&1 | tee /tmp/lift-orch.log`;
 }
 
-function closeOurXterms(): void {
+const OUR_XTERM_TITLES = ["lift-t2", "lift-t1", "lift-t2b", "lift-l2a", "lift-l2b"];
+
+function liftXtermIds(): string[] {
+  const ids: string[] = [];
+  for (const title of OUR_XTERM_TITLES) {
+    try {
+      const found = execFileSync("xdotool", ["search", "--name", `^${title}$`], {
+        env: displayEnv(),
+        encoding: "utf8",
+      })
+        .trim()
+        .split("\n")
+        .filter(Boolean);
+      ids.push(...found);
+    } catch {
+      /* none with this title */
+    }
+  }
+  return [...new Set(ids)];
+}
+
+function killGhostTailXterms(): void {
   try {
-    const ids = execFileSync("xdotool", ["search", "--name", "lift-"], {
-      env: displayEnv(),
-      encoding: "utf8",
-    })
-      .trim()
-      .split("\n")
-      .filter(Boolean);
+    execFileSync("pkill", ["-TERM", "-f", "xterm .* /tmp/lift-orch.log"], { stdio: "ignore" });
+  } catch {
+    /* none */
+  }
+}
+
+async function closeOurXterms(): Promise<void> {
+  killGhostTailXterms();
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    const ids = liftXtermIds();
     for (const id of ids) {
       try {
         xdo(["windowkill", id]);
@@ -499,13 +607,13 @@ function closeOurXterms(): void {
         /* already gone */
       }
     }
-  } catch {
-    /* none */
+    await sleep(200);
+    if (liftXtermIds().length === 0) return;
   }
 }
 
 async function startFreshXterm(title: string, geometry?: string): Promise<void> {
-  closeOurXterms();
+  await closeOurXterms();
   spawnEmptyXterm(title, geometry);
   await sleep(550);
 }
@@ -520,14 +628,14 @@ function cleanupStaleOrchFlags(): void {
 
 async function main() {
   mkdirSync(OUT, { recursive: true });
-  closeOurXterms();
+  await closeOurXterms();
   writeFileSync("/tmp/lift-orch.log", "");
   writeFileSync(LIVE_PATH, "{}\n");
   process.env.LIFT_ORCH_TRAFFIC_CONCURRENCY = process.env.LIFT_ORCH_TRAFFIC_CONCURRENCY || "16";
   process.env.LIFT_ORCH_RESULTS_INITIAL_MS = process.env.LIFT_ORCH_RESULTS_INITIAL_MS || "4000";
   process.env.LIFT_ORCH_RESULTS_WAIT_MS = process.env.LIFT_ORCH_RESULTS_WAIT_MS || "420000";
   process.env.LIFT_TRAFFIC_SEED = process.env.LIFT_TRAFFIC_SEED || "20261127";
-  process.env.LIFT_ORCH_MAX_EXTRA_ROUNDS = "0";
+  process.env.LIFT_ORCH_MAX_EXTRA_ROUNDS = String(RECORDING_EXTRA_ROUNDS);
   process.env.LIFT_ORCH_TRAFFIC_N_GEN2 = String(RECORDING_TRAFFIC_N_GEN2);
   process.env.LIFT_RECORDING_STANDIN = "1";
   process.env.LIFT_RUN_ID = process.env.LIFT_RUN_ID || `rec${Date.now().toString().slice(-8)}`;
@@ -585,7 +693,7 @@ async function main() {
   const t2Rec = t2Done.recommendation;
   const t2ExpId = t2Done.flag?.experimentId;
   const t2Dash = t2Done.flag?.dashboardUrl || t2Done.dashboardExperimentUrl || "";
-  if (t2Rec?.kind !== "winner" || !t2ExpId || !t2Done.flag) {
+  if (!t2Rec || t2Rec.kind !== "winner" || !t2ExpId || !t2Done.flag) {
     throw new Error(`T2 did not produce a winner at the pre-registered look (phase=${t2Done.phase})`);
   }
   writeFileSync("/tmp/lift-t2-live.json", `${JSON.stringify(t2Done, null, 2)}\n`);
@@ -594,41 +702,8 @@ async function main() {
   } catch {
     /* optional */
   }
-
-  await resetToNeutral(page);
-  await startFreshXterm("lift-t2b");
-  writeFileSync("/tmp/lift-orch.log", "");
-  writeFileSync(LIVE_PATH, "{}\n");
-  await withClip("t2b-approve-rollout", async () => {
-    await typeInXterm("lift-t2b", orchCommand(["--approve", String(t2ExpId), "--apply", "--no-ui"]));
-    await waitLog(/Type APPROVE/, 45_000);
-    await activateXterm("lift-t2b");
-    xdo(["type", "--delay", "90", `APPROVE ${t2ExpId}`]);
-    await sleep(200);
-    xdo(["key", "--clearmodifiers", "Return"]);
-    await waitLive(
-      (s) =>
-        (s.events ?? []).some(
-          (event) => /Flagsmith:/i.test(event.message ?? "") && /Decision:/i.test(event.message ?? ""),
-        ),
-      90_000,
-      "t2b decision line",
-      { failOnError: true },
-    );
-    await hold(3200);
-    await waitLive(
-      (s) =>
-        s.phase === "complete" &&
-        (s.events ?? []).some((event) => /Rolled out .+ Experiment \d+ completed/.test(event.message ?? "")),
-      180_000,
-      "t2b rollout done",
-      { failOnError: true },
-    );
-    await hold(3200);
-    await showRolledOutFeature(page, t2Done.flag?.flagName ?? t2Flag, t2Dash);
-    await hold(3200);
-    assertNotLogin(page, "t2b");
-  });
+  const t2Arm = t2Rec.arm;
+  const t2FlagId = t2Done.flag.flagId;
 
   await resetToNeutral(page);
   await startFreshXterm("lift-t1", "92x16+0+40");
@@ -644,6 +719,44 @@ async function main() {
     await hold(3200);
     assertNotLogin(page, "t1");
   });
+
+  await resetToNeutral(page);
+  await startFreshXterm("lift-t2b");
+  writeFileSync("/tmp/lift-orch.log", "");
+  writeFileSync(LIVE_PATH, "{}\n");
+  await withClip("t2b-approve-rollout", async () => {
+    await typeInXterm("lift-t2b", orchCommand(["--approve", String(t2ExpId), "--apply", "--no-ui"]));
+    await waitLog(/Flagsmith:.*Decision:/, 60_000);
+    await waitLog(/approved by: recording harness/, 20_000);
+    await waitLog(/Type APPROVE/, 20_000);
+    await hold(3200);
+    await activateXterm("lift-t2b");
+    xdo(["type", "--delay", "90", `APPROVE ${t2ExpId}`]);
+    await sleep(200);
+    xdo(["key", "--clearmodifiers", "Return"]);
+    await waitLive(
+      (s) =>
+        s.phase === "complete" &&
+        (s.events ?? []).some((event) => /Rolled out .+ Experiment \d+ completed/.test(event.message ?? "")),
+      180_000,
+      "t2b rollout done",
+      { failOnError: true },
+    );
+    await sleep(400);
+    if (!t2FlagId) throw new Error("T2 flag id missing for feature URL");
+    await showRolledOutFeature(page, t2Done.flag?.flagName ?? t2Flag, t2Dash, t2FlagId, t2Arm);
+    await hold(4200);
+    assertNotLogin(page, "t2b");
+  });
+
+  if (process.env.LIFT_RECORD_L2 !== "1") {
+    process.stdout.write("[record] skipping L2 (keep Round 5 clips byte-identical)\n");
+    await Promise.race([
+      context.close().then(() => browser.close()),
+      new Promise((r) => setTimeout(r, 3000)),
+    ]);
+    process.exit(0);
+  }
 
   writeFileSync(LIVE_PATH, "{}\n");
   writeFileSync("/tmp/lift-orch.log", "");
@@ -709,7 +822,7 @@ async function main() {
   await startFreshXterm("lift-l2b");
   writeFileSync("/tmp/lift-orch.log", "");
   writeFileSync(LIVE_PATH, "{}\n");
-  await withClip("l2b-gen2-gate-rollout", async () => {
+  await withClip("l2b-gen2-gate-inconclusive", async () => {
     await typeInXterm("lift-l2b", orchCommand(l2bArgs));
     await waitLive(
       (s) =>

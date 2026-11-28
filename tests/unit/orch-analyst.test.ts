@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_WIN_THRESHOLD,
+  describeResultsStatus,
   formatDecisionLine,
   formatGen2Inconclusive,
+  formatWithheldArms,
   parseArmChances,
   recommendWinner,
+  withheldSmallArms,
 } from "../../orchestrator/src/agents/analyst.ts";
 import { resultsAreReady, resultsIdentityCount } from "../../orchestrator/src/flagsmith/results.ts";
 
@@ -90,6 +93,41 @@ describe("analyst threshold", () => {
   it("keeps collecting when Flagsmith has no inference yet", () => {
     const rec = recommendWinner([], 0.95);
     expect(rec.kind).toBe("keep_collecting");
+  });
+
+  it("names arms Flagsmith withheld because they are under 50 identities", () => {
+    const small = {
+      results: {
+        payload: {
+          metrics: [
+            {
+              variants: {
+                control: { n: 57, sum: 50 },
+                "g2-focus": { n: 65, sum: 61 },
+                "g2-type": { n: 39, sum: 34 },
+              },
+              inference: {
+                "g2-focus": { chance_to_win: 0.864, lift: 0.07 },
+              },
+            },
+          ],
+        },
+      },
+    };
+    expect(withheldSmallArms(small)).toEqual(["g2-type"]);
+    expect(formatWithheldArms(["g2-type"])).toBe("results withheld (<50/arm): g2-type");
+  });
+
+  it("reports a completed experiment as rolled out instead of waiting for approval", () => {
+    const rec = recommendWinner(
+      [{ key: "full-v1", chanceToWin: 0.99, n: 200, sum: 180, lift: 0.3 }],
+      0.95,
+    );
+    expect(describeResultsStatus("completed", rec)).toEqual({
+      phase: "complete",
+      line: "completed; rolled out full-v1",
+    });
+    expect(describeResultsStatus("running", rec).phase).toBe("WAITING_FOR_HUMAN_APPROVAL");
   });
 
   it("does not treat stale /results as ready when identity counts have not grown", () => {

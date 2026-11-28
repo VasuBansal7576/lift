@@ -2,6 +2,7 @@ import type { EventLog } from "../log.ts";
 import type { AnalystRecommendation, ArmChance } from "../types.ts";
 
 export const DEFAULT_WIN_THRESHOLD = 0.95;
+export const RESULTS_MIN_IDENTITIES_PER_VARIANT = 50;
 
 export interface FlagsmithResultsLike {
   results?: {
@@ -78,6 +79,35 @@ export function formatDecisionLine(rec: AnalystRecommendation): string {
   return `Flagsmith: ${flagsmithPct} | Agent threshold: ${Math.round(rec.threshold * 100)}% | Decision: ${decision}`;
 }
 
+export function withheldSmallArms(envelope: FlagsmithResultsLike | null): string[] {
+  const metric = envelope?.results?.payload?.metrics?.[0];
+  const variants = metric?.variants ?? {};
+  const inference = metric?.inference ?? {};
+  return Object.keys(variants)
+    .filter((key) => {
+      const n = variants[key]?.n ?? 0;
+      const chance = inference[key]?.chance_to_win;
+      return n < RESULTS_MIN_IDENTITIES_PER_VARIANT && typeof chance !== "number";
+    })
+    .sort();
+}
+
+export function formatWithheldArms(keys: string[]): string {
+  return `results withheld (<50/arm): ${keys.join(", ")}`;
+}
+
+export function describeResultsStatus(
+  status: string,
+  rec: AnalystRecommendation,
+): { phase: "complete" | "WAITING_FOR_HUMAN_APPROVAL" | "KEEP_COLLECTING"; line: string | null } {
+  if (status === "completed") {
+    const arm = rec.kind === "winner" ? rec.arm : rec.leading ?? "winner";
+    return { phase: "complete", line: `completed; rolled out ${arm}` };
+  }
+  if (rec.kind === "winner") return { phase: "WAITING_FOR_HUMAN_APPROVAL", line: null };
+  return { phase: "KEEP_COLLECTING", line: null };
+}
+
 export function formatGen2Inconclusive(rec: AnalystRecommendation, visits: number): string {
   const chance =
     rec.kind === "winner" ? rec.chanceToWin : rec.kind === "keep_collecting" ? rec.chanceToWin : undefined;
@@ -91,6 +121,10 @@ export function runAnalyst(
   threshold = DEFAULT_WIN_THRESHOLD,
 ): AnalystRecommendation {
   log.emit("analyst", "start", `Read experiment results (threshold ${threshold})`);
+  const withheld = withheldSmallArms(envelope);
+  if (withheld.length > 0) {
+    log.emit("analyst", "info", formatWithheldArms(withheld));
+  }
   const arms = parseArmChances(envelope);
   const recommendation = recommendWinner(arms, threshold, arms.length ? "flagsmith" : "none");
   log.emit("analyst", "info", formatDecisionLine(recommendation));

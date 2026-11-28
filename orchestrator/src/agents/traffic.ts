@@ -40,7 +40,7 @@ export interface TrafficAgentDeps {
   runPersona?: typeof runPersona;
   gotoSite?: typeof gotoSite;
   waitForAppliedVariant?: (page: Page, expected: string) => Promise<string>;
-  /** Surface-driven stub: skip the live persona and convert from the served surface. */
+  /** Test-only stub. Production traffic does not set this. */
   surfaceForVariant?: (variant: string) => PersonaSurface;
 }
 
@@ -219,7 +219,7 @@ export async function runTrafficAgent(
             const ok = personaConvertsOnSurface(persona, deps.surfaceForVariant(variant));
             attempt = {
               converted: ok,
-              blockedBy: ok ? [] : [],
+              blockedBy: [],
               reason: ok ? "surface stub converted" : "surface stub blocked",
             };
           } else {

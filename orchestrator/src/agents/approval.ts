@@ -44,13 +44,13 @@ export async function requireTypedApproval(
     throw new Error("Approval requires an interactive TTY. Type APPROVE <experimentId> on a terminal.");
   }
   const expected = approvalPhrase(experimentId);
+  if (process.env.LIFT_RECORDING_STANDIN === "1") {
+    stdout.write(`${RECORDING_STANDIN_LINE}\n`);
+  }
   stdout.write(`Type ${expected} to roll out the winner:\n`);
   const line = (await io.readLine()).trim();
   if (line !== expected) {
     throw new Error(`Approval phrase did not match (expected ${expected}).`);
-  }
-  if (process.env.LIFT_RECORDING_STANDIN === "1") {
-    stdout.write(`${RECORDING_STANDIN_LINE}\n`);
   }
 }
 

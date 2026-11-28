@@ -2,7 +2,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import type { PatchSpec } from "../../shared/patch-spec.ts";
 import { serveSites } from "../../agent/src/serve.ts";
-import { formatGen2Inconclusive, runAnalyst } from "./agents/analyst.ts";
+import { describeResultsStatus, formatGen2Inconclusive, runAnalyst } from "./agents/analyst.ts";
 import {
   assertApproveArgs,
   pauseForHumanApproval,
@@ -15,6 +15,7 @@ import {
   loadFlagSetupFromExperiment,
   pauseExperiment,
   runFlagAgent,
+  type ExperimentRecord,
 } from "./agents/flag.ts";
 import { runGatekeeper } from "./agents/gatekeeper.ts";
 import { championFocusCeilingNote, runMutator } from "./agents/mutator.ts";
@@ -428,7 +429,6 @@ async function approveExisting(
 ): Promise<PersistedState> {
   assertApproveArgs(opts.approve, opts.approveExperimentId);
   const experimentId = opts.approveExperimentId as number;
-  await requireTypedApproval(experimentId, approvalIo);
   const http = flagsmithHttp(opts);
   const flag = await loadFlagSetupFromExperiment(opts, experimentId, http);
   log.emit("approval", "info", `Re-fetching Flagsmith /results for experiment ${experimentId}`);
@@ -441,6 +441,7 @@ async function approveExisting(
         : "Flagsmith /results did not recommend a winner",
     );
   }
+  await requireTypedApproval(experimentId, approvalIo);
   log.setPhase("rolling_out");
   const result = await runRollout(opts, flag, recommendation, log, http);
   const timeSaved = measureTimeSaved(Date.now() - started);
@@ -477,7 +478,8 @@ export async function printExperimentResults(
     throw new Error("--results requires a positive experiment id");
   }
   log.emit("analyst", "start", `CLI --results ${experimentId}`);
-  const envelope = await fetchExperimentResults(opts, experimentId, true);
+  const http = flagsmithHttp(opts);
+  const envelope = await fetchExperimentResults(opts, experimentId, true, http);
   const recommendation = runAnalyst(envelope, log, opts.threshold);
   for (const arm of recommendation.arms) {
     const n = arm.n ?? "n/a";
@@ -488,22 +490,42 @@ export async function printExperimentResults(
       `${arm.key} n=${n} sum=${sum} chance_to_win=${arm.chanceToWin.toFixed(3)}`,
     );
   }
+  let flagsmithStatus = "";
+  try {
+    const { data: experiment } = await http.get<ExperimentRecord>(
+      `/environments/${opts.environmentKey}/experiments/${experimentId}/`,
+    );
+    flagsmithStatus = experiment.status ?? "";
+  } catch {
+    flagsmithStatus = "";
+  }
+  const described = describeResultsStatus(flagsmithStatus, recommendation);
+  if (described.line) {
+    log.emit("analyst", "done", described.line);
+  }
+  let flag: FlagSetup | undefined;
+  try {
+    flag = await loadFlagSetupFromExperiment(opts, experimentId, http);
+  } catch {
+    flag = undefined;
+  }
   const timeSaved = measureTimeSaved(Date.now() - started);
   const state: PersistedState = {
-    phase: recommendation.kind === "winner" ? "WAITING_FOR_HUMAN_APPROVAL" : "KEEP_COLLECTING",
+    phase: described.phase,
     siteUrl: opts.siteUrl,
-    flagName: opts.flagName,
+    flagName: flag?.flagName ?? opts.flagName,
     metricEvent: opts.metricEvent,
     threshold: opts.threshold,
     generations: [],
     events: log.events,
     recommendation,
+    flag,
     timeSaved,
+    dashboardExperimentUrl: flag?.dashboardUrl,
     startedAt: new Date(started).toISOString(),
     finishedAt: new Date().toISOString(),
   };
   log.setPhase(state.phase);
-  saveState(state);
   log.snapshot = state;
   log.writeLive();
   return state;

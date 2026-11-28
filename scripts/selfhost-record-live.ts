@@ -1474,13 +1474,36 @@ async function awaitWhileNavigating<T>(_page: Page, _pid: number, pending: Promi
   return pending;
 }
 
+async function approachLocator(page: Page, locator: Locator): Promise<void> {
+  const box = await locator.boundingBox().catch(() => null);
+  if (!box) return;
+  const point = await viewportToScreen(page, box.x + box.width / 2, box.y + box.height / 2);
+  await glidePointerTo(point.x, point.y);
+}
+
+async function waitForFlagStatus(page: Page, needle: string, approach: Locator): Promise<void> {
+  const pending = page.waitForFunction(
+    (text) => (document.getElementById("flag-status")?.textContent ?? "").includes(text),
+    needle,
+    { timeout: 20_000 },
+  );
+  const deadline = Date.now() + 18_000;
+  while (Date.now() < deadline) {
+    const done = await Promise.race([pending.then(() => true), sleep(350).then(() => false)]);
+    await approachLocator(page, approach);
+    if (done) return;
+  }
+  await pending;
+}
+
 async function revealCheckoutForm(page: Page, opts?: { fill?: boolean }): Promise<void> {
   const fill = opts?.fill !== false;
   const checkout = page.locator("#checkout");
   if (await checkout.isVisible().catch(() => false)) {
-    await pointerWheel(page, checkout, 4);
-    await page.locator("#email").waitFor({ state: "visible", timeout: 5_000 });
+    const email = page.locator("#email");
+    await email.waitFor({ state: "visible", timeout: 5_000 });
     if (fill) await showCheckoutFields(page);
+    else await approachLocator(page, email);
     return;
   }
   const shop = page.locator("#shop-trigger");
@@ -1690,9 +1713,10 @@ async function recordT3Site(): Promise<void> {
     const sitePage = connected.page;
     const controlUrl = `${origin}/checkout/?lift_identity=t3-control&lift_bot=1&lift_no_poll=1`;
     await typeUrlInOmnibox(sitePage, chromePid, controlUrl);
-    await sitePage.waitForFunction(
-      () => (document.getElementById("flag-status")?.textContent ?? "").includes("Flagsmith checkout_a11y=control"),
-      { timeout: 20_000 },
+    await waitForFlagStatus(
+      sitePage,
+      "Flagsmith checkout_a11y=control",
+      sitePage.locator("#shop-trigger"),
     );
     await revealCheckoutForm(sitePage, { fill: false });
     const flagsmithPage = await clickChromeNewTab(sitePage, chromePid);
@@ -1721,13 +1745,25 @@ async function recordT3Site(): Promise<void> {
     if (!(await sitePage.locator(".wordmark").isVisible().catch(() => false))) {
       throw new Error("visible reload did not keep the checkout page");
     }
-    await sitePage.waitForFunction(
-      () => (document.getElementById("flag-status")?.textContent ?? "").includes("Flagsmith checkout_a11y=treatment"),
-      { timeout: 20_000 },
+    await waitForFlagStatus(
+      sitePage,
+      "Flagsmith checkout_a11y=treatment",
+      sitePage.locator("#email"),
     );
     await revealCheckoutForm(sitePage);
     await abortIfServerKeyLeaked(sitePage);
-    await sleep(3200);
+    const place = sitePage.locator("#place-order");
+    await place.waitFor({ state: "visible", timeout: 5_000 });
+    const box = await place.boundingBox();
+    if (box) {
+      const dest = await viewportToScreen(sitePage, box.x + box.width / 2, box.y + box.height / 2);
+      const points = glideScreenPoints(lastPointer, dest, 36);
+      for (const point of points) {
+        await sh("xdotool", ["mousemove", String(point.x), String(point.y)]);
+        lastPointer = point;
+        await sleep(84);
+      }
+    }
     await finish();
   } finally {
     recordingChromePid = null;

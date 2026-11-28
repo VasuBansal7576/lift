@@ -27,7 +27,7 @@ import {
 import {
   abortIfServerKeyInFiles,
   assertNoServerKeyVisible,
-  scanPageSecrets,
+  SCAN_PAGE_SECRETS_SOURCE,
   liftScanFiles,
 } from "../selfhost/src/redact.ts";
 import { writeSiteConfigForSelfhost } from "../selfhost/src/site-config.ts";
@@ -1020,7 +1020,7 @@ async function waitStaleFlagGone(
 async function sanitizeFlagsmithUi(page: Page): Promise<void> {
   let dump = "";
   try {
-    dump = await page.evaluate(scanPageSecrets);
+    dump = String(await page.evaluate(SCAN_PAGE_SECRETS_SOURCE));
   } catch {
     return;
   }
@@ -1031,7 +1031,7 @@ async function sanitizeFlagsmithUi(page: Page): Promise<void> {
 }
 
 async function assertNoSecrets(page: Page): Promise<void> {
-  const text = await page.evaluate(scanPageSecrets);
+  const text = String(await page.evaluate(SCAN_PAGE_SECRETS_SOURCE));
   assertNoServerKeyVisible(text);
   if (/FLAGSMITH_ADMIN_API_TOKEN|DJANGO_SECRET_KEY|WAREHOUSE_CREDENTIALS_SECRET/.test(text)) {
     throw new Error("secret label visible on Flagsmith UI");
@@ -1042,7 +1042,7 @@ async function abortIfServerKeyLeaked(page?: Page): Promise<void> {
   if (page) {
     let dump = "";
     try {
-      dump = await page.evaluate(scanPageSecrets);
+      dump = String(await page.evaluate(SCAN_PAGE_SECRETS_SOURCE));
     } catch {
       dump = "";
     }

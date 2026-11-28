@@ -111,20 +111,20 @@ export function collectDomSecretScanText(doc: SecretScanRoot): string {
   return parts.join("\n");
 }
 
-/** Zero-arg page.evaluate entry; must be self-contained for Playwright. */
-export function scanPageSecrets(): string {
-  const parts: string[] = [];
-  const walk = (root: Document | ShadowRoot): void => {
-    const body = "body" in root ? root.body : null;
-    parts.push(body?.innerText ?? "", ("documentElement" in root ? root.documentElement?.textContent : root.textContent) ?? "");
+/** Expression for page.evaluate; keep as a string so tsx does not inject __name. */
+export const SCAN_PAGE_SECRETS_SOURCE = `(() => {
+  const parts = [];
+  const walk = (root) => {
+    const body = root.body || null;
+    parts.push((body && body.innerText) || "", (root.documentElement && root.documentElement.textContent) || root.textContent || "");
     for (const node of Array.from(root.querySelectorAll("*"))) {
       const tag = node.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") {
-        parts.push((node as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement).value ?? "");
+        parts.push(node.value || "");
       }
       for (const attr of Array.from(node.attributes)) parts.push(attr.value);
       if (node.shadowRoot) {
-        parts.push(node.shadowRoot.textContent ?? "");
+        parts.push(node.shadowRoot.textContent || "");
         walk(node.shadowRoot);
       }
     }
@@ -132,14 +132,12 @@ export function scanPageSecrets(): string {
       try {
         const nested = iframe.contentDocument;
         if (nested) walk(nested);
-      } catch {
-        /* cross-origin */
-      }
+      } catch (err) {}
     }
   };
   walk(document);
-  return parts.join("\n");
-}
+  return parts.join("\\n");
+})()`;
 
 /** Paths under dir whose contents are scanned during a live capture. */
 export function liftScanFiles(dir = "/tmp"): string[] {

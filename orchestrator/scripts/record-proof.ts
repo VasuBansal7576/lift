@@ -548,7 +548,7 @@ async function main() {
     "l2 gen-1 analysing",
   );
 
-  await withClip("l2a-gen1-champion", 12_000, async () => {
+  await withClip("l2a-gen1-champion", 8_000, async () => {
     spawnEmptyXterm("lift-l2a", "92x14+0+640");
     await sleep(500);
     await typeInXterm("lift-l2a", "echo waiting gen-1 analyst result");
@@ -581,8 +581,14 @@ async function main() {
   });
 
   await waitLive(
-    (s) => s.phase === "gating" && Boolean(s.generations?.[0]?.recommendation),
-    300_000,
+    (s) =>
+      (s.phase === "gating" && Boolean(s.generations?.[0]?.recommendation)) ||
+      s.phase === "flagging" ||
+      pausedPhase(s.phase) ||
+      (s.events ?? []).some(
+        (event) => event.kind === "reject" && /g2-.*bad-contrast|added axe rules/i.test(event.message ?? ""),
+      ),
+    180_000,
     "l2 gen-2 gating",
   );
 

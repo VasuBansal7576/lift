@@ -4,6 +4,7 @@ import { extname, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { gzipSync } from "node:zlib";
 import { getSite, placeholderSiteConfig } from "../shared/catalog.ts";
+import { orchConfigOverlay, resolveOrchSpecPath } from "../shared/orch-site.ts";
 import { parseIncomingUrl } from "../shared/request-url.ts";
 import { resolveRuntimePath } from "../shared/runtime-static.ts";
 import { resolveVendorPath } from "../shared/vendor-static.ts";
@@ -31,7 +32,7 @@ const MIME: Record<string, string> = {
 };
 
 function overlaySiteConfig(parsed: Record<string, unknown>): string {
-  const extra: Record<string, unknown> = {};
+  const extra: Record<string, unknown> = { ...orchConfigOverlay() };
   if (allowMock) extra.allowMock = true;
   if (edgeOrigin) extra.edgeOrigin = true;
   if (process.env.LIFT_ALLOW_BOT_OVERRIDE === "true") extra.allowBotOverride = true;
@@ -79,6 +80,18 @@ const server = createServer(async (req, res) => {
       try {
         const body = await readFile(vendorPath);
         res.writeHead(200, { "Content-Type": MIME[extname(vendorPath)] ?? "application/octet-stream" });
+        res.end(body);
+      } catch {
+        res.writeHead(404);
+        res.end("not found");
+      }
+      return;
+    }
+    const orchSpec = resolveOrchSpecPath(url.pathname, rootDir);
+    if (orchSpec) {
+      try {
+        const body = await readFile(orchSpec);
+        res.writeHead(200, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
         res.end(body);
       } catch {
         res.writeHead(404);

@@ -861,6 +861,7 @@ function applyWrapLabel(root, op, index) {
   input.removeAttribute("data-unlabeled");
   input.setAttribute("data-labelled", "1");
   if (hint) {
+    if (hint.id) label.id = hint.id;
     replacementOf.set(hint, label);
     hint.replaceWith(label);
   } else input.insertAdjacentElement("beforebegin", label);

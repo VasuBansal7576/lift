@@ -19,6 +19,7 @@
     "tests/**/*.ts",
     "shared/**/*.ts",
     "scripts/**/*.ts",
-    "edge/**/*.ts"
+    "edge/**/*.ts",
+    "orchestrator/**/*.ts"
   ]
 }

@@ -1,6 +1,7 @@
 import { defineConfig } from "@playwright/test";
 
 const port = process.env.LIFT_PORT || process.env.PORT || "4174";
+const origin = `http://127.0.0.1:${port}`;
 
 export default defineConfig({
   testDir: "tests/e2e",
@@ -8,13 +9,13 @@ export default defineConfig({
   forbidOnly: Boolean(process.env.CI),
   retries: process.env.CI ? 1 : 0,
   use: {
-    baseURL: `http://127.0.0.1:${port}`,
+    baseURL: origin,
     headless: true,
   },
   webServer: {
     command: `npx tsx scripts/serve-site.ts --port ${port} --allow-mock`,
-    url: `http://127.0.0.1:${port}`,
-    reuseExistingServer: false,
+    url: origin,
+    reuseExistingServer: !process.env.CI,
     timeout: 30_000,
   },
 });

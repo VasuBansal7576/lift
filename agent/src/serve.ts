@@ -5,6 +5,7 @@ import { isInsideRoot } from "../../shared/fs-path.ts";
 import { getSite, placeholderSiteConfig } from "../../shared/catalog.ts";
 import { parseIncomingUrl } from "../../shared/request-url.ts";
 import { resolveRuntimePath } from "../../shared/runtime-static.ts";
+import { orchConfigOverlay, resolveOrchSpecPath } from "../../shared/orch-site.ts";
 import { resolveVendorPath } from "../../shared/vendor-static.ts";
 import { ROOT } from "./config.ts";
 
@@ -19,13 +20,14 @@ const MIME: Record<string, string> = {
 export interface StaticServer {
   close: () => Promise<void>;
   reused: boolean;
+  setAllowMock: (value: boolean) => void;
 }
 
 function overlaySiteConfig(
   parsed: Record<string, unknown>,
   opts: { allowMock: boolean },
 ): string {
-  const extra: Record<string, unknown> = {};
+  const extra: Record<string, unknown> = { ...orchConfigOverlay() };
   if (opts.allowMock) extra.allowMock = true;
   if (process.env.LIFT_ALLOW_BOT_OVERRIDE === "true") extra.allowBotOverride = true;
   if (process.env.LIFT_DISABLE_AUTOFILL === "true") extra.disableAutofill = true;
@@ -47,7 +49,7 @@ export function serveSites(
   opts?: { allowMock?: boolean; root?: string },
 ): Promise<StaticServer> {
   const root = opts?.root ?? resolve(ROOT, "sites");
-  const allowMock = opts?.allowMock ?? true;
+  let allowMock = opts?.allowMock ?? true;
   const server = createServer(async (req, res) => {
     try {
       const url = parseIncomingUrl(req.url, `http://127.0.0.1:${port}`);
@@ -85,6 +87,18 @@ export function serveSites(
         }
         return;
       }
+      const orchSpec = resolveOrchSpecPath(url.pathname, ROOT);
+      if (orchSpec) {
+        try {
+          const raw = await readFile(orchSpec);
+          res.writeHead(200, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
+          res.end(raw);
+        } catch {
+          res.writeHead(404);
+          res.end("not found");
+        }
+        return;
+      }
       if (url.pathname === "/") {
         res.writeHead(302, { Location: `/checkout/${url.search}` });
         res.end();
@@ -115,7 +129,7 @@ export function serveSites(
         res.writeHead(200, { "Content-Type": MIME[extname(filePath)] ?? "text/plain" });
         res.end(raw);
       } catch {
-        if (allowMock && relative.endsWith("config.json")) {
+        if (relative.endsWith("config.json")) {
           const parsed = configForRelative(relative) ?? {};
           const body = overlaySiteConfig(parsed, { allowMock });
           res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
@@ -132,26 +146,32 @@ export function serveSites(
       }
     }
   });
-  return listen(server, port, "sites");
+  return listen(server, port, "sites").then((started) => ({
+    ...started,
+    setAllowMock(value: boolean) {
+      allowMock = value;
+    },
+  }));
 }
 
 function listen(server: Server, port: number, label: string): Promise<StaticServer> {
   return new Promise((resolveServer, reject) => {
     server.listen(port, "127.0.0.1", () => {
-      resolveServer({
-        reused: false,
-        close: () =>
-          new Promise((resClose, rejClose) => {
-            server.close((err) => (err ? rejClose(err) : resClose()));
-          }),
-      });
+        resolveServer({
+          reused: false,
+          setAllowMock: () => undefined,
+          close: () =>
+            new Promise((resClose, rejClose) => {
+              server.close((err) => (err ? rejClose(err) : resClose()));
+            }),
+        });
     });
     server.on("error", (err: NodeJS.ErrnoException) => {
       if (err.code === "EADDRINUSE") {
         process.stderr.write(
           `Port ${port} already in use; reusing the existing ${label} server. If bots need URL override, start it with npm run site -- --allow-mock.\n`,
         );
-        resolveServer({ reused: true, close: async () => undefined });
+        resolveServer({ reused: true, close: async () => undefined, setAllowMock: () => undefined });
         return;
       }
       reject(err);

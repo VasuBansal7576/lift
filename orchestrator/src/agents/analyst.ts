@@ -1,0 +1,145 @@
+import type { EventLog } from "../log.ts";
+import type { AnalystRecommendation, ArmChance } from "../types.ts";
+
+export const DEFAULT_WIN_THRESHOLD = 0.95;
+export const RESULTS_MIN_IDENTITIES_PER_VARIANT = 50;
+
+export interface FlagsmithResultsLike {
+  results?: {
+    as_of?: string | null;
+    payload?: {
+      metrics?: Array<{
+        variants?: Record<string, { n?: number; sum?: number }>;
+        inference?: Record<string, { chance_to_win?: number; lift?: number | null } | null>;
+      }>;
+    } | null;
+  } | null;
+}
+
+export function parseArmChances(envelope: FlagsmithResultsLike | null): ArmChance[] {
+  const metric = envelope?.results?.payload?.metrics?.[0];
+  const inference = metric?.inference;
+  if (!inference) return [];
+  const variants = metric?.variants ?? {};
+  const arms: ArmChance[] = [];
+  for (const [key, value] of Object.entries(inference)) {
+    if (!value || typeof value.chance_to_win !== "number") continue;
+    arms.push({
+      key,
+      chanceToWin: value.chance_to_win,
+      n: variants[key]?.n ?? null,
+      sum: variants[key]?.sum ?? null,
+      lift: typeof value.lift === "number" ? value.lift : null,
+    });
+  }
+  return arms.sort((a, b) => b.chanceToWin - a.chanceToWin);
+}
+
+export function recommendWinner(
+  arms: ArmChance[],
+  threshold = DEFAULT_WIN_THRESHOLD,
+  source: "flagsmith" | "none" = arms.length ? "flagsmith" : "none",
+): AnalystRecommendation {
+  if (arms.length === 0) {
+    return {
+      kind: "keep_collecting",
+      threshold,
+      arms,
+      source,
+      reason: "No chance_to_win yet. Keep collecting.",
+    };
+  }
+  const best = arms[0];
+  if (best.chanceToWin >= threshold) {
+    return {
+      kind: "winner",
+      arm: best.key,
+      chanceToWin: best.chanceToWin,
+      threshold,
+      arms,
+      source,
+    };
+  }
+  return {
+    kind: "keep_collecting",
+    leading: best.key,
+    chanceToWin: best.chanceToWin,
+    threshold,
+    arms,
+    source,
+    reason: `chance_to_win ${best.chanceToWin.toFixed(3)} < ${threshold.toFixed(2)}. Keep collecting.`,
+  };
+}
+
+export function formatDecisionLine(rec: AnalystRecommendation): string {
+  const chance =
+    rec.kind === "winner" ? rec.chanceToWin : rec.kind === "keep_collecting" ? rec.chanceToWin : undefined;
+  const flagsmithPct = chance == null ? "n/a" : `${Math.round(chance * 100)}%`;
+  const decision = rec.kind === "winner" ? "APPROVE" : "KEEP COLLECTING";
+  return `Flagsmith: ${flagsmithPct} | Agent threshold: ${Math.round(rec.threshold * 100)}% | Decision: ${decision}`;
+}
+
+export function withheldSmallArms(envelope: FlagsmithResultsLike | null): string[] {
+  const metric = envelope?.results?.payload?.metrics?.[0];
+  const variants = metric?.variants ?? {};
+  const inference = metric?.inference ?? {};
+  return Object.keys(variants)
+    .filter((key) => {
+      const n = variants[key]?.n ?? 0;
+      const chance = inference[key]?.chance_to_win;
+      return n < RESULTS_MIN_IDENTITIES_PER_VARIANT && typeof chance !== "number";
+    })
+    .sort();
+}
+
+export function formatWithheldArms(keys: string[]): string {
+  return `results withheld (<50/arm): ${keys.join(", ")}`;
+}
+
+export function describeResultsStatus(
+  status: string,
+  rec: AnalystRecommendation,
+): { phase: "complete" | "WAITING_FOR_HUMAN_APPROVAL" | "KEEP_COLLECTING"; line: string | null } {
+  if (status === "completed") {
+    const arm = rec.kind === "winner" ? rec.arm : rec.leading ?? "winner";
+    return { phase: "complete", line: `completed; rolled out ${arm}` };
+  }
+  if (rec.kind === "winner") return { phase: "WAITING_FOR_HUMAN_APPROVAL", line: null };
+  return { phase: "KEEP_COLLECTING", line: null };
+}
+
+export function formatGen2Inconclusive(rec: AnalystRecommendation, visits: number): string {
+  const chance =
+    rec.kind === "winner" ? rec.chanceToWin : rec.kind === "keep_collecting" ? rec.chanceToWin : undefined;
+  const x = chance == null ? "n/a" : chance.toFixed(3);
+  return `Gen-2 inconclusive (chance_to_win ${x} < ${rec.threshold.toFixed(2)} after ${visits} visits); champion stays`;
+}
+
+export function runAnalyst(
+  envelope: FlagsmithResultsLike | null,
+  log: EventLog,
+  threshold = DEFAULT_WIN_THRESHOLD,
+): AnalystRecommendation {
+  log.emit("analyst", "start", `Read experiment results (threshold ${threshold})`);
+  const withheld = withheldSmallArms(envelope);
+  if (withheld.length > 0) {
+    log.emit("analyst", "info", formatWithheldArms(withheld));
+  }
+  const arms = parseArmChances(envelope);
+  const recommendation = recommendWinner(arms, threshold, arms.length ? "flagsmith" : "none");
+  log.emit("analyst", "info", formatDecisionLine(recommendation));
+  if (recommendation.kind === "winner") {
+    log.emit("analyst", "done", `Recommend ${recommendation.arm} (chance_to_win=${recommendation.chanceToWin.toFixed(3)})`, {
+      arm: recommendation.arm,
+      chanceToWin: recommendation.chanceToWin,
+      threshold,
+    });
+  } else {
+    log.emit("analyst", "wait", recommendation.reason, {
+      leading: recommendation.leading,
+      chanceToWin: recommendation.chanceToWin,
+      threshold,
+    });
+  }
+  return recommendation;
+}

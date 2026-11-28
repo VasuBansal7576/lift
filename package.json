@@ -26,7 +26,10 @@
     "test:all": "vitest run tests/unit && playwright test",
     "edge:dev": "wrangler dev --config edge/wrangler.toml --persist-to edge/.wrangler/state",
     "edge:put-spec": "tsx edge/put-spec.ts",
-    "edge:record": "node edge/record/live.mjs"
+    "edge:record": "node edge/record/live.mjs",
+    "orch": "tsx orchestrator/src/cli.ts",
+    "orch:approve": "tsx orchestrator/src/cli.ts --approve",
+    "orch:selfhost": "bash orchestrator/scripts/flagsmith-selfhost.sh"
   },
   "engines": {
     "node": ">=20"

@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Lift orchestrator — agent timeline</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <header class="mast">
+    <p class="kicker">Lift · Toggle Wars Track 2 · template mutator; LLM optional when a key is set · Flag agent drives Flagsmith</p>
+    <h1>Multi-agent orchestrator</h1>
+    <p class="sub">Scanner → mutator → axe gate → Flag agent (Flagsmith) → traffic → analyst → human approval → rollout. All traffic is simulated.</p>
+    <p id="phase" class="phase">phase: idle</p>
+  </header>
+
+  <section class="meta" id="meta">
+    <div><span>Flag</span><strong id="flag-id">—</strong></div>
+    <div><span>Experiment</span><strong id="exp-id">—</strong></div>
+    <div><span>Metric</span><strong id="metric-id">—</strong></div>
+    <div><span>Time saved</span><strong id="time-saved">—</strong></div>
+  </section>
+
+  <section class="agents" id="agents"></section>
+
+  <section class="split">
+    <article>
+      <h2>Variants / axe gate</h2>
+      <table>
+        <thead>
+          <tr><th>Spec</th><th>Gate</th><th>Baseline</th><th>After</th><th>Reason</th></tr>
+        </thead>
+        <tbody id="variants"></tbody>
+      </table>
+    </article>
+    <article>
+      <h2>chance_to_win</h2>
+      <div id="results" class="results">Waiting for experiment results…</div>
+    </article>
+  </section>
+
+  <section>
+    <h2>Event log</h2>
+    <ol id="log" class="log"></ol>
+  </section>
+  <script src="./app.js"></script>
+</body>
+</html>

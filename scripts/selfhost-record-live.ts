@@ -1481,19 +1481,12 @@ async function approachLocator(page: Page, locator: Locator): Promise<void> {
   await glidePointerTo(point.x, point.y);
 }
 
-async function waitForFlagStatus(page: Page, needle: string, approach: Locator): Promise<void> {
-  const pending = page.waitForFunction(
+async function waitForFlagStatus(page: Page, needle: string): Promise<void> {
+  await page.waitForFunction(
     (text) => (document.getElementById("flag-status")?.textContent ?? "").includes(text),
     needle,
     { timeout: 20_000 },
   );
-  const deadline = Date.now() + 18_000;
-  while (Date.now() < deadline) {
-    const done = await Promise.race([pending.then(() => true), sleep(350).then(() => false)]);
-    await approachLocator(page, approach);
-    if (done) return;
-  }
-  await pending;
 }
 
 async function revealCheckoutForm(page: Page, opts?: { fill?: boolean }): Promise<void> {
@@ -1561,7 +1554,7 @@ async function showCheckoutFields(page: Page): Promise<void> {
     "card-exp": "12/28",
     "card-cvc": "123",
   };
-  for (const id of ["email", "card-name", "card-number", "card-exp", "card-cvc", "terms", "place-order"]) {
+  for (const id of ["email", "card-name", "card-number", "card-exp", "card-cvc", "terms"]) {
     const loc = page.locator(`#${id}`);
     if (!(await loc.isVisible().catch(() => false))) continue;
     await pointerClick(page, loc);
@@ -1713,12 +1706,9 @@ async function recordT3Site(): Promise<void> {
     const sitePage = connected.page;
     const controlUrl = `${origin}/checkout/?lift_identity=t3-control&lift_bot=1&lift_no_poll=1`;
     await typeUrlInOmnibox(sitePage, chromePid, controlUrl);
-    await waitForFlagStatus(
-      sitePage,
-      "Flagsmith checkout_a11y=control",
-      sitePage.locator("#shop-trigger"),
-    );
+    await sitePage.locator("#shop-trigger").waitFor({ state: "visible", timeout: 15_000 });
     await revealCheckoutForm(sitePage, { fill: false });
+    await waitForFlagStatus(sitePage, "Flagsmith checkout_a11y=control");
     const flagsmithPage = await clickChromeNewTab(sitePage, chromePid);
     await typeUrlInOmnibox(flagsmithPage, chromePid, `${SHARED_ORIGIN}/login`);
     await loginFlagsmith(flagsmithPage, chromePid);
@@ -1745,25 +1735,16 @@ async function recordT3Site(): Promise<void> {
     if (!(await sitePage.locator(".wordmark").isVisible().catch(() => false))) {
       throw new Error("visible reload did not keep the checkout page");
     }
-    await waitForFlagStatus(
-      sitePage,
-      "Flagsmith checkout_a11y=treatment",
-      sitePage.locator("#email"),
-    );
+    await waitForFlagStatus(sitePage, "Flagsmith checkout_a11y=treatment");
     await revealCheckoutForm(sitePage);
-    await abortIfServerKeyLeaked(sitePage);
+    await sh("xdotool", ["key", "--clearmodifiers", "Escape"]);
+    await sleep(200);
+    await sh("xdotool", ["key", "--clearmodifiers", "Escape"]);
     const place = sitePage.locator("#place-order");
     await place.waitFor({ state: "visible", timeout: 5_000 });
-    const box = await place.boundingBox();
-    if (box) {
-      const dest = await viewportToScreen(sitePage, box.x + box.width / 2, box.y + box.height / 2);
-      const points = glideScreenPoints(lastPointer, dest, 36);
-      for (const point of points) {
-        await sh("xdotool", ["mousemove", String(point.x), String(point.y)]);
-        lastPointer = point;
-        await sleep(84);
-      }
-    }
+    await pointerClick(sitePage, place);
+    await abortIfServerKeyLeaked(sitePage);
+    await sleep(3000);
     await finish();
   } finally {
     recordingChromePid = null;
@@ -2213,7 +2194,7 @@ async function recordT4(): Promise<void> {
     }
     const noResults = page.getByText(/no results/i).first();
     await noResults.waitFor({ state: "visible", timeout: 5_000 });
-    await sleep(3_200);
+    await sleep(2_000);
     await searchFeatureList(page, "lift_a11y_r5");
     const skillRow = await featureRowByName(page, "lift_a11y_r5");
     await skillRow.waitFor({ state: "visible", timeout: 10_000 });

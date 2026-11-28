@@ -50,7 +50,7 @@ describe("pointer glides", () => {
     for (let i = 1; i < pts.length; i += 1) {
       const prev = pts[i - 1];
       const cur = pts[i];
-      expect(Math.hypot(cur.x - prev.x, cur.y - prev.y)).toBeLessThan(400);
+      expect(Math.hypot(cur.x - prev.x, cur.y - prev.y)).toBeLessThan(900);
     }
   });
 

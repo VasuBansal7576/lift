@@ -27,7 +27,7 @@ export async function runPointerPressRelease(run: ShRunner, x: number, y: number
 /** At 12fps a click glide must cover at least 8 frames with no teleport. */
 export function glideScreenPoints(from: Point, to: Point, minFrames = 10): Point[] {
   const dist = Math.hypot(to.x - from.x, to.y - from.y);
-  const frames = Math.max(minFrames, Math.min(48, Math.round(dist / 36) || minFrames));
+  const frames = Math.max(minFrames, Math.min(16, Math.round(dist / 80) || minFrames));
   const points: Point[] = [];
   for (let i = 1; i <= frames; i += 1) {
     const t = i / frames;

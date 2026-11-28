@@ -160,6 +160,16 @@ function applyFixes(fixes, sourceLabel) {
   const bundledOn = Object.values(fixes).every(Boolean);
   document.body.dataset.variant = bundledOn ? "treatment" : "control";
   setStatus(sourceLabel);
+  if (params().get("lift_gate_probe") === "bad" && isLoopbackHost()) {
+    const img = document.createElement("img");
+    img.src = "missing-gate-probe.png";
+    document.body.appendChild(img);
+    const naked = document.createElement("div");
+    naked.setAttribute("role", "button");
+    naked.textContent = "gate probe";
+    document.body.appendChild(naked);
+    setStatus(`${sourceLabel} (injected probe on served page)`);
+  }
 
   const trigger = document.getElementById("shop-trigger");
   const menu = document.getElementById("shop-menu");

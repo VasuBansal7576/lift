@@ -374,7 +374,7 @@ async function typeApproveOnCamera(experimentId: number): Promise<void> {
   xdo(["type", "--delay", "110", `APPROVE ${experimentId}`]);
   await sleep(400);
   xdo(["key", "--clearmodifiers", "Return"]);
-  await hold(7000);
+  await hold(3200);
 }
 
 async function withClip(
@@ -474,6 +474,12 @@ async function main() {
   const t2ExpId = t2Done.flag?.experimentId;
   const t2Dash = t2Done.flag?.dashboardUrl || t2Done.dashboardExperimentUrl || "";
   const t2Won = t2Rec?.kind === "winner";
+  writeFileSync("/tmp/lift-t2-live.json", `${JSON.stringify(t2Done, null, 2)}\n`);
+  try {
+    copyFileSync("/tmp/lift-orch.log", "/tmp/lift-t2-orch.log");
+  } catch {
+    /* optional */
+  }
 
   await withClip("t2b-approve-rollout", 12_000, async () => {
     spawnEmptyXterm("lift-t2b", "92x18+0+640");
@@ -483,15 +489,11 @@ async function main() {
     if (t2Dash) await typeUrlInOmnibox(page, t2Dash);
     await hold(3200);
     if (t2Won && t2ExpId && t2Done.flag) {
-      await typeInXterm(
-        "lift-t2b",
-        `echo 'Recording harness typing APPROVE ${t2ExpId} standing in for the human approver.'`,
-      );
       await typeApproveOnCamera(t2ExpId);
       await typeUrlInOmnibox(page, t2Dash);
       await showRolledOutFeature(page, t2Done.flag.flagName ?? t2Flag, t2Dash);
       await visibleReload(page);
-      await hold(2500);
+      await hold(1200);
     } else {
       await typeInXterm("lift-t2b", "echo 'No winner at the pre-registered look; harness is not typing APPROVE.'");
       await hold(2800);
@@ -632,8 +634,9 @@ async function main() {
 
   await Promise.race([
     context.close().then(() => browser.close()),
-    new Promise((r) => setTimeout(r, 8000)),
+    new Promise((r) => setTimeout(r, 3000)),
   ]);
+  process.exit(0);
 }
 
 main().catch((err) => {

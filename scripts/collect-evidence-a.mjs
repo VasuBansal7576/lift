@@ -32,6 +32,10 @@ const NAMES = [
   "04-capture-click-no-double",
   "04-label-in-name-attributed",
   "04-overflow-matches-contrast",
+  "04-page-contrast-no-loop",
+  "04-attribution-keeps-focus",
+  "04-per-node-attribution",
+  "04-cssom-edit-detected",
   "05-sticky-identity",
 ];
 

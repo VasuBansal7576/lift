@@ -46,6 +46,16 @@ function allFixes(on) {
   };
 }
 
+function applyDisableAutofill(config) {
+  if (config?.disableAutofill !== true) return;
+  const form = document.getElementById("checkout-form");
+  if (!form) return;
+  form.setAttribute("autocomplete", "off");
+  for (const el of form.querySelectorAll("input, select, textarea")) {
+    el.setAttribute("autocomplete", "off");
+  }
+}
+
 function isNativeActivateTarget(el) {
   if (!el || el.nodeType !== 1) return false;
   if (/^(BUTTON|A|INPUT|SELECT|TEXTAREA)$/i.test(el.tagName)) return true;
@@ -276,6 +286,7 @@ async function main() {
   bindBaseHandlers();
   const mock = params().get("lift_variant");
   const config = await loadConfig();
+  applyDisableAutofill(config);
   const identity = resolveVisitorId(
     browserIdentityEnv({ allowBotOverride: config?.allowBotOverride === true }),
   );

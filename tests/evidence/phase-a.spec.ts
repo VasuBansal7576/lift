@@ -1,26 +1,21 @@
+import { createRequire } from "node:module";
 import { AxeBuilder } from "@axe-core/playwright";
 import { expect, test, type Page } from "@playwright/test";
 import { AXE_GATE_RULES } from "../../shared/patch-spec.ts";
+
+const require = createRequire(import.meta.url);
+const axePath = require.resolve("axe-core/axe.min.js");
 
 async function pause(page: Page, ms = 1600) {
   await page.waitForTimeout(ms);
 }
 
-async function showBanner(page: Page, text: string) {
-  await page.evaluate((message) => {
-    let el = document.getElementById("lift-evidence-banner");
-    if (!el) {
-      el = document.createElement("div");
-      el.id = "lift-evidence-banner";
-      el.setAttribute("data-evidence", "1");
-      el.style.cssText =
-        "position:fixed;top:0;left:0;right:0;z-index:2147483647;padding:14px 18px;font:600 18px/1.4 system-ui,sans-serif;background:#111;color:#fff;box-shadow:0 8px 24px rgba(0,0,0,.45)";
-      document.body.prepend(el);
-    }
-    el.textContent = message;
-  }, text);
-  await pause(page);
+async function logEvidence(page: Page, value: unknown) {
+  await page.evaluate((v) => {
+    console.log(v);
+  }, value);
 }
+
 
 async function axeSummary(page: Page) {
   const results = await new AxeBuilder({ page }).include("body").analyze();
@@ -75,33 +70,22 @@ async function fillCheckout(page: Page) {
 
 async function paintIdentityReadout(page: Page) {
   return page.evaluate(() => {
-    let el = document.getElementById("lift-cookie-readout");
-    if (!el) {
-      el = document.createElement("pre");
-      el.id = "lift-cookie-readout";
-      el.setAttribute("data-evidence", "1");
-      el.style.cssText =
-        "position:fixed;bottom:0;left:0;right:0;z-index:2147483647;margin:0;padding:12px 18px;font:16px/1.4 ui-monospace,monospace;background:#063;color:#fff;white-space:pre-wrap";
-      document.body.append(el);
-    }
     const cookie = document.cookie;
     const variant = document.body.getAttribute("data-variant") ?? "";
     const status = document.getElementById("flag-status")?.textContent ?? "";
-    el.textContent = `document.cookie=${cookie}\ndata-variant=${variant}\n#flag-status=${status}`;
-    return { cookie, variant, status, text: el.textContent };
+    const text = `document.cookie=${cookie}\ndata-variant=${variant}\n#flag-status=${status}`;
+    return { cookie, variant, status, text };
   });
 }
 
 test("01-control-barriers", async ({ page }) => {
   await page.goto("/checkout/?lift_variant=control");
   await expect(page.locator("body")).toHaveAttribute("data-variant", "control");
-  await showBanner(page, "CONTROL — hover to open Shop, unlabeled icon, unlabeled fields, low contrast, div Pay");
+  await pause(page);
   await openCheckoutWithHover(page);
   const axe = await axeSummary(page);
-  await showBanner(
-    page,
-    `CONTROL axe: ${axe.total} violations — gate [${axe.gate.join(", ") || "none"}]`,
-  );
+  await logEvidence(page, { axe: axe.ids, gate: axe.gate });
+  await pause(page);
   for (const rule of AXE_GATE_RULES) {
     expect(axe.gate, `control should violate ${rule}`).toContain(rule);
   }
@@ -110,35 +94,35 @@ test("01-control-barriers", async ({ page }) => {
   await pause(page, 2000);
 });
 
+async function injectAxe(page: Page) {
+  await page.addScriptTag({ path: axePath });
+}
+
 test("02-treatment-before-after", async ({ page }) => {
   await page.goto("/checkout/?lift_variant=control");
   await openCheckoutWithHover(page);
+  await injectAxe(page);
+  await pause(page, 1200);
   const beforeAxe = await axeSummary(page);
-  await showBanner(
-    page,
-    `BEFORE runtime spec — ${beforeAxe.total} axe violations, gate [${beforeAxe.gate.join(", ")}]`,
-  );
+  await logEvidence(page, { axeBefore: beforeAxe.ids });
   await expect(page.locator("#place-order")).toHaveJSProperty("tagName", "DIV");
+  await pause(page);
   const applied = await applyTreatment(page);
   expect(applied.ok).toBe(true);
-  await pause(page, 800);
+  await pause(page, 1800);
   await expect(page.locator("#shop-trigger")).toHaveRole("button");
   await expect(page.locator('label[for="email"]')).toHaveText("Email");
   await expect(page.locator("#place-order")).toHaveRole("button");
   await expect(page.locator("#place-order")).toHaveText("Place order");
+  await pause(page, 1200);
   const afterAxe = await axeSummary(page);
-  const leftoverNote =
-    "leftover region on .sim-banner — fixture demo note sits outside header/main landmarks; not a gate rule (label/button-name/color-contrast); promoteToControl cannot emit landmark tags";
-  await showBanner(
-    page,
-    `AFTER runtime.js spec — ${afterAxe.total} axe violations (was ${beforeAxe.total}); gate [${afterAxe.gate.join(", ") || "cleared"}]; ${leftoverNote}`,
-  );
+  await logEvidence(page, { axeAfter: afterAxe.ids });
   expect(beforeAxe.total, "control axe count").toBe(4);
   expect(afterAxe.gate, "treatment should clear the axe gate").toEqual([]);
   expect(afterAxe.ids, "one leftover non-gate region on the demo banner").toEqual(["region"]);
   expect(afterAxe.total, "treatment leftover axe count").toBe(1);
   await page.locator("#place-order").focus();
-  await pause(page, 2000);
+  await pause(page, 1800);
 });
 
 test("03-keyboard-submit-once", async ({ page }) => {
@@ -150,10 +134,7 @@ test("03-keyboard-submit-once", async ({ page }) => {
     });
   });
   expect((await applyTreatment(page)).ok).toBe(true);
-  await showBanner(
-    page,
-    "KEYBOARD — Tab to Shop, Enter opens menu (toggleDisclosure), Tab to Checkout, Enter, fill, Tab to Place order, one Enter. No mouse.",
-  );
+  await pause(page);
   await openCheckoutWithKeyboard(page);
   await fillCheckout(page);
   await page.keyboard.press("Tab");
@@ -161,14 +142,14 @@ test("03-keyboard-submit-once", async ({ page }) => {
   await page.keyboard.press("Space");
   await page.keyboard.press("Tab");
   await expect(page.locator("#place-order")).toBeFocused();
-  await showBanner(page, "Place order focused — pressing Enter once");
+  await pause(page);
   await page.keyboard.press("Enter");
   const clicks = await page.evaluate(
     () => (window as unknown as { __payClicks: number }).__payClicks,
   );
   expect(clicks).toBe(1);
   await expect(page.locator("#confirmation")).toBeVisible();
-  await showBanner(page, `SUBMITTED — original click handlers fired ${clicks} time (want 1)`);
+  await logEvidence(page, { clicks });
   await pause(page, 2000);
 });
 
@@ -196,6 +177,14 @@ async function applyAttack(
     };
     return runtime.applyPatchSpec(input);
   }, spec);
+}
+
+async function liftCssEnabled(page: Page) {
+  return page.evaluate(() =>
+    [...document.querySelectorAll("[data-lift-css]")].some(
+      (el) => el instanceof HTMLStyleElement && !el.disabled,
+    ),
+  );
 }
 
 async function setBackstopsPaused(page: Page, paused: boolean) {
@@ -226,9 +215,25 @@ async function paintContrastReadout(
         if (m) return Number(m[1]);
         return /rgba/i.test(value) ? 0 : 1;
       };
+      const parseCssColor = (value: string): number[] | null => {
+        const comma = String(value).match(/rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/i);
+        if (comma) return [Number(comma[1]), Number(comma[2]), Number(comma[3])];
+        const space = String(value).match(/rgba?\(\s*(\d+)\s+(\d+)\s+(\d+)/i);
+        if (space) return [Number(space[1]), Number(space[2]), Number(space[3])];
+        const hex = String(value).trim();
+        const canvas = document.createElement("canvas");
+        canvas.width = canvas.height = 1;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) return null;
+        ctx.fillStyle = "#000";
+        ctx.fillStyle = hex;
+        const canonical = String(ctx.fillStyle);
+        const parsed = canonical.match(/rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/i);
+        return parsed ? [Number(parsed[1]), Number(parsed[2]), Number(parsed[3])] : null;
+      };
       const lin = (c: number) => {
         const n = c / 255;
-        return n <= 0.03928 ? n / 12.92 : ((n + 0.055) / 1.055) ** 2.4;
+        return n <= 0.04045 ? n / 12.92 : ((n + 0.055) / 1.055) ** 2.4;
       };
       const lum = (rgb: number[]) => 0.2126 * lin(rgb[0]) + 0.7152 * lin(rgb[1]) + 0.0722 * lin(rgb[2]);
       const ratio = (fg: number[], bg: number[]) => {
@@ -242,9 +247,9 @@ async function paintContrastReadout(
         let node: HTMLElement | null = el;
         while (node) {
           const raw = getComputedStyle(node).backgroundColor;
-          const parsed = parseRgb(raw);
+          const parsed = parseCssColor(raw) || parseRgb(raw);
           const alpha = alphaOf(raw);
-          if (parsed && Number.isFinite(alpha) && alpha >= 0.99) return parsed;
+          if (parsed && (Number.isNaN(alpha) || alpha >= 0.99)) return parsed;
           node = node.parentElement;
         }
         return [255, 255, 255];
@@ -252,8 +257,6 @@ async function paintContrastReadout(
       const el = document.querySelector(sel);
       if (!(el instanceof HTMLElement)) return;
       if (!restored) {
-        el.style.outline = "3px dashed #f00";
-        el.style.outlineOffset = "2px";
         const range = document.createRange();
         range.selectNodeContents(el);
         const selection = window.getSelection();
@@ -261,25 +264,13 @@ async function paintContrastReadout(
         selection?.addRange(range);
       } else {
         window.getSelection()?.removeAllRanges();
-        el.style.outline = "";
-        el.style.outlineOffset = "";
       }
       const color = getComputedStyle(el).color;
-      const fg = parseRgb(color) || [255, 255, 255];
+      const fg = parseCssColor(color) || parseRgb(color) || [255, 255, 255];
       const bg = effectiveBg(el);
       const bgCss = `rgb(${bg[0]}, ${bg[1]}, ${bg[2]})`;
       const n = ratio(fg, bg);
-      let capEl = document.getElementById("lift-bad-state");
-      if (!capEl) {
-        capEl = document.createElement("div");
-        capEl.id = "lift-bad-state";
-        capEl.setAttribute("data-evidence", "1");
-        document.body.append(capEl);
-      }
-      capEl.style.cssText = restored
-        ? "position:fixed;bottom:16px;left:16px;right:16px;z-index:2147483647;padding:12px 16px;font:600 16px/1.4 ui-monospace,monospace;background:#14532d;color:#fff;border:4px solid #22c55e"
-        : "position:fixed;bottom:16px;left:16px;right:16px;z-index:2147483647;padding:12px 16px;font:600 16px/1.4 ui-monospace,monospace;background:#7f1d1d;color:#fff;border:4px dashed #f00";
-      capEl.textContent = `${cap}\n${color} on ${bgCss} = ${n.toFixed(2)}:1`;
+      console.log(`${cap}\n${color} on ${bgCss} = ${n.toFixed(2)}:1`);
     },
     { sel: selector, cap: caption, restored: kind === "restored" },
   );
@@ -295,32 +286,14 @@ async function showRestoredReadout(page: Page, selector: string, caption: string
 }
 
 async function markBadState(page: Page, selector: string, caption: string) {
-  await page.evaluate(
-    ({ sel, cap }) => {
-      const el = document.querySelector(sel);
-      if (el instanceof HTMLElement) {
-        el.style.outline = "6px dashed #f00";
-        el.style.outlineOffset = "6px";
-      }
-      let capEl = document.getElementById("lift-bad-state");
-      if (!capEl) {
-        capEl = document.createElement("div");
-        capEl.id = "lift-bad-state";
-        capEl.setAttribute("data-evidence", "1");
-        capEl.style.cssText =
-          "position:fixed;bottom:72px;left:24px;right:24px;z-index:2147483647;padding:18px 22px;font:800 32px/1.2 system-ui,sans-serif;background:#7f1d1d;color:#fff;border:6px dashed #f00;text-align:center";
-        document.body.append(capEl);
-      }
-      capEl.textContent = cap;
-    },
-    { sel: selector, cap: caption },
-  );
+  await page.evaluate((cap) => {
+    console.log(cap);
+  }, caption);
   await pause(page, 1500);
 }
 
 async function clearBadState(page: Page) {
   await page.evaluate(() => {
-    document.getElementById("lift-bad-state")?.remove();
     window.getSelection()?.removeAllRanges();
   });
 }
@@ -329,7 +302,7 @@ test("04-typed-body-tag", async ({ page }) => {
   await page.goto("/checkout/?lift_variant=control");
   await openCheckoutWithHover(page);
   const before = await snapshotPage(page);
-  await showBanner(page, "FAIL-OPEN — typed injectCSS { tag: 'body' } is unrepresentable");
+  await pause(page);
   const result = await applyAttack(page, {
     id: "evil-body-tag",
     version: 0,
@@ -349,7 +322,7 @@ test("04-typed-body-tag", async ({ page }) => {
   const after = await snapshotPage(page);
   expect(after.pay).toBe(before.pay);
   expect(after.html).toBe(before.html);
-  await showBanner(page, `REJECTED {tag:'body'} (${result.error ?? "not allowlisted"}) — page unchanged`);
+  await pause(page);
   await pause(page, 2000);
 });
 
@@ -357,7 +330,7 @@ test("04-typed-opacity", async ({ page }) => {
   await page.goto("/checkout/?lift_variant=control");
   await openCheckoutWithHover(page);
   const before = await snapshotPage(page);
-  await showBanner(page, "FAIL-OPEN — typed property 'opacity' is unrepresentable");
+  await pause(page);
   const result = await applyAttack(page, {
     id: "evil-opacity",
     version: 0,
@@ -378,7 +351,7 @@ test("04-typed-opacity", async ({ page }) => {
   expect(after.pay).toBe(before.pay);
   expect(after.opacity).toBe(before.opacity);
   expect(after.html).toBe(before.html);
-  await showBanner(page, `REJECTED property:'opacity' (${result.error ?? "not allowlisted"}) — opacity ${after.opacity}`);
+  await pause(page);
   await pause(page, 2000);
 });
 
@@ -386,7 +359,7 @@ test("04-typed-not-state", async ({ page }) => {
   await page.goto("/checkout/?lift_variant=control");
   await openCheckoutWithHover(page);
   const before = await snapshotPage(page);
-  await showBanner(page, "FAIL-OPEN — typed state 'not(x)' is unrepresentable");
+  await pause(page);
   const result = await applyAttack(page, {
     id: "evil-not",
     version: 0,
@@ -406,7 +379,7 @@ test("04-typed-not-state", async ({ page }) => {
   const after = await snapshotPage(page);
   expect(after.pay).toBe(before.pay);
   expect(after.html).toBe(before.html);
-  await showBanner(page, `REJECTED state:'not(x)' (${result.error ?? "not allowlisted"}) — page unchanged`);
+  await pause(page);
   await pause(page, 2000);
 });
 
@@ -415,7 +388,7 @@ test("04-typed-body-class-anchor", async ({ page }) => {
   await openCheckoutWithHover(page);
   await page.evaluate(() => document.body.classList.add("lift-atk"));
   const before = await snapshotPage(page);
-  await showBanner(page, "FAIL-OPEN — class anchor matching <body class> is undone at apply time");
+  await pause(page);
   const result = await applyAttack(page, {
     id: "evil-body-class",
     version: 0,
@@ -435,10 +408,7 @@ test("04-typed-body-class-anchor", async ({ page }) => {
   const after = await snapshotPage(page);
   expect(after.pay).toBe(before.pay);
   expect(after.color).toBe(before.color);
-  await showBanner(
-    page,
-    `REJECTED body class anchor (${result.error ?? "apply-time host backstop"}) — body color unchanged`,
-  );
+  await pause(page);
   await pause(page, 2000);
 });
 
@@ -446,7 +416,7 @@ test("04-typed-color-eq-background", async ({ page }) => {
   await page.goto("/checkout/?lift_variant=control");
   await openCheckoutWithHover(page);
   const before = await snapshotPage(page);
-  await showBanner(page, "FAIL-OPEN — color == background-color (#fff/#fff) is rejected");
+  await pause(page);
   const result = await applyAttack(page, {
     id: "evil-contrast",
     version: 0,
@@ -469,10 +439,7 @@ test("04-typed-color-eq-background", async ({ page }) => {
   const after = await snapshotPage(page);
   expect(after.pay).toBe(before.pay);
   expect(after.html).toBe(before.html);
-  await showBanner(
-    page,
-    `REJECTED color==background (${result.error ?? "not allowlisted"}) — page unchanged`,
-  );
+  await pause(page);
   await pause(page, 2000);
 });
 
@@ -480,7 +447,7 @@ test("04-typed-hover-invisible", async ({ page }) => {
   await page.goto("/checkout/?lift_variant=control");
   await openCheckoutWithHover(page);
   const before = await snapshotPage(page);
-  await showBanner(page, "FAIL-OPEN — state rule hover { color } is unrepresentable");
+  await pause(page);
   const result = await applyAttack(page, {
     id: "evil-hover-color",
     version: 0,
@@ -500,10 +467,7 @@ test("04-typed-hover-invisible", async ({ page }) => {
   const after = await snapshotPage(page);
   expect(after.pay).toBe(before.pay);
   expect(after.html).toBe(before.html);
-  await showBanner(
-    page,
-    `REJECTED hover color (${result.error ?? "not allowlisted"}) — page unchanged`,
-  );
+  await pause(page);
   await pause(page, 2000);
 });
 
@@ -513,7 +477,7 @@ test("04-replace-button-to-span", async ({ page }) => {
   expect((await applyTreatment(page)).ok).toBe(true);
   await expect(page.locator("#place-order")).toHaveJSProperty("tagName", "DIV");
   await expect(page.locator("#place-order")).toHaveAttribute("role", "button");
-  await showBanner(page, "FAIL-OPEN — replaceTag is parse-rejected; Place order stays the original DIV");
+  await pause(page);
   const result = await applyAttack(page, {
     id: "evil-btn-span",
     version: 0,
@@ -522,17 +486,14 @@ test("04-replace-button-to-span", async ({ page }) => {
   expect(result.ok).toBe(false);
   await expect(page.locator("#place-order")).toHaveJSProperty("tagName", "DIV");
   await expect(page.locator("#place-order")).toHaveAttribute("role", "button");
-  await showBanner(
-    page,
-    `REJECTED replaceTag (${result.error ?? "promoteToControl"}) — Place order stays DIV role=button`,
-  );
+  await pause(page);
   await pause(page, 2000);
 });
 
 test("04-late-content", async ({ page }) => {
   await page.goto("/checkout/?lift_variant=control&lift_bot=1");
   await openCheckoutWithHover(page);
-  await showBanner(page, "MutationObserver — apply legal CSS, then inject late low-contrast text");
+  await pause(page);
   const applied = await page.evaluate(async () => {
     const href = new URL("/runtime/runtime.js", location.origin).href;
     const runtime = (await import(href)) as {
@@ -584,7 +545,9 @@ test("04-late-content", async ({ page }) => {
     const failOpen = (window as unknown as { __LIFT_FAIL_OPEN__?: { reason: string }[] })
       .__LIFT_FAIL_OPEN__;
     return {
-      css: Boolean(document.querySelector("[data-lift-css]")),
+      css: [...document.querySelectorAll("[data-lift-css]")].some(
+        (el) => el instanceof HTMLStyleElement && !el.disabled,
+      ),
       failOpen: failOpen?.length ?? 0,
       reason: failOpen?.[failOpen.length - 1]?.reason ?? "",
     };
@@ -604,7 +567,7 @@ test("04-descendant-contrast", async ({ page }) => {
   await page.goto("/checkout/?lift_variant=control&lift_bot=1");
   await openCheckoutWithHover(page);
   const before = await snapshotPage(page);
-  await showBanner(page, "FAIL-OPEN — parent contrast is fine, descendant ghost text is not");
+  await pause(page);
   await setBackstopsPaused(page, true);
   const result = await page.evaluate(async () => {
     const href = new URL("/runtime/runtime.js", location.origin).href;
@@ -645,7 +608,7 @@ test("04-descendant-contrast", async ({ page }) => {
   await showGhostReadout(page, ".lift-ghost", "BAD STATE: white-on-white");
   await setBackstopsPaused(page, false);
   await page.waitForTimeout(80);
-  expect(await page.evaluate(() => Boolean(document.querySelector("[data-lift-css]")))).toBe(false);
+  expect(await liftCssEnabled(page)).toBe(false);
   const after = await snapshotPage(page);
   expect(after.pay).toBe(before.pay);
   await showRestoredReadout(page, ".lift-ghost", "UNDONE descendant contrast — injected CSS removed");
@@ -657,7 +620,7 @@ test("04-descendant-contrast", async ({ page }) => {
 test("04-promote-keeps-handlers", async ({ page }) => {
   await page.goto("/checkout/?lift_variant=control");
   await openCheckoutWithHover(page);
-  await showBanner(page, "promoteToControl keeps the original DIV and its click handler");
+  await pause(page);
   const setup = await page.evaluate(async () => {
     const href = new URL("/runtime/runtime.js", location.origin).href;
     const runtime = (await import(href)) as {
@@ -699,19 +662,19 @@ test("04-promote-keeps-handlers", async ({ page }) => {
   expect(setup.role).toBe("button");
   await page.locator("#promo-toggle").click();
   await expect(page.locator("#promo-panel")).toBeVisible();
-  await showBanner(page, "MOUSE — original click handler opened the accordion");
+  await pause(page);
   await page.locator("#promo-toggle").click();
   await expect(page.locator("#promo-panel")).toBeHidden();
   await page.locator("#promo-toggle").focus();
   await page.keyboard.press("Enter");
   await expect(page.locator("#promo-panel")).toBeVisible();
-  await showBanner(page, "KEYBOARD — Enter on the promoted DIV opened the accordion again");
+  await pause(page);
   expect((await applyTreatment(page)).ok).toBe(true);
   await fillCheckout(page);
   await page.locator("#terms").check();
   await page.locator("#place-order").click();
   await expect(page.locator("#confirmation")).toBeVisible();
-  await showBanner(page, "SUBMITTED — real checkout form showed order confirmation. No stray Pay now.");
+  await pause(page);
   await expect(page.locator("#keep-submit")).toHaveCount(0);
   await pause(page, 2000);
 });
@@ -719,7 +682,7 @@ test("04-promote-keeps-handlers", async ({ page }) => {
 test("04-focus-within-color", async ({ page }) => {
   await page.goto("/checkout/?lift_variant=control");
   await openCheckoutWithHover(page);
-  await showBanner(page, "E2 — any selector.state may set only outline-* / text-decoration-*");
+  await pause(page);
   const result = await applyAttack(page, {
     id: "fw-color",
     version: 0,
@@ -736,17 +699,14 @@ test("04-focus-within-color", async ({ page }) => {
     ],
   });
   expect(result.ok).toBe(false);
-  await showBanner(
-    page,
-    `REJECTED focus-within color (${result.error ?? "not allowlisted"}) — page unchanged`,
-  );
+  await pause(page);
   await pause(page, 2000);
 });
 
 test("04-covered-control", async ({ page }) => {
   await page.goto("/checkout/?lift_variant=control&lift_bot=1");
   await openCheckoutWithHover(page);
-  await showBanner(page, "W1 — enlarged fixed cookie bar covers Buy, then the spec is undone");
+  await pause(page);
   await setBackstopsPaused(page, true);
   const applied = await page.evaluate(async () => {
     const href = new URL("/runtime/runtime.js", location.origin).href;
@@ -803,7 +763,9 @@ test("04-covered-control", async ({ page }) => {
     const box = buy.getBoundingClientRect();
     const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
     return {
-      css: Boolean(document.querySelector("[data-lift-css]")),
+      css: [...document.querySelectorAll("[data-lift-css]")].some(
+        (el) => el instanceof HTMLStyleElement && !el.disabled,
+      ),
       hitOk: hit === buy || Boolean(buy.contains(hit)),
     };
   });
@@ -817,14 +779,14 @@ test("04-covered-control", async ({ page }) => {
     }
   });
   await clearBadState(page);
-  await showBanner(page, "UNDONE covering cookie bar — Buy is hittable again");
+  await pause(page);
   await pause(page, 2000);
 });
 
 test("04-reapply-guard", async ({ page }) => {
   await page.goto("/checkout/?lift_variant=control&lift_bot=1");
   await openCheckoutWithHover(page);
-  await showBanner(page, "E1 — apply the same spec twice, then a spec-caused ghost; undos must still fire");
+  await pause(page);
   const applied = await page.evaluate(async () => {
     const href = new URL("/runtime/runtime.js", location.origin).href;
     const runtime = (await import(href)) as {
@@ -877,7 +839,7 @@ test("04-reapply-guard", async ({ page }) => {
   await showGhostReadout(page, ".lift-ghost", "BAD STATE: white-on-white after re-apply left undos");
   await setBackstopsPaused(page, false);
   await page.waitForTimeout(80);
-  expect(await page.evaluate(() => Boolean(document.querySelector("[data-lift-css]")))).toBe(false);
+  expect(await liftCssEnabled(page)).toBe(false);
   await expect(page.locator("#panel")).toContainText("Theme panel");
   await showRestoredReadout(page, "#panel", "UNDONE — Theme panel is readable again (effective background)");
   await clearBadState(page);
@@ -887,7 +849,7 @@ test("04-reapply-guard", async ({ page }) => {
 test("04-cssom-insertRule", async ({ page }) => {
   await page.goto("/checkout/?lift_variant=control&lift_bot=1");
   await openCheckoutWithHover(page);
-  await showBanner(page, "W2 — CSSOM insertRule is visible to the guard");
+  await pause(page);
   const applied = await page.evaluate(async () => {
     const href = new URL("/runtime/runtime.js", location.origin).href;
     const runtime = (await import(href)) as {
@@ -949,7 +911,9 @@ test("04-cssom-insertRule", async ({ page }) => {
     await new Promise((resolve) => setTimeout(resolve, 120));
     const el = document.querySelector(".slot");
     return {
-      hasCss: Boolean(document.querySelector("[data-lift-css]")),
+      hasCss: [...document.querySelectorAll("[data-lift-css]")].some(
+        (el) => el instanceof HTMLStyleElement && !el.disabled,
+      ),
       color: el instanceof HTMLElement ? getComputedStyle(el).color : "",
       bg: el instanceof HTMLElement ? getComputedStyle(el).backgroundColor : "",
     };
@@ -963,7 +927,7 @@ test("04-cssom-insertRule", async ({ page }) => {
 test("04-promote-no-double", async ({ page }) => {
   await page.goto("/checkout/?lift_variant=control");
   await openCheckoutWithHover(page);
-  await showBanner(page, "W1 — host preventDefault()+click on Enter must activate exactly once");
+  await pause(page);
   const setup = await page.evaluate(async () => {
     const href = new URL("/runtime/runtime.js", location.origin).href;
     const runtime = (await import(href)) as {
@@ -975,21 +939,17 @@ test("04-promote-no-double", async ({ page }) => {
     host.style.cssText =
       "display:inline-block;margin:12px 0;padding:10px 16px;background:#111;color:#fff;cursor:pointer;font:700 18px/1.3 system-ui";
     host.textContent = "Activate";
-    const counter = document.createElement("div");
-    counter.id = "activation-count";
-    counter.style.cssText = "font:700 28px/1.2 ui-monospace,monospace;margin:8px 0";
-    counter.textContent = "activations: 0";
-    let clicks = 0;
+    (window as unknown as { __noDoubleClicks: number }).__noDoubleClicks = 0;
     host.addEventListener("keydown", (event) => {
       if (event.key !== "Enter") return;
       event.preventDefault();
       host.click();
     });
     host.addEventListener("click", () => {
-      clicks += 1;
-      counter.textContent = `activations: ${clicks}`;
+      (window as unknown as { __noDoubleClicks: number }).__noDoubleClicks += 1;
+      console.log("clicks", (window as unknown as { __noDoubleClicks: number }).__noDoubleClicks);
     });
-    checkout.append(host, counter);
+    checkout.append(host);
     return runtime.applyPatchSpec({
       id: "no-double",
       version: 0,
@@ -999,15 +959,18 @@ test("04-promote-no-double", async ({ page }) => {
   expect(setup.ok).toBe(true);
   await page.locator("#no-double").focus();
   await page.keyboard.press("Enter");
-  await expect(page.locator("#activation-count")).toHaveText("activations: 1");
-  await showBanner(page, "activations: 1 — host Enter handler plus bridge did not double-fire");
+  const activations = await page.evaluate(
+    () => (window as unknown as { __noDoubleClicks: number }).__noDoubleClicks,
+  );
+  expect(activations).toBe(1);
+  await logEvidence(page, { clicks: activations });
   await pause(page, 2000);
 });
 
 test("04-guard-page-modal", async ({ page }) => {
   await page.goto("/checkout/?lift_variant=control&lift_bot=1");
   await openCheckoutWithHover(page);
-  await showBanner(page, "W3 — a page modal appears; the spec did not cause it, so the fix STAYS");
+  await pause(page);
   const applied = await page.evaluate(async () => {
     const href = new URL("/runtime/runtime.js", location.origin).href;
     const runtime = (await import(href)) as {
@@ -1052,20 +1015,20 @@ test("04-guard-page-modal", async ({ page }) => {
       "position:fixed;inset:20% 15%;z-index:20;background:#fff;color:#111;border:4px solid #111;padding:24px;font:700 22px/1.3 system-ui;box-shadow:0 12px 40px rgba(0,0,0,.4)";
     document.body.append(modal);
   });
-  await showBanner(page, "page-caused, fix kept");
+  await pause(page);
   await setBackstopsPaused(page, false);
   await page.waitForTimeout(80);
   const stayed = await page.evaluate(() => Boolean(document.querySelector("[data-lift-css]")));
   expect(stayed).toBe(true);
   await expect(page.locator("#page-modal")).toBeVisible();
-  await showBanner(page, "page-caused, fix kept — injected CSS still present after the modal");
+  await pause(page);
   await pause(page, 2000);
 });
 
 test("04-guard-spec-caused", async ({ page }) => {
   await page.goto("/checkout/?lift_variant=control&lift_bot=1");
   await openCheckoutWithHover(page);
-  await showBanner(page, "W3 — a spec-caused white-on-white descendant is still undone");
+  await pause(page);
   const applied = await page.evaluate(async () => {
     const href = new URL("/runtime/runtime.js", location.origin).href;
     const runtime = (await import(href)) as {
@@ -1114,7 +1077,7 @@ test("04-guard-spec-caused", async ({ page }) => {
   await showGhostReadout(page, ".lift-ghost", "BAD STATE: spec-caused white-on-white");
   await setBackstopsPaused(page, false);
   await page.waitForTimeout(80);
-  expect(await page.evaluate(() => Boolean(document.querySelector("[data-lift-css]")))).toBe(false);
+  expect(await liftCssEnabled(page)).toBe(false);
   await showRestoredReadout(page, "#spec-panel", "UNDONE spec-caused regression — panel readable again");
   await clearBadState(page);
   await pause(page, 800);
@@ -1123,7 +1086,7 @@ test("04-guard-spec-caused", async ({ page }) => {
 test("04-dropdown-keeps-fix", async ({ page }) => {
   await page.goto("/checkout/?lift_variant=control&lift_bot=1");
   await openCheckoutWithHover(page);
-  await showBanner(page, "W4 — color fix on a nav; opening a submenu must not undo it");
+  await pause(page);
   const applied = await page.evaluate(async () => {
     const href = new URL("/runtime/runtime.js", location.origin).href;
     const runtime = (await import(href)) as {
@@ -1171,19 +1134,19 @@ test("04-dropdown-keeps-fix", async ({ page }) => {
       "position:absolute;top:100%;left:0;width:240px;height:80px;background:#111;color:#fff;z-index:9;padding:12px;font:600 16px/1.3 system-ui";
     document.getElementById("color-nav")?.append(menu);
   });
-  await showBanner(page, "submenu open over Buy — color fix kept");
+  await pause(page);
   await setBackstopsPaused(page, false);
   await page.waitForTimeout(80);
   expect(await page.evaluate(() => Boolean(document.querySelector("[data-lift-css]")))).toBe(true);
   await expect(page.locator("#nav-submenu")).toBeVisible();
-  await showBanner(page, "FIX KEPT — dropdown overlay was page-caused, not the spec");
+  await pause(page);
   await pause(page, 2000);
 });
 
 test("04-sticky-hit-target-covers-rejected", async ({ page }) => {
   await page.goto("/checkout/?lift_variant=control&lift_bot=1");
   await openCheckoutWithHover(page);
-  await showBanner(page, "I1 — a grown sticky link must not cover Buy");
+  await pause(page);
   await setBackstopsPaused(page, true);
   const applied = await page.evaluate(async () => {
     const href = new URL("/runtime/runtime.js", location.origin).href;
@@ -1244,7 +1207,9 @@ test("04-sticky-hit-target-covers-rejected", async ({ page }) => {
     const box = buy.getBoundingClientRect();
     const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
     return {
-      css: Boolean(document.querySelector("[data-lift-css]")),
+      css: [...document.querySelectorAll("[data-lift-css]")].some(
+        (el) => el instanceof HTMLStyleElement && !el.disabled,
+      ),
       hitOk: hit === buy || Boolean(buy.contains(hit)),
     };
   });
@@ -1258,14 +1223,14 @@ test("04-sticky-hit-target-covers-rejected", async ({ page }) => {
     }
   });
   await clearBadState(page);
-  await showBanner(page, "REJECTED — Buy is hittable again; grown sticky link undone");
+  await pause(page);
   await pause(page, 2000);
 });
 
 test("04-capture-click-no-double", async ({ page }) => {
   await page.goto("/checkout/?lift_variant=control");
   await openCheckoutWithHover(page);
-  await showBanner(page, "W2 — capture-phase click without preventDefault must activate once");
+  await pause(page);
   const setup = await page.evaluate(async () => {
     const href = new URL("/runtime/runtime.js", location.origin).href;
     const runtime = (await import(href)) as {
@@ -1277,11 +1242,7 @@ test("04-capture-click-no-double", async ({ page }) => {
     host.style.cssText =
       "display:inline-block;margin:12px 0;padding:10px 16px;background:#111;color:#fff;cursor:pointer;font:700 18px/1.3 system-ui";
     host.textContent = "Activate";
-    const counter = document.createElement("div");
-    counter.id = "capture-count";
-    counter.style.cssText = "font:700 28px/1.2 ui-monospace,monospace;margin:8px 0";
-    counter.textContent = "activations: 0";
-    let clicks = 0;
+    (window as unknown as { __capClicks: number }).__capClicks = 0;
     host.addEventListener(
       "keydown",
       () => {
@@ -1290,10 +1251,10 @@ test("04-capture-click-no-double", async ({ page }) => {
       true,
     );
     host.addEventListener("click", () => {
-      clicks += 1;
-      counter.textContent = `activations: ${clicks}`;
+      (window as unknown as { __capClicks: number }).__capClicks += 1;
+      console.log("clicks", (window as unknown as { __capClicks: number }).__capClicks);
     });
-    checkout.append(host, counter);
+    checkout.append(host);
     return runtime.applyPatchSpec({
       id: "cap-once",
       version: 0,
@@ -1303,15 +1264,31 @@ test("04-capture-click-no-double", async ({ page }) => {
   expect(setup.ok).toBe(true);
   await page.locator("#cap-once").focus();
   await page.keyboard.press("Enter");
-  await expect(page.locator("#capture-count")).toHaveText("activations: 1");
-  await showBanner(page, "activations: 1 — capture click plus bridge did not double-fire");
+  const capClicks = await page.evaluate(
+    () => (window as unknown as { __capClicks: number }).__capClicks,
+  );
+  expect(capClicks).toBe(1);
+  await logEvidence(page, { clicks: capClicks });
   await pause(page, 2000);
 });
+
+async function logLiveName(page: Page, selector: string) {
+  await page.evaluate((sel) => {
+    const el = document.querySelector(sel);
+    if (!(el instanceof HTMLElement)) return;
+    const name = (el.getAttribute("aria-label") || el.textContent || "").trim();
+    console.log({
+      computed: name,
+      visible: (el.textContent || "").trim(),
+      ariaLabel: el.getAttribute("aria-label") ?? "",
+    });
+  }, selector);
+}
 
 test("04-label-in-name-attributed", async ({ page }) => {
   await page.goto("/checkout/?lift_variant=control&lift_bot=1");
   await openCheckoutWithHover(page);
-  await showBanner(page, "W3 — aria-label is undone when the visible text no longer matches");
+  await pause(page);
   const applied = await page.evaluate(async () => {
     const href = new URL("/runtime/runtime.js", location.origin).href;
     const runtime = (await import(href)) as {
@@ -1331,44 +1308,29 @@ test("04-label-in-name-attributed", async ({ page }) => {
     });
   });
   expect(applied.ok).toBe(true);
+  await logLiveName(page, "#named-pay");
+  await pause(page, 1200);
   await setBackstopsPaused(page, true);
-  const before = await page.evaluate(() => {
+  await page.evaluate(() => {
     const pay = document.getElementById("named-pay");
-    if (!(pay instanceof HTMLElement)) return { name: "", text: "" };
-    pay.textContent = "Checkout (2)";
-    return {
-      labelled: pay.getAttribute("aria-label") ?? "",
-      text: pay.textContent ?? "",
-      computed: pay.getAttribute("aria-label") || pay.textContent || "",
-    };
+    if (pay instanceof HTMLElement) pay.textContent = "Checkout (2)";
   });
-  await showBanner(
-    page,
-    `BEFORE undo — computed name="${before.computed}" visible="${before.text}" (label-in-name broken)`,
-  );
+  await logLiveName(page, "#named-pay");
+  await pause(page, 1600);
   await setBackstopsPaused(page, false);
-  await page.waitForTimeout(80);
+  await page.waitForTimeout(200);
   const after = await page.evaluate(() => {
     const pay = document.getElementById("named-pay");
-    if (!(pay instanceof HTMLElement)) return { labelled: true, computed: "", text: "" };
-    return {
-      labelled: pay.hasAttribute("aria-label"),
-      computed: pay.getAttribute("aria-label") || pay.textContent || "",
-      text: pay.textContent ?? "",
-    };
+    return { labelled: Boolean(pay?.hasAttribute("aria-label")), text: pay?.textContent ?? "" };
   });
   expect(after.labelled).toBe(false);
-  await showBanner(
-    page,
-    `AFTER undo — computed name="${after.computed}" visible="${after.text}" — aria-label op removed`,
-  );
   await pause(page, 2000);
 });
 
 test("04-overflow-matches-contrast", async ({ page }) => {
   await page.goto("/checkout/?lift_variant=control&lift_bot=1");
   await openCheckoutWithHover(page);
-  await showBanner(page, "W4 — overflow .item matches still get a contrast check");
+  await pause(page);
   const applied = await page.evaluate(async () => {
     const href = new URL("/runtime/runtime.js", location.origin).href;
     const runtime = (await import(href)) as {
@@ -1411,7 +1373,7 @@ test("04-overflow-matches-contrast", async ({ page }) => {
     for (let i = 0; i < 60; i += 1) {
       const item = document.createElement("span");
       item.className = "item";
-      item.textContent = "WHITE ON BLACK FAIL";
+      item.textContent = "Item";
       item.style.cssText = "display:block;font:14px/1.4 system-ui";
       dark.append(item);
     }
@@ -1420,7 +1382,13 @@ test("04-overflow-matches-contrast", async ({ page }) => {
   await showGhostReadout(page, "#dark-items .item", "BAD STATE: overflow .item is #111 on #111");
   await setBackstopsPaused(page, false);
   await page.waitForTimeout(80);
-  expect(await page.evaluate(() => Boolean(document.querySelector("[data-lift-css]")))).toBe(false);
+  expect(
+    await page.evaluate(() =>
+      [...document.querySelectorAll("[data-lift-css]")].some(
+        (el) => el instanceof HTMLStyleElement && !el.disabled,
+      ),
+    ),
+  ).toBe(false);
   await showRestoredReadout(
     page,
     "#dark-items .item",
@@ -1430,6 +1398,291 @@ test("04-overflow-matches-contrast", async ({ page }) => {
   await pause(page, 800);
 });
 
+test("04-page-contrast-no-loop", async ({ page }) => {
+  test.setTimeout(30_000);
+  await page.goto("/checkout/?lift_variant=control&lift_bot=1");
+  await openCheckoutWithHover(page);
+  await pause(page);
+  const applied = await page.evaluate(async () => {
+    const href = new URL("/runtime/runtime.js", location.origin).href;
+    const runtime = (await import(href)) as {
+      applyPatchSpec: (input: unknown) => { ok: boolean };
+      getRuntimeStats: () => { undos: number; attributions: number };
+    };
+    const checkout = document.getElementById("checkout") || document.body;
+    const hit = document.createElement("a");
+    hit.id = "loop-hit";
+    hit.href = "#x";
+    hit.textContent = "Go";
+    hit.style.cssText =
+      "display:inline-block;padding:12px 18px;color:#111;background:#fff;font:700 22px/1.3 system-ui";
+    checkout.append(hit);
+    const applied = runtime.applyPatchSpec({
+      id: "minw-loop",
+      version: 0,
+      ops: [
+        {
+          op: "injectCSS",
+          rules: [
+            {
+              selector: { id: "loop-hit" },
+              declarations: [{ property: "min-width", value: "44px" }],
+            },
+          ],
+        },
+      ],
+    });
+    const before = runtime.getRuntimeStats();
+    let styleMutations = 0;
+    let loads = 0;
+    new MutationObserver((records) => {
+      for (const rec of records) {
+        if (rec.type === "attributes" && rec.attributeName === "style") styleMutations += 1;
+      }
+    }).observe(hit, { attributes: true, attributeFilter: ["style"] });
+    document.addEventListener(
+      "load",
+      () => {
+        loads += 1;
+      },
+      true,
+    );
+    let on = false;
+    const flash = window.setInterval(() => {
+      on = !on;
+      hit.style.color = on ? "#eee" : "#111";
+    }, 100);
+    const started = Date.now();
+    while (Date.now() - started < 8000) {
+      const elapsed = (Date.now() - started) / 1000;
+      const stats = runtime.getRuntimeStats();
+      const mutPerSec = elapsed > 0 ? styleMutations / elapsed : 0;
+      const loadPerSec = elapsed > 0 ? loads / elapsed : 0;
+      console.log({
+        styleMutationsPerSec: Number(mutPerSec.toFixed(1)),
+        loadsPerSec: Number(loadPerSec.toFixed(2)),
+        undos: stats.undos - before.undos,
+        attributions: stats.attributions - before.attributions,
+        elapsedSec: Number(elapsed.toFixed(1)),
+      });
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+    window.clearInterval(flash);
+    const after = runtime.getRuntimeStats();
+    return {
+      ok: applied.ok,
+      css: [...document.querySelectorAll("[data-lift-css]")].some(
+        (el) => el instanceof HTMLStyleElement && !el.disabled,
+      ),
+      undos: after.undos - before.undos,
+    };
+  });
+  expect(applied.ok).toBe(true);
+  expect(applied.css).toBe(true);
+  expect(applied.undos).toBe(0);
+  await pause(page, 800);
+});
+
+test("04-attribution-keeps-focus", async ({ page }) => {
+  await page.goto("/checkout/?lift_variant=control&lift_bot=1");
+  await openCheckoutWithHover(page);
+  await pause(page);
+  const setup = await page.evaluate(async () => {
+    const href = new URL("/runtime/runtime.js", location.origin).href;
+    const runtime = (await import(href)) as {
+      applyPatchSpec: (input: unknown) => { ok: boolean };
+    };
+    const checkout = document.getElementById("checkout") || document.body;
+    const host = document.createElement("div");
+    host.id = "focus-keep";
+    host.style.cssText =
+      "display:inline-block;margin:12px 0;padding:12px 18px;background:#fff;color:#111;cursor:pointer;font:700 20px/1.3 system-ui;outline:4px solid #38bdf8;outline-offset:4px";
+    host.textContent = "Pay now";
+    const tr = document.createElement("button");
+    tr.id = "tr";
+    tr.type = "button";
+    tr.textContent = "More";
+    const panel = document.createElement("div");
+    panel.id = "panel";
+    panel.textContent = "Menu stays open";
+    panel.style.cssText = "padding:8px;background:#fef3c7";
+    const vis = document.createElement("style");
+    vis.textContent = "#panel{display:none}#panel.lift-open{display:block;background:#fef3c7;padding:8px;border:3px dashed #22c55e}";
+    document.head.append(vis);
+    checkout.append(host, tr, panel);
+    return runtime.applyPatchSpec({
+      id: "focus-keep",
+      version: 0,
+      ops: [
+        { op: "promoteToControl", selector: "#focus-keep", as: "button" },
+        { op: "toggleDisclosure", trigger: "#tr", panel: "#panel" },
+        {
+          op: "injectCSS",
+          rules: [
+            {
+              selector: { id: "focus-keep" },
+              declarations: [{ property: "min-width", value: "44px" }],
+            },
+          ],
+        },
+      ],
+    });
+  });
+  expect(setup.ok).toBe(true);
+  await page.locator("#tr").click();
+  await page.locator("#focus-keep").focus();
+  await expect(page.locator("#focus-keep")).toBeFocused();
+  const result = await page.evaluate(async () => {
+    const href = new URL("/runtime/runtime.js", location.origin).href;
+    const runtime = (await import(href)) as {
+      getRuntimeStats: () => { attributions: number; undos: number };
+    };
+    const host = document.getElementById("focus-keep");
+    const panel = document.getElementById("panel");
+    const before = runtime.getRuntimeStats();
+    if (host instanceof HTMLElement) host.style.color = "#eee";
+    const started = Date.now();
+    while (Date.now() - started < 2500) {
+      const stats = runtime.getRuntimeStats();
+      console.log({
+        attributions: stats.attributions - before.attributions,
+        undos: stats.undos - before.undos,
+        focused: document.activeElement === host,
+        open: panel?.classList.contains("lift-open"),
+      });
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+    const after = runtime.getRuntimeStats();
+    return {
+      focused: document.activeElement === host,
+      open: Boolean(panel?.classList.contains("lift-open")),
+      attributions: after.attributions - before.attributions,
+      undos: after.undos - before.undos,
+    };
+  });
+  expect(result.focused).toBe(true);
+  expect(result.open).toBe(true);
+  expect(result.attributions).toBeGreaterThanOrEqual(1);
+  expect(result.undos).toBe(0);
+  await expect(page.locator("#focus-keep")).toBeFocused();
+  await pause(page, 1500);
+});
+
+test("04-per-node-attribution", async ({ page }) => {
+  await page.goto("/checkout/?lift_variant=control&lift_bot=1");
+  await openCheckoutWithHover(page);
+  await pause(page);
+  const result = await page.evaluate(async () => {
+    const href = new URL("/runtime/runtime.js", location.origin).href;
+    const runtime = (await import(href)) as {
+      applyPatchSpec: (input: unknown) => { ok: boolean };
+    };
+    const checkout = document.getElementById("checkout") || document.body;
+    const pageStyle = document.createElement("style");
+    pageStyle.textContent = ".dark { background-color:#111; color:#fff }";
+    document.head.append(pageStyle);
+    const a = document.createElement("div");
+    a.id = "node-a";
+    a.className = "demo-target";
+    a.textContent = "A";
+    a.style.cssText = "padding:10px;background:#fff;color:#111;font:700 18px/1.3 system-ui";
+    const dark = document.createElement("div");
+    dark.className = "dark";
+    dark.style.cssText = "padding:10px;margin-top:12px";
+    const b = document.createElement("div");
+    b.id = "node-b";
+    b.className = "demo-target";
+    b.textContent = "B";
+    b.style.cssText = "background:#fff;color:#111;font:700 18px/1.3 system-ui";
+    checkout.append(a, dark, b);
+    const applied = runtime.applyPatchSpec({
+      id: "per-node",
+      version: 0,
+      ops: [
+        {
+          op: "injectCSS",
+          rules: [
+            {
+              selector: { classes: ["demo-target"] },
+              declarations: [{ property: "color", value: "#111" }],
+            },
+          ],
+        },
+      ],
+    });
+    a.style.color = "#eee";
+    b.style.backgroundColor = "";
+    b.style.color = "";
+    dark.append(b);
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    const sheet = document.querySelector("[data-lift-css]") as HTMLStyleElement | null;
+    const stats = (window as unknown as { LiftRuntime?: { getRuntimeStats: () => unknown } })
+      .LiftRuntime?.getRuntimeStats();
+    console.log(stats);
+    console.log({
+      disabled: Boolean(sheet?.disabled),
+      a: getComputedStyle(a).color,
+      b: getComputedStyle(b).color,
+    });
+    return { ok: applied.ok, disabled: Boolean(sheet?.disabled), a: getComputedStyle(a).color, b: getComputedStyle(b).color };
+  });
+  expect(result.ok).toBe(true);
+  expect(result.disabled).toBe(true);
+  await pause(page, 2000);
+});
+
+test("04-cssom-edit-detected", async ({ page }) => {
+  test.setTimeout(20_000);
+  await page.goto("/checkout/?lift_variant=control&lift_bot=1");
+  await openCheckoutWithHover(page);
+  await pause(page);
+  const result = await page.evaluate(async () => {
+    const href = new URL("/runtime/runtime.js", location.origin).href;
+    const runtime = (await import(href)) as {
+      applyPatchSpec: (input: unknown) => { ok: boolean };
+    };
+    const checkout = document.getElementById("checkout") || document.body;
+    const probe = document.createElement("div");
+    probe.className = "demo-target";
+    probe.textContent = "Sample";
+    probe.style.cssText = "padding:12px;background:#fff;font:700 20px/1.3 system-ui";
+    checkout.append(probe);
+    const applied = runtime.applyPatchSpec({
+      id: "cssom-edit",
+      version: 0,
+      ops: [
+        {
+          op: "injectCSS",
+          rules: [
+            {
+              selector: { classes: ["demo-target"] },
+              declarations: [{ property: "color", value: "#111" }],
+            },
+          ],
+        },
+      ],
+    });
+    const sheet = document.querySelector("[data-lift-css]") as HTMLStyleElement | null;
+    const rule = sheet?.sheet?.cssRules?.[0] as CSSStyleRule | undefined;
+    if (rule) rule.style.color = "#eee";
+    console.log({ color: getComputedStyle(probe).color, disabled: Boolean(sheet?.disabled) });
+    const started = Date.now();
+    while (Date.now() - started < 5000) {
+      console.log({
+        color: getComputedStyle(probe).color,
+        disabled: Boolean(sheet?.disabled),
+        elapsedSec: (Date.now() - started) / 1000,
+      });
+      if (sheet?.disabled) break;
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+    return { ok: applied.ok, disabled: Boolean(sheet?.disabled) };
+  });
+  expect(result.ok).toBe(true);
+  expect(result.disabled).toBe(true);
+  await pause(page, 1500);
+});
+
 test("05-sticky-identity", async ({ page }) => {
   await page.goto("/checkout/");
   await page.waitForTimeout(1500);
@@ -1437,33 +1690,15 @@ test("05-sticky-identity", async ({ page }) => {
     const variant = document.body.getAttribute("data-variant");
     return variant === "control" || variant === "treatment";
   });
-  if (!flagsmithReady) {
-    await page.goto("/checkout/?lift_variant=control");
-    await expect(page.locator("body")).toHaveAttribute("data-variant", "control");
-  }
+  expect(flagsmithReady).toBe(true);
   const first = await paintIdentityReadout(page);
+  await logEvidence(page, { cookie: first.cookie, variant: first.variant, status: first.status });
   expect(first.cookie).toMatch(/lift_vid=/);
-  await showBanner(page, `IDENTITY first load (from page) ${first.text.replaceAll("\n", " | ")}`);
   await page.reload();
-  if (!flagsmithReady) {
-    await expect(page.locator("body")).toHaveAttribute("data-variant", "control");
-  } else {
-    await expect(page.locator("body")).toHaveAttribute("data-variant", first.variant);
-  }
+  await expect(page.locator("body")).toHaveAttribute("data-variant", first.variant);
   const again = await paintIdentityReadout(page);
+  await logEvidence(page, { cookie: again.cookie, variant: again.variant, status: again.status });
   expect(again.cookie).toBe(first.cookie);
   expect(again.variant).toBe(first.variant);
-  await showBanner(page, `IDENTITY after reload (from page) ${again.text.replaceAll("\n", " | ")} — same document.cookie`);
-  if (flagsmithReady) {
-    await showBanner(
-      page,
-      "Variant stability is only meaningful with a live Flagsmith environment key. This run had one.",
-    );
-  } else {
-    await showBanner(
-      page,
-      "Variant stability is only meaningful with a live Flagsmith environment key. This run used the mock control fallback.",
-    );
-  }
   await pause(page, 2000);
 });

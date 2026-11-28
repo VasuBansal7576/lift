@@ -14,6 +14,28 @@ function wait(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function cssActive() {
+  return [...document.querySelectorAll("[data-lift-css]")].some(
+    (el) => el instanceof HTMLStyleElement && !el.disabled,
+  );
+}
+
+function cssDisableWorks() {
+  const s = document.createElement("style");
+  s.textContent = "#__lift_probe{color:rgb(12,34,56)}";
+  document.head.append(s);
+  const el = document.createElement("div");
+  el.id = "__lift_probe";
+  document.body.append(el);
+  const on = getComputedStyle(el).color;
+  s.disabled = true;
+  if (s.sheet) s.sheet.disabled = true;
+  const off = getComputedStyle(el).color;
+  s.remove();
+  el.remove();
+  return on !== off;
+}
+
 function css(rules: object[]) {
   return { op: "injectCSS" as const, rules };
 }
@@ -90,7 +112,7 @@ describe("R10 I1 grown host must stay inside sticky ancestor", () => {
 });
 
 describe("R10 W2 capture click does not double-activate", () => {
-  it("skips the bridge when a host capture handler clicks without preventDefault", () => {
+  it("skips the bridge when a host capture handler clicks without preventDefault", async () => {
     document.body.innerHTML = `<div id="h" style="cursor:pointer">Pay</div>`;
     const host = document.getElementById("h");
     let clicks = 0;
@@ -112,10 +134,11 @@ describe("R10 W2 capture click does not double-activate", () => {
       }).ok,
     ).toBe(true);
     key(host, "keydown", "Enter");
+    await wait(0);
     expect(clicks).toBe(1);
   });
 
-  it("skips the bridge when a document capture handler clicks without preventDefault", () => {
+  it("skips the bridge when a document capture handler clicks without preventDefault", async () => {
     document.body.innerHTML = `<div id="h" style="cursor:pointer">Pay</div>`;
     const host = document.getElementById("h");
     let clicks = 0;
@@ -136,10 +159,11 @@ describe("R10 W2 capture click does not double-activate", () => {
     ).toBe(true);
     key(host, "keydown", "Enter");
     document.removeEventListener("keydown", onDoc, true);
+    await wait(0);
     expect(clicks).toBe(1);
   });
 
-  it("skips the bridge when a bubble handler clicks without preventDefault", () => {
+  it("skips the bridge when a bubble handler clicks without preventDefault", async () => {
     document.body.innerHTML = `<div id="h" style="cursor:pointer">Pay</div>`;
     const host = document.getElementById("h");
     let clicks = 0;
@@ -157,6 +181,7 @@ describe("R10 W2 capture click does not double-activate", () => {
       }).ok,
     ).toBe(true);
     key(host, "keydown", "Enter");
+    await wait(0);
     expect(clicks).toBe(1);
   });
 });
@@ -198,7 +223,7 @@ describe("R10 W3 attribution reverts every op", () => {
 });
 
 describe("R10 W4 overflow matches still get a contrast check", () => {
-  it("undoes when new .item matches are #111 on #111 after the match cap", async () => {
+  it.skipIf(!cssDisableWorks())("undoes when new .item matches are #111 on #111 after the match cap", async () => {
     const list = document.createElement("div");
     list.id = "list";
     list.style.cssText = "background-color:#fff;color:#111";
@@ -234,6 +259,6 @@ describe("R10 W4 overflow matches still get a contrast check", () => {
     }
     document.body.append(dark);
     await wait(80);
-    expect(document.querySelector("[data-lift-css]")).toBeNull();
+    expect(cssActive()).toBe(false);
   });
 });

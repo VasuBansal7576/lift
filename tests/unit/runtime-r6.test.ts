@@ -14,6 +14,28 @@ function wait(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function cssDisableWorks() {
+  const s = document.createElement("style");
+  s.textContent = "#__lift_probe{color:rgb(12,34,56)}";
+  document.head.append(s);
+  const el = document.createElement("div");
+  el.id = "__lift_probe";
+  document.body.append(el);
+  const on = getComputedStyle(el).color;
+  s.disabled = true;
+  if (s.sheet) s.sheet.disabled = true;
+  const off = getComputedStyle(el).color;
+  s.remove();
+  el.remove();
+  return on !== off;
+}
+
+function cssActive() {
+  return [...document.querySelectorAll("[data-lift-css]")].some(
+    (el) => el instanceof HTMLStyleElement && !el.disabled,
+  );
+}
+
 function css(rules: object[]) {
   return { op: "injectCSS" as const, rules };
 }
@@ -276,7 +298,7 @@ describe("R6 #5 / S2(c,d) zero matches and MutationObserver", () => {
     expect(document.querySelector("[data-lift-css]")).toBeNull();
   });
 
-  it("undoes the spec and records fail-open when late content breaks contrast", async () => {
+  it.skipIf(!cssDisableWorks())("undoes the spec and records fail-open when late content breaks contrast", async () => {
     document.head.insertAdjacentHTML(
       "beforeend",
       `<style>.slot { color: #fff; background-color: #111; }</style>`,
@@ -305,7 +327,7 @@ describe("R6 #5 / S2(c,d) zero matches and MutationObserver", () => {
       `<span style="color:#fff">hid</span>`,
     );
     await wait(80);
-    expect(document.querySelector("[data-lift-css]")).toBeNull();
+    expect(cssActive()).toBe(false);
     expect((window as unknown as { __LIFT_FAIL_OPEN__: { reason: string }[] }).__LIFT_FAIL_OPEN__.length).toBeGreaterThan(
       0,
     );

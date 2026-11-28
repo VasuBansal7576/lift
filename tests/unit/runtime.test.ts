@@ -3,6 +3,10 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+
+function wait(ms = 0) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 import { ROOT } from "../../agent/src/config.ts";
 import { applyPatchSpec, resetRuntimeGuards, validatePatchSpec } from "../../runtime/runtime.js";
 
@@ -103,7 +107,7 @@ describe("applyPatchSpec ops", () => {
     expect(document.querySelectorAll("[data-lift-css]")).toHaveLength(1);
   });
 
-  it("promoteToControl keeps the original node and fires its click handler", () => {
+  it("promoteToControl keeps the original node and fires its click handler", async () => {
     document.body.innerHTML = `<div id="place-order" class="div-pay" data-barrier="div_button" style="color: red; cursor: pointer">💳<span id="kid">x</span></div>`;
     const original = document.getElementById("place-order");
     let clicks = 0;
@@ -125,6 +129,7 @@ describe("applyPatchSpec ops", () => {
     next?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     expect(clicks).toBe(1);
     next?.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    await wait(0);
     expect(clicks).toBe(2);
   });
 
@@ -192,7 +197,7 @@ describe("applyPatchSpec ops", () => {
     }
   });
 
-  it("makeFocusable, bindEnterToClick, and insertHTML at a mount node", () => {
+  it("makeFocusable, bindEnterToClick, and insertHTML at a mount node", async () => {
     document.body.innerHTML = `<div id="host"><span id="chip">Pay</span></div>`;
     const spec = {
       id: "ops-extra",
@@ -222,6 +227,7 @@ describe("applyPatchSpec ops", () => {
       clicked += 1;
     });
     chip?.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    await wait(0);
     expect(clicked).toBe(1);
   });
 
@@ -468,7 +474,7 @@ describe("applyPatchSpec ops", () => {
     expect(parsed.error).toContain("promoteToControl");
   });
 
-  it("does not forward keydown when bindEnterToClick is on the replacement", () => {
+  it("does not forward keydown when bindEnterToClick is on the replacement", async () => {
     document.body.innerHTML = `<div id="pay" style="cursor:pointer">Pay</div>`;
     let clicks = 0;
     let keys = 0;
@@ -489,6 +495,7 @@ describe("applyPatchSpec ops", () => {
     ).toBe(true);
     const next = document.getElementById("pay");
     next?.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    await wait(0);
     expect(clicks).toBe(1);
     expect(keys).toBe(1);
   });
@@ -566,7 +573,7 @@ describe("applyPatchSpec ops", () => {
     expect(document.getElementById("lift-patch-css-s1")?.textContent).toContain("#111");
   });
 
-  it("bindEnterToClick acts only when event.target is the bound element", () => {
+  it("bindEnterToClick acts only when event.target is the bound element", async () => {
     document.body.innerHTML = `<div id="host">Pay<span id="kid">x</span></div>`;
     let clicks = 0;
     document.getElementById("host")?.addEventListener("click", () => {
@@ -582,6 +589,7 @@ describe("applyPatchSpec ops", () => {
     document.getElementById("kid")?.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
     expect(clicks).toBe(0);
     document.getElementById("host")?.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    await wait(0);
     expect(clicks).toBe(1);
   });
 

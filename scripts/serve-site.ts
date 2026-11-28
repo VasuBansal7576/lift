@@ -12,6 +12,7 @@ import { resolveVendorPath } from "../shared/vendor-static.ts";
 const rootDir = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const dashboard = process.argv.includes("--dashboard");
 const allowMock = process.argv.includes("--allow-mock");
+const selfhost = process.argv.includes("--selfhost");
 const edgeOrigin = process.argv.includes("--edge-origin");
 const portArg = process.argv.indexOf("--port");
 const port = Number(portArg >= 0 ? process.argv[portArg + 1] : dashboard ? 4173 : 4174);
@@ -141,6 +142,22 @@ const server = createServer(async (req, res) => {
       res.end("forbidden");
       return;
     }
+    const wantsSelfhost = selfhost || url.searchParams.get("selfhost") === "1";
+    if (!dashboard && wantsSelfhost && relative.endsWith("config.json")) {
+      const altRelative = relative.replace(/config\.json$/, "config.selfhost.json");
+      const altPath = resolve(siteRoot, altRelative);
+      if (isInsideRoot(siteRoot, altPath)) {
+        try {
+          const parsed = JSON.parse(await readFile(altPath, "utf8")) as Record<string, unknown>;
+          const body = overlaySiteConfig(parsed);
+          res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
+          res.end(body);
+          return;
+        } catch {
+          /* fall through to config.json */
+        }
+      }
+    }
     if (!dashboard && relative.endsWith("config.json")) {
       let parsed: Record<string, unknown> | null = null;
       try {
@@ -172,7 +189,9 @@ const server = createServer(async (req, res) => {
 });
 
 server.listen(port, "127.0.0.1", () => {
-  process.stdout.write(`Serving ${siteRoot} on http://127.0.0.1:${port}\n`);
+  const addr = server.address();
+  const bound = typeof addr === "object" && addr ? addr.port : port;
+  process.stdout.write(`Serving ${siteRoot} on http://127.0.0.1:${bound}\n`);
 });
 server.on("error", (err: NodeJS.ErrnoException) => {
   if (err.code === "EADDRINUSE") {

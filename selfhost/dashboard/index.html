@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Lift — self-hosted Flagsmith flags</title>
+  <style>
+    :root { font-family: "Iowan Old Style", Palatino, serif; background: #f4efe6; color: #16181d; }
+    body { max-width: 52rem; margin: 0 auto; padding: 1.5rem 1.2rem 4rem; }
+    .banner { background: #04150d; color: #7cffb2; padding: 0.7rem 0.9rem; font-family: ui-monospace, monospace; letter-spacing: 0.04em; }
+    h1 { font-size: 2rem; margin: 1rem 0 0.2rem; }
+    .note { color: #5c6370; }
+    table { width: 100%; border-collapse: collapse; margin: 1rem 0; background: #fff; }
+    th, td { text-align: left; padding: 0.5rem 0.65rem; border-bottom: 1px solid #ddd; vertical-align: top; font-size: 0.95rem; }
+    .pill { display: inline-block; padding: 0.12rem 0.45rem; font-size: 0.78rem; color: #fff; }
+    .pill.off { background: #5c6370; }
+    .pill.control { background: #8a1f11; }
+    .pill.experimenting { background: #5c4d1a; }
+    .pill.rolled_out { background: #1f4d3a; }
+    code { font-size: 0.85rem; }
+  </style>
+</head>
+<body>
+  <p class="banner" id="proof-banner">T3 dashboard — Lift-managed flags from self-hosted Flagsmith</p>
+  <h1>Self-hosted flags</h1>
+  <p class="note" id="meta">Loading…</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Flag</th>
+        <th>Type</th>
+        <th>Value</th>
+        <th>Variants</th>
+        <th>Status</th>
+      </tr>
+    </thead>
+    <tbody id="rows"></tbody>
+  </table>
+  <p class="note">Reusable module: <code>selfhost/src/index.ts</code> → <code>createLiftSelfhost(loadSelfhostEnv()).listManagedFlags()</code></p>
+  <script>
+    async function main() {
+      const res = await fetch("./flags.json", { cache: "no-store" });
+      const doc = await res.json();
+      const meta = document.getElementById("meta");
+      meta.textContent = `API ${doc.apiUrl} · env ${doc.environmentName} · ${doc.flags.length} flags`;
+      const body = document.getElementById("rows");
+      body.replaceChildren();
+      for (const flag of doc.flags) {
+        const tr = document.createElement("tr");
+        const nameTd = document.createElement("td");
+        const code = document.createElement("code");
+        code.textContent = String(flag.name ?? "");
+        nameTd.appendChild(code);
+        if (!flag.managed) {
+          const other = document.createElement("span");
+          other.className = "note";
+          other.textContent = " (other)";
+          nameTd.appendChild(other);
+        }
+        tr.appendChild(nameTd);
+        const typeTd = document.createElement("td");
+        typeTd.textContent = `${flag.type ?? ""}${flag.enabled ? "" : " (off)"}`;
+        tr.appendChild(typeTd);
+        const valueTd = document.createElement("td");
+        valueTd.textContent = flag.value ?? "—";
+        tr.appendChild(valueTd);
+        const variantsTd = document.createElement("td");
+        variantsTd.textContent =
+          (flag.variants || []).map((v) => `${v.key}:${v.weight}%`).join(", ") || "—";
+        tr.appendChild(variantsTd);
+        const statusTd = document.createElement("td");
+        const pill = document.createElement("span");
+        pill.className = `pill ${String(flag.status ?? "")}`;
+        pill.textContent = String(flag.status ?? "");
+        statusTd.appendChild(pill);
+        tr.appendChild(statusTd);
+        body.appendChild(tr);
+      }
+    }
+    main().catch((err) => {
+      document.getElementById("meta").textContent = String(err);
+    });
+  </script>
+</body>
+</html>

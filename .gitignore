@@ -7,6 +7,15 @@ artifacts/
 .env
 .env.local
 flagsmith.env
+selfhost/.env
+selfhost/.env.proof
+selfhost/flagsmith.env
+selfhost/flagsmith.json
+selfhost/state.json
+selfhost/bootstrap-proof.json
+skills/flagsmith-a11y-experiment/last-run.json
+recordings/t3-t4/raw-*
+sites/*/config.selfhost.json
 data/*.jsonl
 data/*.json
 !data/.gitkeep

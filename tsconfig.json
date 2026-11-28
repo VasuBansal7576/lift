@@ -20,6 +20,7 @@
     "shared/**/*.ts",
     "scripts/**/*.ts",
     "edge/**/*.ts",
-    "orchestrator/**/*.ts"
+    "orchestrator/**/*.ts",
+    "selfhost/**/*.ts"
   ]
 }

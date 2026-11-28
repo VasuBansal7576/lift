@@ -19,6 +19,11 @@ function params() {
   return new URLSearchParams(location.search);
 }
 
+function isLoopbackHost() {
+  const host = location.hostname.replace(/^\[|\]$/g, "").toLowerCase();
+  return host === "127.0.0.1" || host === "localhost" || host === "::1";
+}
+
 async function loadConfig() {
   try {
     const res = await fetch("./config.json", { cache: "no-store" });
@@ -304,6 +309,8 @@ async function initFromFlagsmith(config, identity) {
     throw new Error("Missing FLAGSMITH_ENVIRONMENT_KEY");
   }
   const { default: flagsmith } = await import(SDK_URL);
+  const noPoll =
+    params().get("lift_no_poll") === "1" && params().get("lift_bot") === "1" && isLoopbackHost();
   await flagsmith.init({
     environmentID: config.flagsmithEnvironmentKey,
     api: config.flagsmithApiUrl,
@@ -312,11 +319,13 @@ async function initFromFlagsmith(config, identity) {
       simulated: false,
       site: "checkout",
     },
+    realtime: false,
     enableEvents: true,
     eventProcessorConfig: config.flagsmithEventsUrl
       ? { eventsApiUrl: config.flagsmithEventsUrl }
       : undefined,
   });
+  if (noPoll) flagsmith.stopListening?.();
   if (config.orchFlagName) {
     let orchVariant = "control";
     try {

@@ -17,11 +17,11 @@ import type { BootstrapState } from "../../agent/src/bootstrap.ts";
 import { FlagsmithAdmin, type ExperimentRecord } from "../../agent/src/flagsmith-admin.ts";
 import { mixSeed, mulberry32 } from "../../shared/rng.ts";
 import { pickPersona } from "../../shared/mix.ts";
+import { isLoopbackHost } from "../../sites/shared/identity.js";
+import { identityFor } from "./identity.ts";
 import { runPersona } from "./personas.ts";
 
-function identityFor(runId: string, seed: number, index: number): string {
-  return `lift-sim-${runId}-${seed}-${String(index).padStart(4, "0")}`;
-}
+export { identityFor };
 
 export function applyBaselineDropout(
   converted: boolean,
@@ -166,8 +166,26 @@ async function assertExperimentRunning(cfg: LiftConfig) {
   }
 }
 
+export function assertTrafficSiteUrl(
+  siteUrl: string,
+  env: { LIFT_ALLOW_BOT_OVERRIDE?: string } = process.env,
+): void {
+  let hostname = "";
+  try {
+    hostname = new URL(siteUrl).hostname;
+  } catch {
+    throw new Error(`Refusing traffic: LIFT_SITE_URL is not a valid URL (${siteUrl})`);
+  }
+  if (isLoopbackHost(hostname)) return;
+  if (env.LIFT_ALLOW_BOT_OVERRIDE === "true") return;
+  throw new Error(
+    `Refusing bot traffic to ${siteUrl}: host "${hostname}" is not loopback. Set LIFT_ALLOW_BOT_OVERRIDE=true only for a controlled environment.`,
+  );
+}
+
 export async function runTraffic(overrides?: Partial<LiftConfig>) {
   const cfg = { ...loadConfig(), ...overrides };
+  assertTrafficSiteUrl(cfg.siteUrl);
   if (!cfg.serverKey && !cfg.environmentKey) {
     throw new Error(
       "FLAGSMITH_SERVER_KEY (preferred, local evaluation) or FLAGSMITH_ENVIRONMENT_KEY is required",
@@ -226,7 +244,7 @@ export async function runTraffic(overrides?: Partial<LiftConfig>) {
         persona === "low-vision" ? { deviceScaleFactor: 2 } : {},
       );
       const page = await context.newPage();
-      const url = `${cfg.siteUrl}/?lift_variant=${variant}&lift_identity=${encodeURIComponent(identity)}`;
+      const url = `${cfg.siteUrl}/?lift_variant=${variant}&lift_bot=1&lift_identity=${encodeURIComponent(identity)}`;
       await page.goto(url, { waitUntil: "domcontentloaded" });
       await page.waitForFunction(
         ({ expected }) =>

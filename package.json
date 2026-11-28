@@ -22,6 +22,7 @@
     "test:unit": "vitest run tests/unit",
     "test:e2e": "playwright test",
     "test:e2e:l3-stub": "playwright test tests/e2e/l3-balancer.spec.ts --project=l3-stub",
+    "evidence:a": "playwright test -c playwright.evidence.mock.config.ts && playwright test -c playwright.evidence.config.ts && node scripts/collect-evidence-a.mjs",
     "typecheck": "tsc --noEmit",
     "test:all": "vitest run tests/unit && playwright test",
     "l3:bootstrap": "tsx scripts/l3-bootstrap.ts",
@@ -33,12 +34,14 @@
   },
   "dependencies": {
     "@flagsmith/nodejs": "^9.1.0",
-    "dotenv": "^16.4.7"
+    "dotenv": "^16.4.7",
+    "happy-dom": "^21.0.4"
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.14.1",
     "@playwright/test": "^1.51.0",
     "@types/node": "^22.13.10",
+    "ajv": "^8.20.0",
     "tsx": "^4.19.3",
     "typescript": "^5.8.2",
     "vitest": "^5.1.2"

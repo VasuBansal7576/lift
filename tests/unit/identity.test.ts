@@ -1,0 +1,199 @@
+import { describe, expect, it } from "vitest";
+import {
+  browserIdentityEnv,
+  cookieWriteValue,
+  IDENTITY_COOKIE,
+  IDENTITY_MAX_AGE_SEC,
+  isUsableIdentity,
+  readCookieIdentity,
+  readQueryIdentity,
+  resolveVisitorId,
+  type IdentityEnv,
+} from "../../sites/shared/identity.js";
+import { identityFor } from "../../traffic/src/identity.ts";
+
+function makeEnv(init: {
+  search?: string;
+  cookie?: string;
+  storage?: string | null;
+  randomId?: string;
+  secure?: boolean;
+  host?: string;
+  allowBotOverride?: boolean;
+}): IdentityEnv & { cookieHeader: string; storageValue: string | null; cookieWrites: string[] } {
+  let cookieHeader = init.cookie ?? "";
+  let storageValue = init.storage ?? null;
+  const cookieWrites: string[] = [];
+  return {
+    search: init.search ?? "",
+    host: init.host ?? "127.0.0.1",
+    allowBotOverride: init.allowBotOverride,
+    getCookie: () => cookieHeader,
+    setCookie: (value) => {
+      cookieWrites.push(value);
+      cookieHeader = value;
+    },
+    getStorage: () => storageValue,
+    setStorage: (value) => {
+      storageValue = value;
+    },
+    randomId: () => init.randomId ?? "fresh-uuid-0000",
+    secure: init.secure ?? false,
+    get cookieHeader() {
+      return cookieHeader;
+    },
+    get storageValue() {
+      return storageValue;
+    },
+    cookieWrites,
+  };
+}
+
+describe("isUsableIdentity", () => {
+  it("accepts UUIDs and bot identities", () => {
+    expect(isUsableIdentity("a1b2c3d4-e5f6-7890-abcd-ef1234567890")).toBe(true);
+    expect(isUsableIdentity("lift-sim-20261127010101-20261126-0")).toBe(true);
+  });
+
+  it("rejects empty, oversized, and cookie-breaking values", () => {
+    expect(isUsableIdentity("")).toBe(false);
+    expect(isUsableIdentity(" spaced")).toBe(false);
+    expect(isUsableIdentity("a".repeat(200))).toBe(false);
+    expect(isUsableIdentity("bad;drop")).toBe(false);
+    expect(isUsableIdentity("bad,comma")).toBe(false);
+  });
+});
+
+describe("readQueryIdentity", () => {
+  const local = { host: "127.0.0.1" };
+
+  it("honors ?lift_identity= only together with lift_bot=1 on loopback", () => {
+    expect(readQueryIdentity("?lift_bot=1&lift_identity=lift-sim-run-1-0", local)).toBe(
+      "lift-sim-run-1-0",
+    );
+    expect(readQueryIdentity("lift_bot=1&lift_identity=plain", local)).toBe("plain");
+  });
+
+  it("ignores lift_identity without lift_bot=1", () => {
+    expect(readQueryIdentity("?lift_identity=lift-sim-run-1-0", local)).toBeNull();
+    expect(readQueryIdentity("lift_identity=plain", local)).toBeNull();
+  });
+
+  it("ignores the override on a deployed host", () => {
+    expect(
+      readQueryIdentity("?lift_bot=1&lift_identity=lift-sim-run-1-0", { host: "user.github.io" }),
+    ).toBeNull();
+  });
+
+  it("honors allowBotOverride served from page config off loopback", () => {
+    expect(
+      readQueryIdentity("?lift_bot=1&lift_identity=lift-sim-run-1-0", {
+        host: "user.github.io",
+        allowBotOverride: true,
+      }),
+    ).toBe("lift-sim-run-1-0");
+  });
+
+  it("ignores missing or unusable query values", () => {
+    expect(readQueryIdentity("")).toBeNull();
+    expect(readQueryIdentity("?other=1")).toBeNull();
+    expect(readQueryIdentity("?lift_bot=1&lift_identity=bad;id", local)).toBeNull();
+  });
+});
+
+describe("cookie stickiness", () => {
+  it("writes a first-party Lax cookie without Secure on http", () => {
+    const value = cookieWriteValue("visitor-1", false);
+    expect(value).toContain(`${IDENTITY_COOKIE}=visitor-1`);
+    expect(value).toContain("Path=/");
+    expect(value).toContain("SameSite=Lax");
+    expect(value).toContain(`Max-Age=${IDENTITY_MAX_AGE_SEC}`);
+    expect(value).not.toContain("Secure");
+  });
+
+  it("adds Secure only on https", () => {
+    expect(cookieWriteValue("visitor-1", true)).toContain("Secure");
+  });
+
+  it("reads the identity out of a cookie header", () => {
+    expect(readCookieIdentity("other=1; lift_vid=abc123; theme=dark")).toBe("abc123");
+    expect(readCookieIdentity("")).toBeNull();
+    expect(readCookieIdentity("lift_vid=bad,comma")).toBeNull();
+  });
+
+  it("ignores a crafted lift_identity without lift_bot=1 and keeps the cookie", () => {
+    const env = makeEnv({
+      search: "?lift_identity=evil-id",
+      cookie: "lift_vid=old-cookie",
+      storage: "old-storage",
+    });
+    expect(resolveVisitorId(env)).toBe("old-cookie");
+    expect(env.storageValue).toBe("old-cookie");
+  });
+
+  it("honors lift_bot=1 identity for this load without persisting it", () => {
+    const env = makeEnv({
+      search: "?lift_bot=1&lift_identity=lift-sim-bot-9",
+      cookie: "lift_vid=old-cookie",
+      storage: "old-storage",
+      host: "127.0.0.1",
+    });
+    expect(resolveVisitorId(env)).toBe("lift-sim-bot-9");
+    expect(env.storageValue).toBe("old-storage");
+    expect(env.cookieWrites.join("")).not.toContain("lift-sim-bot-9");
+  });
+
+  it("ignores lift_bot=1 on a deployed host and keeps the cookie", () => {
+    const env = makeEnv({
+      search: "?lift_bot=1&lift_identity=evil-id",
+      cookie: "lift_vid=old-cookie",
+      host: "user.github.io",
+    });
+    expect(resolveVisitorId(env)).toBe("old-cookie");
+  });
+
+  it("reuses the cookie when the query is absent", () => {
+    const env = makeEnv({ cookie: "lift_vid=sticky-cookie", storage: "other-storage" });
+    expect(resolveVisitorId(env)).toBe("sticky-cookie");
+    expect(env.storageValue).toBe("sticky-cookie");
+  });
+
+  it("falls back to localStorage when the cookie is missing", () => {
+    const env = makeEnv({ storage: "from-ls" });
+    expect(resolveVisitorId(env)).toBe("from-ls");
+    expect(env.cookieWrites[0]).toContain("lift_vid=from-ls");
+  });
+
+  it("mints a new id only when cookie and storage are empty, then persists both", () => {
+    const env = makeEnv({ randomId: "minted-once" });
+    expect(resolveVisitorId(env)).toBe("minted-once");
+    expect(resolveVisitorId(env)).toBe("minted-once");
+    expect(env.storageValue).toBe("minted-once");
+    expect(env.cookieWrites.length).toBeGreaterThan(0);
+  });
+
+  it("skips a poisoned cookie and uses storage instead", () => {
+    const env = makeEnv({ cookie: "lift_vid=bad,comma", storage: "safe-store" });
+    expect(resolveVisitorId(env)).toBe("safe-store");
+  });
+});
+
+describe("browserIdentityEnv", () => {
+  it("passes allowBotOverride from page config into the identity env", () => {
+    expect(browserIdentityEnv().allowBotOverride).toBe(false);
+    expect(browserIdentityEnv({ allowBotOverride: true }).allowBotOverride).toBe(true);
+  });
+});
+
+describe("traffic identityFor", () => {
+  it("always produces an identity the cookie layer accepts", () => {
+    const samples = [
+      identityFor("20261127010101", 20261126, 0),
+      identityFor("run", 1, 12),
+      identityFor("abc", 0, 9999),
+    ];
+    for (const id of samples) {
+      expect(isUsableIdentity(id), id).toBe(true);
+    }
+  });
+});

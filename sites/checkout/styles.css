@@ -53,7 +53,8 @@ body {
   display: none;
 }
 .hover-nav:hover .hover-menu { display: block; }
-body.fix-hover .hover-menu.is-open,
+.hover-menu.lift-open { display: block; }
+body.fix-hover .hover-menu.lift-open,
 body.fix-hover .hover-nav:focus-within .hover-menu { display: block; }
 .hover-menu a { display: block; padding: 0.35rem 0.5rem; color: inherit; }
 .icon-btn {
@@ -62,7 +63,7 @@ body.fix-hover .hover-nav:focus-within .hover-menu { display: block; }
   font-size: 1.2rem;
   cursor: pointer;
 }
-#cart-icon:not([aria-label])::before { content: "👜"; }
+#cart-icon::before { content: "👜"; }
 main { max-width: 40rem; margin: 0 auto; padding: 2rem 1.5rem 4rem; }
 .eyebrow { text-transform: uppercase; letter-spacing: 0.12em; font-size: 0.75rem; color: var(--muted); }
 .lede { font-size: 1.15rem; }
@@ -103,7 +104,8 @@ body.fix-contrast .contrast-fail {
   cursor: pointer;
   user-select: none;
 }
-button.place-order {
+button.div-pay,
+button#place-order {
   font: inherit;
   padding: 0.7rem 1.2rem;
   background: var(--accent);

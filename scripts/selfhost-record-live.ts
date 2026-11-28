@@ -430,8 +430,13 @@ async function startChromeFromTerminal(
   );
   const cdp = await freePort();
   const line = [CHROME_BIN, ...chromeArgv(layout, profile, cdp)].map(shellQuote).join(" ");
+  writeFileSync(
+    "/tmp/lift-open-chrome.sh",
+    `#!/usr/bin/env bash\nexec ${line} >/tmp/lift-chrome-launch.log 2>&1 &\n`,
+    { mode: 0o700 },
+  );
   await clickFocusTerminal(title);
-  await xdotoolType(`${line} >/tmp/lift-chrome-launch.log 2>&1 &`, 9);
+  await xdotoolType("bash /tmp/lift-open-chrome.sh", 32);
   await sleep(200);
   await sh("xdotool", ["key", "--clearmodifiers", "Return"]);
   const deadline = Date.now() + 20_000;

@@ -27,7 +27,10 @@
     "test:all": "vitest run tests/unit && playwright test",
     "l3:bootstrap": "tsx scripts/l3-bootstrap.ts",
     "l3:demo": "tsx scripts/serve-l3.ts",
-    "l3:record": "tsx scripts/l3-record.ts"
+    "l3:record": "tsx scripts/l3-record.ts",
+    "orch": "tsx orchestrator/src/cli.ts",
+    "orch:approve": "tsx orchestrator/src/cli.ts --approve",
+    "orch:selfhost": "bash orchestrator/scripts/flagsmith-selfhost.sh"
   },
   "engines": {
     "node": ">=20"

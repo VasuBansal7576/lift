@@ -2,6 +2,7 @@ import { browserIdentityEnv, resolveVisitorId } from "../shared/identity.js";
 
 const FLAG_NAME = "checkout_a11y";
 const SDK_URL = "https://cdn.jsdelivr.net/npm/@flagsmith/flagsmith@12.4.0/+esm";
+const ORCH_SPEC_ID = /^[a-z0-9-]{1,40}$/;
 
 const BARRIER_FLAGS = {
   hover_menu: "a11y_hover_menu",
@@ -33,6 +34,61 @@ function setStatus(text, isError = false) {
   if (!el) return;
   el.textContent = text;
   el.classList.toggle("flagsmith-error", isError);
+}
+
+function setAppliedVariant(variant) {
+  document.documentElement.dataset.liftAppliedVariant = variant;
+}
+
+async function applyPatchFromUrl(specUrl) {
+  const res = await fetch(specUrl, { cache: "no-store" });
+  if (!res.ok) throw new Error(`spec ${specUrl} ${res.status}`);
+  const spec = await res.json();
+  const href = new URL("/runtime/runtime.js", location.origin).href;
+  const runtime = await import(href);
+  const result = runtime.applyPatchSpec(spec);
+  if (!result.ok) throw new Error(result.error || "apply failed");
+}
+
+function bindCheckoutActions() {
+  const pay = document.getElementById("place-order");
+  if (pay && !pay.dataset.bound) {
+    pay.dataset.bound = "1";
+    pay.addEventListener("click", submitOrder);
+  }
+  const cart = document.getElementById("cart-icon");
+  if (cart && !cart.dataset.bound) {
+    cart.dataset.bound = "1";
+    cart.addEventListener("click", openCheckout);
+  }
+}
+
+async function applyOrchVariant(variant, controlSpecRequired = false) {
+  if (variant === "control") {
+    try {
+      await applyPatchFromUrl("/orch-specs/control.json");
+    } catch (err) {
+      if (controlSpecRequired) {
+        setAppliedVariant("");
+        throw new Error(
+          `orch control spec required (gen>=2): ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+      /* gen-1 control is the unpatched page */
+    }
+    bindCheckoutActions();
+    setAppliedVariant("control");
+    setStatus("Flagsmith orch=control");
+    return;
+  }
+  if (!ORCH_SPEC_ID.test(variant)) {
+    setAppliedVariant("");
+    throw new Error(`invalid orch spec id ${variant}`);
+  }
+  await applyPatchFromUrl(`/orch-specs/${variant}.json`);
+  bindCheckoutActions();
+  setAppliedVariant(variant);
+  setStatus(`Flagsmith orch=${variant}`);
 }
 
 function allFixes(on) {
@@ -225,6 +281,26 @@ async function initFromFlagsmith(config, identity) {
       ? { eventsApiUrl: config.flagsmithEventsUrl }
       : undefined,
   });
+  if (config.orchFlagName) {
+    let orchVariant = "control";
+    try {
+      const orchFlag = flagsmith.getExperimentFlag(config.orchFlagName);
+      if (typeof orchFlag?.variant === "string" && orchFlag.variant) orchVariant = orchFlag.variant;
+      else if (typeof orchFlag?.value === "string" && orchFlag.value) orchVariant = orchFlag.value;
+    } catch {
+      /* fall through to getValue */
+    }
+    if (orchVariant === "control") {
+      try {
+        const value = flagsmith.getValue(config.orchFlagName);
+        if (typeof value === "string" && value) orchVariant = value;
+      } catch {
+        /* keep control */
+      }
+    }
+    await applyOrchVariant(String(orchVariant), Boolean(config.orchControlSpecRequired));
+    return;
+  }
   const flag = flagsmith.getExperimentFlag(config.flagName || FLAG_NAME);
   const variant =
     flag?.variant === "treatment" || flag?.value === "treatment"

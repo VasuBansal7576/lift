@@ -345,8 +345,8 @@ async function showRolledOutFeature(page: Page, flagName: string, dashboardUrl: 
   await search.waitFor({ state: "visible", timeout: 10_000 });
   await pointerClick(page, search);
   await sleep(150);
-  xdo(["type", "--delay", "28", flagName]);
-  await sleep(800);
+  xdo(["type", "--delay", "22", flagName]);
+  await sleep(400);
   try {
     await pointerClickByName(page, flagName);
   } catch {
@@ -359,22 +359,21 @@ async function showRolledOutFeature(page: Page, flagName: string, dashboardUrl: 
 async function typeApproveOnCamera(experimentId: number): Promise<void> {
   const title = `lift-approve-${experimentId}`;
   spawnEmptyXterm(title, "80x16+20+640");
-  await sleep(700);
+  await sleep(400);
   await typeInXterm(
     title,
     `echo 'Recording harness typing APPROVE ${experimentId} standing in for the human approver.'`,
   );
-  await sleep(600);
   await typeInXterm(
     title,
     `cd ${REPO_ROOT} && npx tsx orchestrator/src/cli.ts --approve ${experimentId} --apply --no-ui`,
   );
-  await sleep(2500);
+  await sleep(1600);
   await activateXterm(title);
-  xdo(["type", "--delay", "110", `APPROVE ${experimentId}`]);
-  await sleep(400);
+  xdo(["type", "--delay", "90", `APPROVE ${experimentId}`]);
+  await sleep(200);
   xdo(["key", "--clearmodifiers", "Return"]);
-  await hold(3200);
+  await hold(2200);
 }
 
 async function withClip(
@@ -483,20 +482,18 @@ async function main() {
 
   await withClip("t2b-approve-rollout", 12_000, async () => {
     spawnEmptyXterm("lift-t2b", "92x18+0+640");
-    await sleep(500);
+    await sleep(350);
     const line = t2Rec ? formatDecisionLine(t2Rec) : "Flagsmith: n/a | Agent threshold: 95% | Decision: KEEP COLLECTING";
     await typeInXterm("lift-t2b", `echo '${line}'`);
     if (t2Dash) await typeUrlInOmnibox(page, t2Dash);
-    await hold(3200);
+    await hold(3000);
     if (t2Won && t2ExpId && t2Done.flag) {
       await typeApproveOnCamera(t2ExpId);
-      await typeUrlInOmnibox(page, t2Dash);
       await showRolledOutFeature(page, t2Done.flag.flagName ?? t2Flag, t2Dash);
       await visibleReload(page);
-      await hold(1200);
     } else {
       await typeInXterm("lift-t2b", "echo 'No winner at the pre-registered look; harness is not typing APPROVE.'");
-      await hold(2800);
+      await hold(3000);
     }
     assertNotLogin(page, "t2b");
   });

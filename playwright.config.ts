@@ -1,6 +1,6 @@
 import { defineConfig } from "@playwright/test";
 
-const port = Number(process.env.LIFT_PORT || 4174);
+const port = process.env.LIFT_PORT || process.env.PORT || "4174";
 const origin = `http://127.0.0.1:${port}`;
 
 export default defineConfig({

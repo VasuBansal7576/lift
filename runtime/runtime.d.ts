@@ -27,3 +27,15 @@ export function applyPatchSpec(
 
 export function resetRuntimeGuards(): void;
 export function setTestBackstopsPaused(paused: boolean): boolean;
+export function getRuntimeStats(): {
+  undos: number;
+  attributions: number;
+  ticksRan: number;
+  ticksSkipped: number;
+  tickMsMax: number;
+  lastAttributions: {
+    id: string;
+    predicate: string;
+    verdict: "page" | "spec";
+  }[];
+};

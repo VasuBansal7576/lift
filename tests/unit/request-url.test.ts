@@ -66,6 +66,30 @@ describe("serveSites GET //", () => {
       else process.env.LIFT_ALLOW_BOT_OVERRIDE = previous;
     }
   });
+
+  it("overlays disableAutofill onto config.json from LIFT_DISABLE_AUTOFILL", async () => {
+    const previous = process.env.LIFT_DISABLE_AUTOFILL;
+    process.env.LIFT_DISABLE_AUTOFILL = "true";
+    try {
+      const body = await new Promise<string>((resolve, reject) => {
+        const req = http.request(
+          { hostname: "127.0.0.1", port, path: "/checkout/config.json", method: "GET" },
+          (res) => {
+            const chunks: Buffer[] = [];
+            res.on("data", (chunk) => chunks.push(chunk as Buffer));
+            res.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
+          },
+        );
+        req.on("error", reject);
+        req.end();
+      });
+      const parsed = JSON.parse(body) as { disableAutofill?: boolean };
+      expect(parsed.disableAutofill).toBe(true);
+    } finally {
+      if (previous === undefined) delete process.env.LIFT_DISABLE_AUTOFILL;
+      else process.env.LIFT_DISABLE_AUTOFILL = previous;
+    }
+  });
 });
 
 describe("serveSites config overlay without allowMock", () => {

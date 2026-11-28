@@ -21,7 +21,7 @@
     "test": "vitest run",
     "test:unit": "vitest run tests/unit",
     "test:e2e": "playwright test",
-    "evidence:a": "playwright test -c playwright.evidence.config.ts && node scripts/collect-evidence-a.mjs",
+    "evidence:a": "playwright test -c playwright.evidence.mock.config.ts && playwright test -c playwright.evidence.config.ts && node scripts/collect-evidence-a.mjs",
     "typecheck": "tsc --noEmit",
     "test:all": "vitest run tests/unit && playwright test",
     "orch": "tsx orchestrator/src/cli.ts",

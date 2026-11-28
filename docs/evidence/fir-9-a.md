@@ -1,36 +1,27 @@
 # Phase A evidence recordings
 
-Recordings live in `artifacts/fir-9-a/` by default (gitignored). Override with `EVIDENCE_DIR`. Produce them with:
+## Recorder clips (video evidence)
 
-```bash
-npm run evidence:a
-```
+Only the headed recorder mp4s produced by `node scripts/record-phase-a.mjs` are video evidence. They are live continuous takes: the real pointer is moved and clicked with xdotool, and evidence is typed in the visible DevTools Console or read from the app's own UI / Application → Cookies.
 
-That runs `tests/evidence/phase-a.spec.ts` against the real checkout page on `http://127.0.0.1:4174` (viewport 1280×800, video + trace on, slowMo). Playwright writes raw files under `playwright/`; the collect script copies clear names next to them.
+The Playwright spec clips from `tests/evidence/phase-a.spec.ts` (both `playwright.evidence.config.ts` and `playwright.evidence.mock.config.ts`) are **TEST RUNS**. They are not video evidence. They do not show Console, axe, cookie, or banner output for this record.
 
-| File | What it shows |
-| --- | --- |
-| `01-control-barriers.webm` + `.trace.zip` | Control checkout with the five barriers visible. An on-page banner (test-only) shows the axe-core violation count, including the gate rules `label`, `button-name`, `color-contrast`. Shop trigger is a span; Place order is a div. |
-| `02-treatment-before-after.webm` + `.trace.zip` | Same control page, then `runtime/runtime.js` applies `checkout-treatment.json`. Labels appear, Shop is promoted in place (`role=button` + tabindex), terms contrast is fixed, Place order is promoted in place with an accessible name. Banner shows axe dropping **4 → 1**. Gate rules `label`, `button-name`, and `color-contrast` clear. The leftover rule is `region` on `.sim-banner` (the fixture “Demo store…” note sits outside `header`/`main` landmarks). It is not a gate rule, not one of the five checkout barriers, and `promoteToControl` cannot emit landmark tags. |
-| `03-keyboard-submit-once.webm` + `.trace.zip` | After the treatment spec, **no mouse**: Tab to Shop, Enter opens the menu (`toggleDisclosure` + page CSS `.hover-menu.lift-open`), Tab to Checkout, Enter, fill the form, Tab to Place order, one Enter. Banner reports exactly one original click; confirmation is visible. |
-| `04-typed-body-tag.webm` + `.trace.zip` | Typed injectCSS `{ tag: 'body' }` is rejected at parse time. Place order markup and the page HTML are unchanged. |
-| `04-typed-opacity.webm` + `.trace.zip` | Typed `property: 'opacity'` is rejected at parse time. Body opacity and Place order markup stay unchanged. |
-| `04-typed-not-state.webm` + `.trace.zip` | Typed `state: 'not(x)'` is rejected at parse time. The page is unchanged. |
-| `04-typed-body-class-anchor.webm` + `.trace.zip` | A class anchor that matches `<body class="lift-atk">` is accepted at parse (class+declarations are otherwise legal) and **undone at apply time** (page-container / forbidden-host backstop). Body color is unchanged. |
-| `04-typed-color-eq-background.webm` + `.trace.zip` | `{ color: #fff, background-color: #fff }` is rejected (parse-time contrast 4.5:1). The page is unchanged. |
-| `04-typed-hover-invisible.webm` + `.trace.zip` | State rule `hover { color }` is rejected at parse time. Color/background are forbidden on hover/focus/focus-visible/active. The page is unchanged. |
-| `04-replace-button-to-span.webm` + `.trace.zip` | After the treatment spec, `replaceTag` is parse-rejected (`use promoteToControl`). Place order stays the original `DIV` with `role=button`. |
-| `04-late-content.webm` + `.trace.zip` | A legal injectCSS spec is applied, then late DOM content with white-on-white text is inserted. The recording **selects** the ghost text and shows an on-screen readout of computed color, background, and contrast ratio during **BAD STATE**, then the MutationObserver undoes the spec and shows **UNDONE** with the restored ratio. |
-| `04-descendant-contrast.webm` + `.trace.zip` | A parent match has acceptable contrast; a descendant ghost line does not. The fixture stays at normal size inside the checkout box. The recording selects the ghost text, shows the contrast readout during **BAD STATE**, then undoes the spec. The checkout form stays intact. |
-| `04-promote-keeps-handlers.webm` + `.trace.zip` | A `div` is promoted in place. The original click handler fires on mouse and keyboard (an accordion opens). The real checkout form still submits once and shows the order confirmation. No stray Pay now control. |
-| `04-focus-within-color.webm` + `.trace.zip` | Typed `focus-within { color }` is rejected. State rules may set only `outline-*` and `text-decoration-*`. |
-| `04-covered-control.webm` + `.trace.zip` | A fixed cookie bar grown with font-size/padding/min-height/line-height **visibly overlaps** Buy (Buy outlined in red) during **BAD STATE**, then the spec is undone so Buy is hittable again. |
-| `04-reapply-guard.webm` + `.trace.zip` | The same spec id is applied twice (second apply is a noop). A spec-caused white-on-white descendant is selected with a contrast readout against the **effective** (ancestor-composited) background. The guard undoes; Theme panel is readable again. |
-| `04-cssom-insertRule.webm` + `.trace.zip` | A legal injectCSS spec is applied, then `CSSStyleSheet.insertRule` paints white-on-white. The guard sees the CSSOM change and undoes. The restored readout uses the effective background (≈17:1 on white), not `rgba(0,0,0,0)`. |
-| `04-promote-no-double.webm` + `.trace.zip` | A host with its own Enter `preventDefault()` + `click()` handler is promoted. The on-screen counter shows **activations: 1**. |
-| `04-guard-page-modal.webm` + `.trace.zip` | A contrast fix is applied, then a page modal appears. Banner: **page-caused, fix kept**. The injected CSS stays. |
-| `04-guard-spec-caused.webm` + `.trace.zip` | A spec-caused white-on-white descendant still undoes the injected CSS. |
-| `04-dropdown-keeps-fix.webm` + `.trace.zip` | A color-only fix on a nav whose submenu opens over a control keeps the fix. |
-| `05-sticky-identity.webm` + `.trace.zip` | The page itself renders `document.cookie` (including `lift_vid=...`) plus `data-variant` / `#flag-status` before and after reload. The cookie string is read from the page, not injected by the runner. **Variant stability is only meaningful with a live Flagsmith environment key.** When that key is present and Flagsmith assigns a variant, it stays the same across reload; without it the spec falls back to `?lift_variant=control`. |
+Output directory: `artifacts/fir-9-a/recorder/` by default, or `EVIDENCE_MP4_DIR`. None of these six clips use `?lift_variant=` or `--allow-mock`. The store banner "Demo store. Experiment traffic is simulated." is the fixture's own copy.
 
-The on-page banner is injected only by this evidence spec (`#lift-evidence-banner`). The cookie readout (`#lift-cookie-readout`) is also evidence-only. Neither is part of the product runtime.
+Required env for the recorder: `FLAGSMITH_ENVIRONMENT_KEY`, `FLAGSMITH_IDENTITY_URL`, `FLAGSMITH_FEATURE_ID`, and (for clip 01) `FLAGSMITH_ADMIN_API_TOKEN`. Serve the demo with `LIFT_DISABLE_AUTOFILL=true` so checkout `config.json` sets `disableAutofill` (fields get `autocomplete=off` without injection). Record in a fresh Chrome profile with no saved autofill.
+
+| File | What it shows | Timestamps |
+| --- | --- | --- |
+| `01-control-treatment-axe.mp4` | Flagsmith identity override + footer `checkout_a11y=control`; visible pointer click on `#checkout-link` in both arms; both arms type the same local `/vendor/axe.min.js` load with `onerror`; control `axe.run()` lists four gate ids and holds 3s; visible Reset/Confirm; hold of `treatment` / Using environment defaults; visible Chrome reload onto treatment; typed `axe.run()` lists `['region']` and holds 3s. | Flagsmith `"control"` override ~0–2s; `#checkout-link` opens control form ~8–9s; typed local axe four ids ~12–18s; Reset + Confirm ~20–24s; `treatment` / Using environment defaults ~26–28s; reload ~29–30s; treatment `#checkout-link` + Place order ~32s; axe `['region']` ~38–41s |
+| `02-keyboard-submit-once.mp4` | Visible `#checkout-link` click on the treatment Shop menu; typed click listener; pointer into Email; Tab across fields with card `0000` (fresh Chrome profile, `autocomplete=off` from config; no autofill dropdown); Enter submits once; typed `clicks` is `1` with the order confirmation. | Shop / `#checkout-link` ~0–2s; clicks listener ~2–5s; keyboard fill + Enter ~6–9s; confirmation + `clicks` `1` ~10–12s |
+| `03-per-node-attribution.mp4` | Two typed `demo-target` nodes; colour change on A and move of B; `LiftRuntime.getRuntimeStats()` / `lastAttributions` show page vs spec. | Typed nodes ~8–26s; spec + colour/move ~26–38s; stats `undos:1`, node-a `page`, node-b `spec` ~42–44s |
+| `04-cssom-edit-detected.mp4` | Visible Chrome reload; clean console; `sheet.disabled` false; one typed CSSOM colour edit; then `disabled` true; `undos: 1`. | Reload ~0–2s; typed Sample `demo-target` + spec ~4–14s; `disabled` false + CSSOM `#eee` ~16–18s; `disabled` true, `{undos:1, attributions:1, ticksRan:1}` ~24–28s |
+| `05-page-contrast-no-loop.mp4` | Visible Chrome reload; typed Go node; colour fights; `getRuntimeStats()` three times ~5s apart with `undos` staying 0 and `ticksRan` 4, then 5, then 6. | Reload ~0–2s; typed Go + colour fights ~4–20s; stats `undos:0` / `ticksRan:4` ~24s; `ticksRan:5` ~32s; `ticksRan:6` ~38s |
+| `06-sticky-identity.mp4` | Application → Cookies shows `lift_vid` and the footer variant; visible Chrome reload; the same `lift_vid` and variant again. | Cookies + footer treatment ~3–10s; reload pointer ~11s; same `lift_vid` + treatment ~13–19s |
+
+## Playwright spec runs (tests, not video evidence)
+
+`npm run evidence:a` runs `tests/evidence/phase-a.spec.ts`. Those outputs are **test runs**, not video evidence. They do not stand in for Console, axe, cookie, or banner readouts.
+
+- Flagsmith-dependent test `05-sticky-identity` uses `playwright.evidence.config.ts` (no `--allow-mock`, no `?lift_variant=`).
+- The typed / fail-open tests use `playwright.evidence.mock.config.ts` (`--allow-mock`). Tests that open `/checkout/?lift_variant=control` (or `treatment`) are forced-arm mock runs.

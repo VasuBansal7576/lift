@@ -52,7 +52,32 @@ export function validatePatchSpec(input) {
 }
 
 const clickListenerHosts = new WeakSet();
-(function watchClickListeners() {
+const hostClickedAt = new WeakMap();
+const hostClickGates = new WeakMap();
+const liftStyleNodes = new WeakSet();
+const pageVerdicts = new WeakMap();
+const clickWatchUnpatches = [];
+let keySeq = 0;
+let keyInFlight = false;
+let lastKeyTarget = null;
+let clickDuringKeyDispatch = null;
+let synthesizingClick = false;
+let keyWatchCleanup = null;
+let cssomGen = 0;
+let mutationSeq = 0;
+let lastFailNode = null;
+let sampleRoundRobin = 0;
+const runtimeStats = {
+  undos: 0,
+  attributions: 0,
+  ticksRan: 0,
+  ticksSkipped: 0,
+  tickMsMax: 0,
+  lastAttributions: [],
+};
+
+function installClickWatch() {
+  if (clickWatchUnpatches.length) return;
   const patch = (proto) => {
     if (!proto || typeof proto.addEventListener !== "function") return;
     const native = proto.addEventListener;
@@ -63,12 +88,162 @@ const clickListenerHosts = new WeakSet();
     }
     addEventListenerLifted.__liftClickWatch = true;
     proto.addEventListener = addEventListenerLifted;
+    clickWatchUnpatches.push(() => {
+      if (proto.addEventListener === addEventListenerLifted) proto.addEventListener = native;
+    });
   };
   if (typeof EventTarget !== "undefined") patch(EventTarget.prototype);
   if (typeof Node !== "undefined") patch(Node.prototype);
   if (typeof Element !== "undefined") patch(Element.prototype);
   if (typeof HTMLElement !== "undefined") patch(HTMLElement.prototype);
-})();
+}
+
+function uninstallClickWatch() {
+  while (clickWatchUnpatches.length) clickWatchUnpatches.pop()();
+}
+
+installClickWatch();
+
+function markHostClicked(el) {
+  if (!el || el.nodeType !== 1) return;
+  hostClickedAt.set(el, keySeq);
+  if (synthesizingClick) return;
+  const ev = typeof window !== "undefined" ? window.event : null;
+  if (ev && (ev.type === "keydown" || ev.type === "keyup")) {
+    clickDuringKeyDispatch = el;
+  }
+}
+
+function hostClickedThisKey(el) {
+  return Boolean(el && (hostClickedAt.get(el) === keySeq || clickDuringKeyDispatch === el));
+}
+
+function clearKeyInFlight() {
+  keyInFlight = false;
+  lastKeyTarget = null;
+  clickDuringKeyDispatch = null;
+  synthesizingClick = false;
+}
+
+function isLiftStyleTarget(target) {
+  if (!target || target.nodeType !== 1) return false;
+  if (liftStyleNodes.has(target)) return true;
+  return typeof target.getAttribute === "function" && target.getAttribute("data-lift-css") === "1";
+}
+
+function ensureKeyWatch() {
+  if (keyWatchCleanup) return;
+  let lastKeyEvent = null;
+  const onKey = (event) => {
+    if (event.type === "keydown" && !event.repeat) {
+      if (event !== lastKeyEvent) {
+        lastKeyEvent = event;
+        keySeq += 1;
+        keyInFlight = true;
+        lastKeyTarget = event.target || null;
+      }
+    }
+    if (event.type === "keyup") {
+      queueMicrotask(() => {
+        keyInFlight = false;
+      });
+    }
+  };
+  const onClear = () => {
+    clearKeyInFlight();
+  };
+  const onVis = () => {
+    if (typeof document !== "undefined" && document.hidden) clearKeyInFlight();
+  };
+  const add = (target) => {
+    if (!target || typeof target.addEventListener !== "function") return;
+    target.addEventListener("keydown", onKey, true);
+    target.addEventListener("keyup", onKey, true);
+  };
+  if (typeof window !== "undefined") {
+    add(window);
+    window.addEventListener("blur", onClear, true);
+    window.addEventListener("pointerdown", onClear, true);
+  }
+  if (typeof document !== "undefined") {
+    add(document);
+    document.addEventListener("visibilitychange", onVis);
+  }
+  keyWatchCleanup = () => {
+    const remove = (target) => {
+      if (!target || typeof target.removeEventListener !== "function") return;
+      target.removeEventListener("keydown", onKey, true);
+      target.removeEventListener("keyup", onKey, true);
+    };
+    if (typeof window !== "undefined") {
+      remove(window);
+      window.removeEventListener("blur", onClear, true);
+      window.removeEventListener("pointerdown", onClear, true);
+    }
+    if (typeof document !== "undefined") {
+      remove(document);
+      document.removeEventListener("visibilitychange", onVis);
+    }
+    keyWatchCleanup = null;
+    clearKeyInFlight();
+  };
+}
+
+function releaseKeyWatch() {
+  if (keyWatchCleanup) keyWatchCleanup();
+}
+
+ensureKeyWatch();
+
+function releaseHostClickGate(el) {
+  const gate = hostClickGates.get(el);
+  if (!gate) return;
+  gate.count -= 1;
+  if (gate.count > 0) return;
+  hostClickGates.delete(el);
+  const desc = Object.getOwnPropertyDescriptor(el, "click");
+  if (!desc || desc.value !== gate.wrapped) return;
+  try {
+    if (gate.previous) Object.defineProperty(el, "click", gate.previous);
+    else delete el.click;
+  } catch {
+    try {
+      delete el.click;
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+function installHostClickGate(el) {
+  if (!(el instanceof HTMLElement) || typeof HTMLElement === "undefined") return () => {};
+  const protoClick = HTMLElement.prototype.click;
+  if (typeof protoClick !== "function") return () => {};
+  const existing = hostClickGates.get(el);
+  if (existing) {
+    existing.count += 1;
+    return () => releaseHostClickGate(el);
+  }
+  const previous = Object.getOwnPropertyDescriptor(el, "click");
+  let prevFn = protoClick;
+  if (previous && typeof previous.value === "function") prevFn = previous.value;
+  const wrapped = function liftHostClick(...args) {
+    markHostClicked(el);
+    return prevFn.apply(this, args);
+  };
+  try {
+    Object.defineProperty(el, "click", {
+      configurable: true,
+      enumerable: previous ? previous.enumerable : false,
+      writable: previous ? previous.writable !== false : true,
+      value: wrapped,
+    });
+  } catch {
+    return () => {};
+  }
+  hostClickGates.set(el, { count: 1, previous, wrapped });
+  return () => releaseHostClickGate(el);
+}
 
 function docOf(root) {
   return root.nodeType === 9 ? root : root.ownerDocument;
@@ -90,8 +265,8 @@ function miss(index, selector, extra) {
   };
 }
 
-function applied(undo) {
-  return { status: "applied", undo };
+function applied(undo, redo) {
+  return { status: "applied", undo, redo: redo || null };
 }
 
 function noop() {
@@ -158,10 +333,15 @@ function applySetAttribute(root, op, index) {
   const had = el.hasAttribute(op.name);
   const prev = el.getAttribute(op.name);
   el.setAttribute(op.name, op.value);
-  return applied(() => {
-    if (!had) el.removeAttribute(op.name);
-    else el.setAttribute(op.name, prev ?? "");
-  });
+  return applied(
+    () => {
+      if (!had) el.removeAttribute(op.name);
+      else el.setAttribute(op.name, prev ?? "");
+    },
+    () => {
+      el.setAttribute(op.name, op.value);
+    },
+  );
 }
 
 function applySetText(root, op, index) {
@@ -185,9 +365,14 @@ function applySetText(root, op, index) {
   const prevChildren = [...el.childNodes];
   if (el.textContent === op.text) return noop();
   el.textContent = op.text;
-  return applied(() => {
-    el.replaceChildren(...prevChildren);
-  });
+  return applied(
+    () => {
+      el.replaceChildren(...prevChildren);
+    },
+    () => {
+      el.textContent = op.text;
+    },
+  );
 }
 
 function parseComputedRgb(css) {
@@ -210,6 +395,7 @@ let backstopsPaused = false;
 const pendingBackstops = [];
 const guardFlushers = [];
 const TEXT_DESCENDANT_CAP = 500;
+const GUARD_CONTRAST_SAMPLE = 200;
 const SIZE_GROWING_PROPS = new Set([
   "font-size",
   "padding",
@@ -326,10 +512,27 @@ function isHitTargetOnlyDecls(decls) {
 function ancestorGrewPast(el, beforeRects, px) {
   const anc = outOfFlowAncestor(el);
   if (!anc) return false;
+  if (anc === el) return false;
   const before = beforeRects && beforeRects.get(anc);
   if (!before) return true;
   const after = cachedRect(anc);
   return Math.abs(after.width - before.width) > px || Math.abs(after.height - before.height) > px;
+}
+
+function rectInside(inner, outer, tol) {
+  if (!inner || !outer) return false;
+  return (
+    inner.left >= outer.left - tol &&
+    inner.top >= outer.top - tol &&
+    inner.right <= outer.right + tol &&
+    inner.bottom <= outer.bottom + tol
+  );
+}
+
+function hostStaysInsideAncestor(el) {
+  const anc = outOfFlowAncestor(el);
+  if (!anc) return true;
+  return rectInside(cachedRect(el), cachedRect(anc), 1);
 }
 
 function decorationIncludesLineThrough(el) {
@@ -373,9 +576,68 @@ function hostHasFixedHeightAndHiddenOverflow(el) {
   return Number.isFinite(px) && px > 0;
 }
 
-function cssMatchesViolateHostsOrContrast(root, op, mode, beforeRects) {
+function sampleMatchesForGuard(matches, records) {
+  const list = [...matches];
+  if (list.length <= GUARD_CONTRAST_SAMPLE) return list;
+  const touched = elementsTouchedByRecords(list, records);
+  const out = [];
+  const seen = new Set();
+  for (const el of touched) {
+    if (out.length >= GUARD_CONTRAST_SAMPLE) break;
+    if (seen.has(el)) continue;
+    seen.add(el);
+    out.push(el);
+  }
+  const start = list.length ? sampleRoundRobin % list.length : 0;
+  sampleRoundRobin = list.length ? (start + GUARD_CONTRAST_SAMPLE) % list.length : 0;
+  for (let i = 0; i < list.length && out.length < GUARD_CONTRAST_SAMPLE; i += 1) {
+    const el = list[(start + i) % list.length];
+    if (seen.has(el)) continue;
+    seen.add(el);
+    out.push(el);
+  }
+  return out;
+}
+
+function elementsTouchedByRecords(elements, records) {
+  if (!records || records.length === 0) return [];
+  const want = new Set(elements);
+  const touched = [];
+  const seen = new Set();
+  const consider = (node) => {
+    if (!node || node.nodeType !== 1 || seen.has(node) || !want.has(node)) return;
+    seen.add(node);
+    touched.push(node);
+  };
+  for (const rec of records) {
+    const nodes = [];
+    if (rec.target && rec.target.nodeType === 1) nodes.push(rec.target);
+    for (const node of rec.addedNodes || []) {
+      if (node && node.nodeType === 1) nodes.push(node);
+    }
+    for (const node of nodes) {
+      let cur = node;
+      while (cur && cur.nodeType === 1) {
+        consider(cur);
+        cur = cur.parentElement;
+      }
+      if (typeof node.querySelectorAll !== "function") continue;
+      for (const child of node.querySelectorAll("*")) consider(child);
+    }
+  }
+  return touched;
+}
+
+function cssMatchesViolateHostsOrContrast(root, op, mode, beforeRects, records, opts) {
   const scope = "querySelectorAll" in root ? root : docOf(root);
   const guard = mode === "guard";
+  const skipBy = opts && opts.skipBy;
+  const onlyNode = opts && opts.onlyNode;
+  const take = (node, err) => {
+    if (skipBy && node && skipBy.get(node)?.has(err)) return null;
+    lastFailNode = node;
+    return err;
+  };
   for (const rule of op.rules || []) {
     let matches;
     try {
@@ -387,8 +649,7 @@ function cssMatchesViolateHostsOrContrast(root, op, mode, beforeRects) {
       if (guard) continue;
       return "selector matched nothing";
     }
-    if (matches.length > CSS_MATCH_LIMIT) {
-      if (guard) continue;
+    if (matches.length > CSS_MATCH_LIMIT && !guard) {
       return "too many matches";
     }
     const decls = rule.declarations || [];
@@ -403,43 +664,75 @@ function cssMatchesViolateHostsOrContrast(root, op, mode, beforeRects) {
     const outlineColor = colorValueFromRule(rule, "outline-color");
     const borderColor = colorValueFromRule(rule, "border-color");
     const isState = Boolean(rule.selector && rule.selector.state);
-    for (const el of matches) {
-      if (elementIsPageContainer(el) || elementForbiddenAsTextOrTagHost(el)) {
-        return "target is not allowlisted";
+    const checkList = guard ? sampleMatchesForGuard(matches, records) : [...matches];
+    for (const el of checkList) {
+      if (onlyNode && el !== onlyNode && !(el.contains && el.contains(onlyNode))) continue;
+      const runHost = !onlyNode || el === onlyNode;
+      if (runHost && (elementIsPageContainer(el) || elementForbiddenAsTextOrTagHost(el))) {
+        const e = take(el, "target is not allowlisted");
+        if (e) return e;
       }
-      if (grows && hostHasFixedHeightAndHiddenOverflow(el)) {
-        return "size change is not allowlisted";
+      if (runHost && grows && hostHasFixedHeightAndHiddenOverflow(el)) {
+        const e = take(el, "size change is not allowlisted");
+        if (e) return e;
       }
-      if (grows && hostOrAncestorIsOutOfFlow(el)) {
+      if (runHost && grows && hostOrAncestorIsOutOfFlow(el)) {
         const allowHit =
           hitOnly &&
           isInlineControl(el) &&
-          (guard || !beforeRects || !ancestorGrewPast(el, beforeRects, 8));
-        if (!allowHit) return "size change is not allowlisted";
+          (guard || !beforeRects || !ancestorGrewPast(el, beforeRects, 8)) &&
+          hostStaysInsideAncestor(el);
+        if (!allowHit) {
+          const e = take(el, "size change is not allowlisted");
+          if (e) return e;
+        }
       }
-      if (setsUnderline && decorationIncludesLineThrough(el)) {
-        return "text-decoration is not allowlisted";
+      if (runHost && setsUnderline && decorationIncludesLineThrough(el)) {
+        const e = take(el, "text-decoration is not allowlisted");
+        if (e) return e;
       }
-      if (outlineBudgetExceeded(decls)) return "outline is not allowlisted";
-      if (changesPaint && backgroundUnknown(el)) return "background is not allowlisted";
+      if (runHost && outlineBudgetExceeded(decls)) {
+        const e = take(el, "outline is not allowlisted");
+        if (e) return e;
+      }
+      if (runHost && changesPaint && backgroundUnknown(el)) {
+        const e = take(el, "background is not allowlisted");
+        if (e) return e;
+      }
       const nodes = [el, ...el.querySelectorAll("*")];
       if (nodes.length > TEXT_DESCENDANT_CAP) {
         if (guard) continue;
-        return "too many descendants";
+        const e = take(el, "too many descendants");
+        if (e) return e;
       }
       for (const node of nodes) {
+        if (onlyNode && node !== onlyNode) continue;
         if (node !== el && !isTextBearing(node) && !isFormControl(node)) continue;
         const err = checkNodeContrast(node);
-        if (err) return err;
+        if (err) {
+          const e = take(node, err);
+          if (e) return e;
+        }
       }
+      if (!runHost) continue;
       const bg = effectiveBackgroundRgb(el);
       if (outlineColor) {
-        if (!bg) return "background is not allowlisted";
-        if (contrastRatio(outlineColor, bg) < 3) return "contrast is not allowlisted";
+        if (!bg) {
+          const e = take(el, "background is not allowlisted");
+          if (e) return e;
+        } else if (contrastRatio(outlineColor, bg) < 3) {
+          const e = take(el, "contrast is not allowlisted");
+          if (e) return e;
+        }
       }
       if (!isState && borderColor) {
-        if (!bg) return "background is not allowlisted";
-        if (contrastRatio(borderColor, bg) < 3) return "contrast is not allowlisted";
+        if (!bg) {
+          const e = take(el, "background is not allowlisted");
+          if (e) return e;
+        } else if (contrastRatio(borderColor, bg) < 3) {
+          const e = take(el, "contrast is not allowlisted");
+          if (e) return e;
+        }
       }
     }
   }
@@ -464,12 +757,23 @@ function snapshotOutOfFlowRects(root, op) {
   return map;
 }
 
+function setSheetDisabled(style, disabled) {
+  if (!style) return;
+  style.disabled = Boolean(disabled);
+  try {
+    if (style.sheet) style.sheet.disabled = Boolean(disabled);
+  } catch {
+    /* ignore */
+  }
+}
+
 function applyInjectCss(root, op, index) {
   const doc = docOf(root);
   const id = cssKey(op);
   const existing = doc.getElementById(id);
   const beforeRects = snapshotOutOfFlowRects(root, op);
   let undo;
+  let redo;
   if (existing && localTagName(existing) === "style") {
     const prev = existing.textContent ?? "";
     if (prev === op.css) {
@@ -480,8 +784,16 @@ function applyInjectCss(root, op, index) {
       return noop();
     }
     existing.textContent = op.css;
+    existing.disabled = false;
+    existing.setAttribute("data-lift-css", "1");
+    liftStyleNodes.add(existing);
     undo = () => {
       existing.textContent = prev;
+      setSheetDisabled(existing, false);
+    };
+    redo = () => {
+      existing.textContent = op.css;
+      setSheetDisabled(existing, false);
     };
   } else {
     const style = doc.createElement("style");
@@ -490,18 +802,24 @@ function applyInjectCss(root, op, index) {
     style.textContent = op.css;
     const parent = doc.head ?? doc.documentElement;
     parent.appendChild(style);
+    liftStyleNodes.add(style);
     undo = () => {
-      style.remove();
+      setSheetDisabled(style, true);
+    };
+    redo = () => {
+      setSheetDisabled(style, false);
     };
   }
   if (!backstopsPaused) {
     const hostErr = cssMatchesViolateHostsOrContrast(root, op, "apply", beforeRects);
     if (hostErr) {
       undo();
+      const live = doc.getElementById(id);
+      if (live) live.remove();
       return { status: "miss", error: `ops[${index}] ${hostErr}` };
     }
   }
-  return applied(undo);
+  return applied(undo, redo);
 }
 
 function alreadyLabelled(input) {
@@ -547,7 +865,7 @@ function applyWrapLabel(root, op, index) {
     replacementOf.set(hint, label);
     hint.replaceWith(label);
   } else input.insertAdjacentElement("beforebegin", label);
-  return applied(() => {
+  const undo = () => {
     if (hint) {
       replacementOf.delete(hint);
       label.replaceWith(hint);
@@ -556,7 +874,16 @@ function applyWrapLabel(root, op, index) {
     else input.setAttribute("data-labelled", labelledValue ?? "");
     if (hadUnlabeled) input.setAttribute("data-unlabeled", unlabeledValue ?? "");
     else input.removeAttribute("data-unlabeled");
-  });
+  };
+  const redo = () => {
+    input.removeAttribute("data-unlabeled");
+    input.setAttribute("data-labelled", "1");
+    if (hint) {
+      replacementOf.set(hint, label);
+      hint.replaceWith(label);
+    } else input.insertAdjacentElement("beforebegin", label);
+  };
+  return applied(undo, redo);
 }
 
 function applyMakeFocusable(root, op, index) {
@@ -572,11 +899,17 @@ function applyMakeFocusable(root, op, index) {
   const prevTab = el.getAttribute("tabindex");
   el.tabIndex = 0;
   el.setAttribute("data-lift-focusable", "1");
-  return applied(() => {
-    el.removeAttribute("data-lift-focusable");
-    if (!hadTab) el.removeAttribute("tabindex");
-    else el.setAttribute("tabindex", prevTab ?? "0");
-  });
+  return applied(
+    () => {
+      el.removeAttribute("data-lift-focusable");
+      if (!hadTab) el.removeAttribute("tabindex");
+      else el.setAttribute("tabindex", prevTab ?? "0");
+    },
+    () => {
+      el.tabIndex = 0;
+      el.setAttribute("data-lift-focusable", "1");
+    },
+  );
 }
 
 function applyBindEnterToClick(root, op, index) {
@@ -591,12 +924,19 @@ function applyBindEnterToClick(root, op, index) {
     return { status: "miss", error: `ops[${index}] target is not allowlisted` };
   }
   if (el.getAttribute("data-lift-enter") === "1") return noop();
-  const stop = installActivationBridge(el, { space: false });
+  let stop = installActivationBridge(el, { space: false });
   el.setAttribute("data-lift-enter", "1");
-  return applied(() => {
-    stop();
-    el.removeAttribute("data-lift-enter");
-  });
+  return applied(
+    () => {
+      stop();
+      stop = () => {};
+      el.removeAttribute("data-lift-enter");
+    },
+    () => {
+      stop = installActivationBridge(el, { space: false });
+      el.setAttribute("data-lift-enter", "1");
+    },
+  );
 }
 
 const FORWARDED_TO = new WeakMap();
@@ -674,34 +1014,46 @@ function isActivationKey(event, space) {
 
 function installActivationBridge(el, opts) {
   const space = Boolean(opts && opts.space);
-  let clickDuringKey = false;
   let spaceArmed = false;
-  const onClickArm = () => {
-    clickDuringKey = true;
+  let keyOnHost = false;
+  const stopClickGate = installHostClickGate(el);
+  const onClickCapture = (event) => {
+    if (event.detail !== 0) return;
+    if (lastKeyTarget !== el) return;
+    markHostClicked(el);
   };
-  const onKeyDownCapture = (event) => {
-    if (event.target !== el) return;
-    const kind = isActivationKey(event, space);
-    if (!kind) return;
-    if (event.repeat) return;
-    clickDuringKey = false;
-    el.removeEventListener("click", onClickArm, true);
-    el.addEventListener("click", onClickArm, { capture: true, once: true });
-    if (kind === "space") spaceArmed = true;
+  el.addEventListener("click", onClickCapture, true);
+  const deferOwnClick = () => {
+    setTimeout(() => {
+      const already = hostClickedThisKey(el);
+      keyOnHost = false;
+      if (already) {
+        if (clickDuringKeyDispatch === el) clickDuringKeyDispatch = null;
+        return;
+      }
+      synthesizingClick = true;
+      try {
+        el.click();
+      } finally {
+        synthesizingClick = false;
+        if (clickDuringKeyDispatch === el) clickDuringKeyDispatch = null;
+      }
+    }, 0);
   };
   const onKeyDown = (event) => {
     if (event.target !== el) return;
     const kind = isActivationKey(event, space);
     if (!kind) return;
     if (event.repeat) return;
+    keyOnHost = true;
     if (kind === "space") {
+      spaceArmed = true;
       event.preventDefault();
       return;
     }
-    if (event.defaultPrevented || clickDuringKey) return;
+    if (event.defaultPrevented) return;
     event.preventDefault();
-    el.click();
-    event.stopPropagation();
+    deferOwnClick();
   };
   const onKeyUp = (event) => {
     if (event.target !== el) return;
@@ -710,19 +1062,17 @@ function installActivationBridge(el, opts) {
     if (!spaceArmed) return;
     spaceArmed = false;
     if (event.repeat) return;
-    if (event.defaultPrevented || clickDuringKey) return;
+    if (event.defaultPrevented) return;
     event.preventDefault();
-    el.click();
-    event.stopPropagation();
+    deferOwnClick();
   };
-  el.addEventListener("keydown", onKeyDownCapture, true);
   el.addEventListener("keydown", onKeyDown);
   el.addEventListener("keyup", onKeyUp);
   return () => {
-    el.removeEventListener("keydown", onKeyDownCapture, true);
+    stopClickGate();
+    el.removeEventListener("click", onClickCapture, true);
     el.removeEventListener("keydown", onKeyDown);
     el.removeEventListener("keyup", onKeyUp);
-    el.removeEventListener("click", onClickArm, true);
   };
 }
 
@@ -784,9 +1134,10 @@ function applyPromoteToControl(root, op, index) {
   el.setAttribute("role", role);
   el.tabIndex = 0;
   el.setAttribute("data-lift-promoted", role);
-  const stop = installActivationBridge(el, { space: role === "button" });
+  let stop = installActivationBridge(el, { space: role === "button" });
   const restore = () => {
     stop();
+    stop = () => {};
     if (!hadMark) el.removeAttribute("data-lift-promoted");
     else el.setAttribute("data-lift-promoted", prevMark ?? "");
     if (!hadTab) el.removeAttribute("tabindex");
@@ -794,12 +1145,18 @@ function applyPromoteToControl(root, op, index) {
     if (!hadRole) el.removeAttribute("role");
     else el.setAttribute("role", prevRole ?? "");
   };
+  const reapply = () => {
+    el.setAttribute("role", role);
+    el.tabIndex = 0;
+    el.setAttribute("data-lift-promoted", role);
+    stop = installActivationBridge(el, { space: role === "button" });
+  };
   const contrastErr = checkNodeContrast(el);
   if (contrastErr) {
     restore();
     return { status: "miss", error: `ops[${index}] ${contrastErr}` };
   }
-  return applied(restore);
+  return applied(restore, reapply);
 }
 
 function findMount(root, mountId) {
@@ -856,9 +1213,29 @@ function applyInsertHtml(root, op, index) {
     default:
       return { status: "miss", error: `ops[${index}] position must be before|after|prepend|append` };
   }
-  return applied(() => {
-    holder.remove();
-  });
+  return applied(
+    () => {
+      holder.remove();
+    },
+    () => {
+      switch (op.position) {
+        case "before":
+          target.before(holder);
+          break;
+        case "after":
+          target.after(holder);
+          break;
+        case "prepend":
+          target.prepend(holder);
+          break;
+        case "append":
+          target.append(holder);
+          break;
+        default:
+          break;
+      }
+    },
+  );
 }
 
 function applyToggleDisclosure(root, op, index) {
@@ -889,14 +1266,21 @@ function applyToggleDisclosure(root, op, index) {
   trigger.addEventListener("click", onClick);
   trigger.setAttribute("data-lift-disclosure", "1");
   if (!hadExpanded) trigger.setAttribute("aria-expanded", "false");
-  return applied(() => {
-    trigger.removeEventListener("click", onClick);
-    trigger.removeAttribute("data-lift-disclosure");
-    if (!hadExpanded) trigger.removeAttribute("aria-expanded");
-    else trigger.setAttribute("aria-expanded", prevExpanded ?? "false");
-    if (!hadOpen) panel.classList.remove("lift-open");
-    else panel.classList.add("lift-open");
-  });
+  return applied(
+    () => {
+      trigger.removeEventListener("click", onClick);
+      trigger.removeAttribute("data-lift-disclosure");
+      if (!hadExpanded) trigger.removeAttribute("aria-expanded");
+      else trigger.setAttribute("aria-expanded", prevExpanded ?? "false");
+      if (!hadOpen) panel.classList.remove("lift-open");
+      else panel.classList.add("lift-open");
+    },
+    () => {
+      trigger.addEventListener("click", onClick);
+      trigger.setAttribute("data-lift-disclosure", "1");
+      if (!hadExpanded) trigger.setAttribute("aria-expanded", "false");
+    },
+  );
 }
 
 function applyOp(root, op, index) {
@@ -924,14 +1308,73 @@ function applyOp(root, op, index) {
   }
 }
 
+function runUndo(item) {
+  if (!item) return;
+  if (typeof item === "function") item();
+  else if (typeof item.undo === "function") item.undo();
+}
+
+function snapshotScroll(doc, node) {
+  const view = doc && doc.defaultView;
+  const winX = view && typeof view.scrollX === "number" ? view.scrollX : 0;
+  const winY = view && typeof view.scrollY === "number" ? view.scrollY : 0;
+  const positions = [];
+  const push = (el) => {
+    if (!el || typeof el.scrollTop !== "number") return;
+    positions.push([el, el.scrollTop, el.scrollLeft]);
+  };
+  if (doc) {
+    push(doc.scrollingElement || doc.documentElement);
+    push(doc.documentElement);
+    push(doc.body);
+  }
+  let cur = node && node.nodeType === 1 ? node : null;
+  while (cur) {
+    push(cur);
+    cur = cur.parentElement;
+  }
+  return { view, winX, winY, positions };
+}
+
+function scrollSnapshotChanged(a, b) {
+  if (!a || !b) return false;
+  if (a.winX !== b.winX || a.winY !== b.winY) return true;
+  const n = Math.min(a.positions.length, b.positions.length);
+  for (let i = 0; i < n; i += 1) {
+    if (a.positions[i][1] !== b.positions[i][1] || a.positions[i][2] !== b.positions[i][2]) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function restoreScrollSnapshot(snap) {
+  if (!snap) return;
+  const view = snap.view;
+  if (view && typeof view.scrollTo === "function") {
+    const curX = typeof view.scrollX === "number" ? view.scrollX : 0;
+    const curY = typeof view.scrollY === "number" ? view.scrollY : 0;
+    if (curX !== snap.winX || curY !== snap.winY) view.scrollTo(snap.winX, snap.winY);
+  }
+  for (const [el, top, left] of snap.positions) {
+    if (el.scrollTop !== top) el.scrollTop = top;
+    if (el.scrollLeft !== left) el.scrollLeft = left;
+  }
+}
+
 function undoAll(undos) {
+  runtimeStats.undos += 1;
   for (let i = undos.length - 1; i >= 0; i -= 1) {
     try {
-      undos[i]();
+      runUndo(undos[i]);
     } catch {
       /* fail-open: best-effort undo */
     }
   }
+}
+
+function hardUndoAll(root, spec, undos) {
+  undoAll(undos);
 }
 
 function specStyleElements(root, spec) {
@@ -1234,8 +1677,9 @@ function collectOverlayElements(root, spec) {
       } catch {
         continue;
       }
+      const grows = (rule.declarations || []).some((d) => SIZE_GROWING_PROPS.has(d.property));
       for (const host of matches) {
-        if (isPositionedOverlay(host)) add(host);
+        if (grows || isPositionedOverlay(host)) add(host);
         if (typeof host.querySelectorAll !== "function") continue;
         for (const child of host.querySelectorAll("*")) {
           if (isPositionedOverlay(child)) add(child);
@@ -1304,18 +1748,45 @@ function overlayPaintsAbove(overlay, control, inter) {
   return false;
 }
 
+function unionRects(els) {
+  let u = null;
+  for (const el of els) {
+    const r = cachedRect(el);
+    if (r.width <= 0 && r.height <= 0) continue;
+    if (!u) {
+      u = { left: r.left, top: r.top, right: r.right, bottom: r.bottom };
+      continue;
+    }
+    u.left = Math.min(u.left, r.left);
+    u.top = Math.min(u.top, r.top);
+    u.right = Math.max(u.right, r.right);
+    u.bottom = Math.max(u.bottom, r.bottom);
+  }
+  return u;
+}
+
+function rectsCouldOverlap(a, b) {
+  if (!a || !b) return true;
+  return !(a.right < b.left || a.left > b.right || a.bottom < b.top || a.top > b.bottom);
+}
+
 function coverageHitsFor(control, overlays) {
   const crect = cachedRect(control);
   const area = crect.width * crect.height;
   if (area <= 0) return [];
   const hits = [];
+  const cx = crect.left + crect.width / 2;
+  const cy = crect.top + crect.height / 2;
   for (const overlay of overlays) {
     if (overlay === control) continue;
     if (control.contains && control.contains(overlay)) continue;
     if (overlay.contains && overlay.contains(control)) continue;
-    const inter = rectIntersection(crect, cachedRect(overlay));
+    const orect = cachedRect(overlay);
+    const inter = rectIntersection(crect, orect);
     if (!inter) continue;
-    if (inter.width * inter.height / area < 0.25) continue;
+    const areaHit = inter.width * inter.height / area >= 0.25;
+    const centerHit = cx >= orect.left && cx <= orect.right && cy >= orect.top && cy <= orect.bottom;
+    if (!areaHit && !centerHit) continue;
     if (!overlayPaintsAbove(overlay, control, inter)) continue;
     hits.push(overlay);
   }
@@ -1342,7 +1813,7 @@ function overlayIsRendered(el) {
   return box.width > 0 && box.height > 0;
 }
 
-function overlayCoverageViolation(root, spec, snapshots, extraFocusables, mode) {
+function overlayCoverageViolation(root, spec, snapshots, extraFocusables, mode, opts) {
   if (!specGrowsBox(spec)) return null;
   const overlays = collectOverlayElements(root, spec);
   if (overlays.length === 0) return null;
@@ -1367,12 +1838,19 @@ function overlayCoverageViolation(root, spec, snapshots, extraFocusables, mode) 
       items.push({ el, before: [] });
     }
   }
+  const grownUnion = unionRects(overlays);
+  const skipBy = opts && opts.skipBy;
+  const onlyNode = opts && opts.onlyNode;
   for (const item of items) {
+    if (skipBy && skipBy.get(item.el)?.has("covered control")) continue;
+    if (onlyNode && item.el !== onlyNode) continue;
+    if (grownUnion && !rectsCouldOverlap(cachedRect(item.el), grownUnion)) continue;
     const after = coverageHitsFor(item.el, overlays);
     const beforeSet = new Set(item.before);
     for (const overlay of after) {
       if (beforeSet.has(overlay)) continue;
       if (mode === "guard" && renderedAtApply && !renderedAtApply.has(overlay)) continue;
+      lastFailNode = item.el;
       return "covered control";
     }
   }
@@ -1426,10 +1904,7 @@ function collectFocusables(root) {
   } catch {
     return out;
   }
-  for (const el of nodes) {
-    out.push(el);
-    if (out.length >= WATCH_NODE_CAP) break;
-  }
+  for (const el of nodes) out.push(el);
   return out;
 }
 
@@ -1488,40 +1963,80 @@ function roleMustBeStable(role) {
   return false;
 }
 
-function monotonicityViolation(root, snapshots) {
+function failGuard(err, node) {
+  lastFailNode = node || null;
+  return err;
+}
+
+function monotonicityViolation(root, snapshots, opts) {
+  const skipBy = opts && opts.skipBy;
+  const onlyNode = opts && opts.onlyNode;
+  const take = (node, err) => {
+    if (skipBy && node && skipBy.get(node)?.has(err)) return null;
+    return failGuard(err, node);
+  };
   for (const before of snapshots) {
     const live = liveSuccessor(before.el) || (before.el.isConnected ? before.el : null);
+    if (onlyNode && live !== onlyNode) continue;
     if (!live) {
       if (before.focusable || (before.role && INTERACTIVE_ROLES.has(before.role))) {
-        return "lost interactive element";
+        const e = take(before.el, "lost interactive element");
+        if (e) return e;
       }
       continue;
     }
     const after = snapshotA11y(live);
-    if (before.focusable && !after.focusable) return "lost focusability";
-    if (before.visible && !after.visible) return "lost visibility";
-    if (before.role && after.role !== before.role && roleMustBeStable(before.role)) {
-      return "changed role";
+    if (before.focusable && !after.focusable) {
+      const e = take(live, "lost focusability");
+      if (e) return e;
     }
-    if (before.name && !after.name) return "lost name";
+    if (before.visible && !after.visible) {
+      const e = take(live, "lost visibility");
+      if (e) return e;
+    }
+    if (before.role && after.role !== before.role && roleMustBeStable(before.role)) {
+      const e = take(live, "changed role");
+      if (e) return e;
+    }
+    if (before.name && !after.name) {
+      const e = take(live, "lost name");
+      if (e) return e;
+    }
     if (
       (before.focusable || after.focusable || isInteractiveElement(live)) &&
       after.visibleText &&
       !nameContainsVisible(after.name, after.visibleText)
     ) {
-      return "lost visible name";
+      const e = take(live, "lost visible name");
+      if (e) return e;
     }
-    if (!before.ariaHidden && after.ariaHidden) return "became aria-hidden";
-    if (!before.ariaDisabled && after.ariaDisabled) return "became aria-disabled";
+    if (!before.ariaHidden && after.ariaHidden) {
+      const e = take(live, "became aria-hidden");
+      if (e) return e;
+    }
+    if (!before.ariaDisabled && after.ariaDisabled) {
+      const e = take(live, "became aria-disabled");
+      if (e) return e;
+    }
     if (before.buttonType && after.buttonType !== before.buttonType) {
-      return "button type changed";
+      const e = take(live, "button type changed");
+      if (e) return e;
     }
-    if (before.formOwner && after.formOwner !== before.formOwner) return "lost form owner";
+    if (before.formOwner && after.formOwner !== before.formOwner) {
+      const e = take(live, "lost form owner");
+      if (e) return e;
+    }
     if (before.hitOk && inViewport(live)) {
       const hit = hitTargetAtCenter(live);
-      if (!hitIsSelfOrDescendant(live, hit)) return "lost hit target";
+      if (!hitIsSelfOrDescendant(live, hit)) {
+        const e = take(live, "lost hit target");
+        if (e) return e;
+      }
     }
-    if (!before.clipped && after.clipped) return "clipped by overflow";
+    if (!before.clipped && after.clipped) {
+      const e = take(live, "clipped by overflow");
+      if (e) return e;
+    }
   }
   return null;
 }
@@ -1541,10 +2056,10 @@ function attachOverlayHits(root, spec, snapshots) {
   return snapshots;
 }
 
-function specContrastError(root, spec, mode) {
+function specContrastError(root, spec, mode, records, opts) {
   for (const op of spec.ops) {
     if (op.op !== "injectCSS") continue;
-    const err = cssMatchesViolateHostsOrContrast(root, op, mode);
+    const err = cssMatchesViolateHostsOrContrast(root, op, mode, null, records, opts);
     if (err) return err;
   }
   return null;
@@ -1576,8 +2091,94 @@ function stopGuardForSpec(id) {
   return undos;
 }
 
-function kickAllGuards() {
-  for (const kick of [...guardKickers]) kick();
+function kickAllGuards(reason) {
+  for (const kick of [...guardKickers]) kick(reason);
+}
+
+function sampledPaintHash(root, spec) {
+  const scope = "querySelectorAll" in root ? root : docOf(root);
+  const els = [];
+  for (const op of spec.ops || []) {
+    if (op.op !== "injectCSS") continue;
+    for (const rule of op.rules || []) {
+      let matches;
+      try {
+        matches = scope.querySelectorAll(serializeSelectorForQuery(rule.selector));
+      } catch {
+        continue;
+      }
+      for (const el of matches) els.push(el);
+    }
+  }
+  if (els.length === 0) return "";
+  const take = Math.min(24, els.length);
+  const parts = [];
+  if (els.length <= 24) {
+    for (const el of els) {
+      const style = getComputedStyle(el);
+      parts.push(`${style.color}|${style.backgroundColor}`);
+    }
+  } else {
+    const start = sampleRoundRobin % els.length;
+    sampleRoundRobin += 1;
+    for (let i = 0; i < take; i += 1) {
+      const el = els[(start + i) % els.length];
+      const style = getComputedStyle(el);
+      parts.push(`${style.color}|${style.backgroundColor}`);
+    }
+  }
+  return parts.join(";");
+}
+
+function pageFingerprint(doc, root, spec) {
+  const view = doc && doc.defaultView;
+  let sheetCount = 0;
+  let sheetLen = 0;
+  let adoptedCount = 0;
+  let adoptedLen = 0;
+  try {
+    sheetCount = doc.styleSheets ? doc.styleSheets.length : 0;
+    for (const sheet of doc.styleSheets || []) {
+      try {
+        sheetLen += sheet.cssRules ? sheet.cssRules.length : 0;
+      } catch {
+        sheetLen += 1;
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+  try {
+    const adopted = doc.adoptedStyleSheets || [];
+    adoptedCount = adopted.length;
+    for (const sheet of adopted) {
+      try {
+        adoptedLen += sheet.cssRules ? sheet.cssRules.length : 0;
+      } catch {
+        adoptedLen += 1;
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+  const vw = view ? view.innerWidth : 0;
+  const vh = view ? view.innerHeight : 0;
+  const paint = root && spec ? sampledPaintHash(root, spec) : "";
+  return `${mutationSeq}|${sheetCount}|${sheetLen}|${adoptedCount}|${adoptedLen}|${vw}x${vh}|${cssomGen}|${paint}`;
+}
+
+function overlayGeometryKey(root, spec) {
+  if (!specGrowsBox(spec)) return "none";
+  const overlays = collectOverlayElements(root, spec);
+  const parts = [];
+  for (const el of overlays) {
+    const r = el.getBoundingClientRect();
+    parts.push(
+      `${Math.round(r.left)},${Math.round(r.top)},${Math.round(r.width)},${Math.round(r.height)}`,
+    );
+  }
+  const view = docOf(root).defaultView;
+  return `${view ? view.innerWidth : 0}x${view ? view.innerHeight : 0}:${parts.join(";")}`;
 }
 
 function ensureCssomWatch() {
@@ -1586,14 +2187,18 @@ function ensureCssomWatch() {
   const view = typeof window !== "undefined" ? window : null;
   const doc = typeof document !== "undefined" ? document : null;
   if (!view || !doc) return;
-  const onResize = () => kickAllGuards();
-  const onVis = () => kickAllGuards();
-  const onLoad = () => kickAllGuards();
+  const onResize = () => kickAllGuards("resize");
+  const onVis = () => kickAllGuards("visibility");
+  const onLoad = (event) => {
+    if (isLiftStyleTarget(event && event.target)) return;
+    cssomGen += 1;
+    kickAllGuards("cssom");
+  };
   view.addEventListener("resize", onResize);
   doc.addEventListener("visibilitychange", onVis);
   doc.addEventListener("load", onLoad, true);
   doc.addEventListener("error", onLoad, true);
-  const interval = view.setInterval(kickAllGuards, 1500);
+  const interval = view.setInterval(() => kickAllGuards("interval"), 1500);
   let unpatchSheet = () => {};
   try {
     const proto = CSSStyleSheet.prototype;
@@ -1601,7 +2206,8 @@ function ensureCssomWatch() {
     if (typeof orig === "function" && !proto.insertRule.__liftPatched) {
       const wrapped = function insertRuleLifted(...args) {
         const result = orig.apply(this, args);
-        kickAllGuards();
+        cssomGen += 1;
+        kickAllGuards("cssom");
         return result;
       };
       wrapped.__liftPatched = true;
@@ -1624,6 +2230,10 @@ function ensureCssomWatch() {
   };
 }
 
+function uninstallPrototypePatches() {
+  if (cssomCleanup) cssomCleanup();
+}
+
 function releaseCssomWatch() {
   cssomWatchCount = Math.max(0, cssomWatchCount - 1);
   if (cssomWatchCount === 0 && cssomCleanup) cssomCleanup();
@@ -1637,7 +2247,17 @@ export function resetRuntimeGuards() {
   guardKickers.length = 0;
   backstopsPaused = false;
   cssomWatchCount = 0;
-  if (cssomCleanup) cssomCleanup();
+  cssomGen = 0;
+  mutationSeq = 0;
+  sampleRoundRobin = 0;
+  lastFailNode = null;
+  keySeq = 0;
+  runtimeStats.undos = 0;
+  runtimeStats.attributions = 0;
+  runtimeStats.ticksRan = 0;
+  runtimeStats.ticksSkipped = 0;
+  runtimeStats.tickMsMax = 0;
+  runtimeStats.lastAttributions = [];
   for (const stop of stops) {
     try {
       stop();
@@ -1645,7 +2265,22 @@ export function resetRuntimeGuards() {
       /* test isolation */
     }
   }
+  uninstallPrototypePatches();
+  releaseKeyWatch();
+  installClickWatch();
+  ensureKeyWatch();
   if (typeof window !== "undefined") window.__LIFT_FAIL_OPEN__ = [];
+}
+
+export function getRuntimeStats() {
+  return {
+    undos: runtimeStats.undos,
+    attributions: runtimeStats.attributions,
+    ticksRan: runtimeStats.ticksRan,
+    ticksSkipped: runtimeStats.ticksSkipped,
+    tickMsMax: runtimeStats.tickMsMax,
+    lastAttributions: runtimeStats.lastAttributions.slice(),
+  };
 }
 
 function recordFailOpen(reason, specId) {
@@ -1694,15 +2329,21 @@ function recordsTouchSnapshots(records, snapshots) {
   });
 }
 
-function runGuardCheck(root, spec, snapshots, records) {
+function runGuardCheck(root, spec, snapshots, records, opts) {
+  const skipCoverage = Boolean(opts && opts.skipCoverage);
+  const skipBy = opts && opts.skipBy;
+  const onlyNode = opts && opts.onlyNode;
+  const guardOpts = { skipBy, onlyNode };
   return withRectCache(() => {
-    const contrastErr = specContrastError(root, spec, "guard");
+    const contrastErr = specContrastError(root, spec, "guard", records, guardOpts);
     if (contrastErr) return contrastErr;
-    const extra = addedFocusablesFromRecords(records);
-    const coverErr = overlayCoverageViolation(root, spec, snapshots, extra, "guard");
-    if (coverErr) return coverErr;
+    if (!skipCoverage) {
+      const extra = addedFocusablesFromRecords(records);
+      const coverErr = overlayCoverageViolation(root, spec, snapshots, extra, "guard", guardOpts);
+      if (coverErr) return coverErr;
+    }
     const subset = recordsTouchSnapshots(records, snapshots);
-    return monotonicityViolation(root, subset);
+    return monotonicityViolation(root, subset, guardOpts);
   });
 }
 
@@ -1725,31 +2366,50 @@ function isContrastPredicate(err) {
   );
 }
 
-function recheckGuardPredicate(root, spec, snapshots, records, err) {
+function isGeometryPredicate(err) {
+  return err === "lost hit target" || err === "clipped by overflow" || err === "lost visibility";
+}
+
+function nodeGeometryPersists(el, snapshots, err) {
+  if (!el) return true;
+  const before = (snapshots || []).find((s) => s.el === el || liveSuccessor(s.el) === el);
+  if (err === "lost visibility") {
+    return Boolean(before && before.visible && !isRenderedVisible(el));
+  }
+  if (err === "clipped by overflow") {
+    return Boolean(before && !before.clipped && isOverflowClipped(el));
+  }
+  if (err === "lost hit target") {
+    if (!inViewport(el)) return false;
+    return !hitIsSelfOrDescendant(el, hitTargetAtCenter(el));
+  }
+  return true;
+}
+
+function recheckGuardPredicate(root, spec, snapshots, records, err, skipCoverage, node) {
+  const only = { onlyNode: node || lastFailNode };
   return withRectCache(() => {
     if (err === "covered control") {
+      if (skipCoverage) return null;
       const extra = addedFocusablesFromRecords(records);
-      return overlayCoverageViolation(root, spec, snapshots, extra, "guard");
+      return overlayCoverageViolation(root, spec, snapshots, extra, "guard", only);
     }
-    if (isContrastPredicate(err)) return specContrastError(root, spec, "guard");
+    if (isContrastPredicate(err)) return specContrastError(root, spec, "guard", records, only);
+    if (isGeometryPredicate(err)) {
+      return nodeGeometryPersists(node || lastFailNode, snapshots, err) ? err : null;
+    }
     const subset = recordsTouchSnapshots(records, snapshots);
-    return monotonicityViolation(root, subset);
+    return monotonicityViolation(root, subset, only);
   });
 }
 
-function sheetRuleText(el) {
-  try {
-    const rules = el.sheet && el.sheet.cssRules;
-    if (!rules || rules.length === 0) return el.textContent ?? "";
-    return [...rules].map((rule) => rule.cssText).join("\n");
-  } catch {
-    return el.textContent ?? "";
-  }
-}
-
-function rebaselineSnapshots(root, spec, snapshots) {
+function rebaselineSnapshots(root, spec, snapshots, onlyNodes) {
   for (const snap of snapshots) {
     const live = liveSuccessor(snap.el) || (snap.el.isConnected ? snap.el : null);
+    if (onlyNodes) {
+      const hit = (live && onlyNodes.has(live)) || onlyNodes.has(snap.el);
+      if (!hit) continue;
+    }
     if (!live) {
       snap.focusable = false;
       snap.visible = false;
@@ -1762,42 +2422,144 @@ function rebaselineSnapshots(root, spec, snapshots) {
   attachOverlayHits(root, spec, snapshots);
 }
 
+function nameWithoutOurAttributes(el, spec) {
+  if (!el) return "";
+  const ourLabel = spec.ops.some(
+    (op) =>
+      op.op === "setAttribute" &&
+      (String(op.name).toLowerCase() === "aria-label" ||
+        String(op.name).toLowerCase() === "aria-labelledby"),
+  );
+  if (ourLabel) return visibleText(el);
+  return accessibleName(el);
+}
+
+function originalTextWouldViolate(root, el, spec, snapshots, err) {
+  for (const op of spec.ops || []) {
+    if (op.op !== "insertHTML") continue;
+    const mount = findMount(root, mountKeyFor(op));
+    if (mount && el && (mount === el || (mount.contains && mount.contains(el)))) return false;
+  }
+  const setTextOp = (spec.ops || []).some((op) => op.op === "setText");
+  const snap = (snapshots || []).find((s) => s.el === el || liveSuccessor(s.el) === el);
+  if (setTextOp && snap) {
+    const origVis = snap.visibleText || "";
+    const origName = snap.name || origVis;
+    if (err === "lost visible name") return Boolean(origVis && !nameContainsVisible(origName, origVis));
+    if (err === "lost name") return !origName;
+  }
+  if (err === "lost visible name") {
+    const vis = visibleText(el);
+    const without = nameWithoutOurAttributes(el, spec);
+    return Boolean(vis && !nameContainsVisible(without, vis));
+  }
+  if (err === "lost name") {
+    const without = nameWithoutOurAttributes(el, spec);
+    return !without;
+  }
+  return true;
+}
+
+function withSheetsDisabled(root, spec, fn, node) {
+  const doc = docOf(root);
+  const sheets = specStyleElements(root, spec);
+  const prev = sheets.map((style) => Boolean(style.disabled));
+  const before = snapshotScroll(doc, node || lastFailNode);
+  for (const style of sheets) setSheetDisabled(style, true);
+  const mid = snapshotScroll(doc, node || lastFailNode);
+  const toggleMoved = scrollSnapshotChanged(before, mid);
+  try {
+    return fn();
+  } finally {
+    sheets.forEach((style, i) => setSheetDisabled(style, prev[i]));
+    if (toggleMoved) restoreScrollSnapshot(before);
+  }
+}
+
+function nodeStyleSig(el) {
+  if (!el || el.nodeType !== 1) return "";
+  const style = getComputedStyle(el);
+  const bg = effectiveBackgroundRgb(el);
+  return `${style.color}|${bg ? bg.join(",") : ""}|${style.fontSize}|${style.fontWeight}`;
+}
+
+function cachePageVerdict(node, predicate) {
+  if (!node || !predicate) return;
+  if (isGeometryPredicate(predicate) || predicate === "covered control") return;
+  let map = pageVerdicts.get(node);
+  if (!map) {
+    map = new Map();
+    pageVerdicts.set(node, map);
+  }
+  map.set(predicate, { gen: cssomGen, sig: nodeStyleSig(node) });
+}
+
+function hasFreshPageVerdict(node, predicate) {
+  if (!node || !predicate) return false;
+  const entry = pageVerdicts.get(node)?.get(predicate);
+  if (!entry) return false;
+  if (entry.gen !== cssomGen) return false;
+  return entry.sig === nodeStyleSig(node);
+}
+
+function recordsTouchNode(records, node) {
+  if (!node || !records || records.length === 0) return false;
+  for (const rec of records) {
+    const nodes = [];
+    if (rec.target && rec.target.nodeType === 1) nodes.push(rec.target);
+    for (const added of rec.addedNodes || []) {
+      if (added && added.nodeType === 1) nodes.push(added);
+    }
+    for (const start of nodes) {
+      if (start === node) return true;
+      if (typeof start.contains === "function" && start.contains(node)) return true;
+      let cur = start;
+      while (cur && cur.nodeType === 1) {
+        if (cur === node) return true;
+        cur = cur.parentElement;
+      }
+    }
+  }
+  return false;
+}
+
 function attributeGuardViolation(root, spec, snapshots, records, undos, err) {
   if (isCapacityGuardError(err)) {
-    rebaselineSnapshots(root, spec, snapshots);
     return "page";
   }
-  const sheets = specStyleElements(root, spec);
-  const parked = sheets.map((el) => ({
-    el,
-    disabled: el.disabled,
-    media: el.getAttribute("media"),
-    text: sheetRuleText(el),
-  }));
-  for (const { el } of parked) {
-    el.disabled = true;
-    el.setAttribute("media", "not all");
-    el.textContent = "";
+  const node = lastFailNode;
+  if (hasFreshPageVerdict(node, err) && !recordsTouchNode(records, node)) {
+    return "page";
   }
-  let persists = false;
+  runtimeStats.attributions += 1;
+  let persists = true;
   try {
-    const doc = docOf(root);
-    if (doc && doc.body) void doc.body.offsetHeight;
-    persists = Boolean(recheckGuardPredicate(root, spec, snapshots, records, err));
+    if (err === "lost visible name" || err === "lost name") {
+      persists = originalTextWouldViolate(root, node, spec, snapshots, err);
+    } else if (isContrastPredicate(err) || err === "covered control" || isGeometryPredicate(err)) {
+      persists = Boolean(
+        withSheetsDisabled(
+          root,
+          spec,
+          () => recheckGuardPredicate(root, spec, snapshots, records, err, false, node),
+          node,
+        ),
+      );
+    } else {
+      persists = true;
+    }
   } catch {
     persists = true;
-  } finally {
-    for (const { el, disabled, media, text } of parked) {
-      el.textContent = text;
-      el.disabled = disabled;
-      if (media == null) el.removeAttribute("media");
-      else el.setAttribute("media", media);
-    }
-    const doc = docOf(root);
-    if (doc && doc.body) void doc.body.offsetHeight;
   }
+  const verdict = persists ? "page" : "spec";
+  runtimeStats.lastAttributions.push({
+    id: (node && node.id) || "",
+    predicate: err,
+    verdict,
+  });
+  if (runtimeStats.lastAttributions.length > 8) runtimeStats.lastAttributions.shift();
   if (persists) {
-    rebaselineSnapshots(root, spec, snapshots);
+    cachePageVerdict(node, err);
     return "page";
   }
   undoAll(undos);
@@ -1815,13 +2577,34 @@ function installMutationGuard(root, spec, snapshots, undos) {
   let burstStart = 0;
   let stopped = false;
   let queued = [];
+  let queuedReason = "mutation";
+  let lastFp = pageFingerprint(doc, root, spec);
+  let lastGeom = overlayGeometryKey(root, spec);
+  let intervalN = 0;
+  let lastScrollAt = 0;
+  let deferStartedAt = 0;
+  const view = doc.defaultView;
+  const onScroll = () => {
+    lastScrollAt = Date.now();
+  };
+  if (view && typeof view.addEventListener === "function") {
+    view.addEventListener("scroll", onScroll, { capture: true, passive: true });
+  }
   const media =
-    doc.defaultView && typeof doc.defaultView.matchMedia === "function"
-      ? doc.defaultView.matchMedia("(prefers-color-scheme: dark)")
+    view && typeof view.matchMedia === "function"
+      ? view.matchMedia("(prefers-color-scheme: dark)")
       : null;
 
-  const run = (records) => {
+  const run = (records, reason) => {
     if (stopped) return;
+    const now = Date.now();
+    if (now - lastScrollAt < 150 && deferStartedAt && now - deferStartedAt < 500) {
+      schedule(records, reason);
+      return;
+    }
+    deferStartedAt = 0;
+    const t0 = typeof performance !== "undefined" ? performance.now() : 0;
+    runtimeStats.ticksRan += 1;
     observer.disconnect();
     if (media && media.removeEventListener) {
       try {
@@ -1830,25 +2613,45 @@ function installMutationGuard(root, spec, snapshots, undos) {
         /* ignore */
       }
     }
-    const err = runGuardCheck(root, spec, snapshots, records);
-    if (err) {
+    const geom = overlayGeometryKey(root, spec);
+    const skipCoverage = reason === "interval" && geom === lastGeom;
+    lastGeom = geom;
+    lastFp = pageFingerprint(doc, root, spec);
+    const skipBy = new Map();
+    const pageNodes = new Set();
+    let hitCap = false;
+    for (let i = 0; i < 32; i += 1) {
+      const err = runGuardCheck(root, spec, snapshots, records, { skipCoverage, skipBy });
+      if (!err) break;
+      const node = lastFailNode;
       const cause = attributeGuardViolation(root, spec, snapshots, records, undos, err);
-      if (cause === "page") {
-        startObserving();
+      if (cause === "spec") {
+        recordFailOpen(err, spec.id);
+        stop();
         return;
       }
-      recordFailOpen(err, spec.id);
-      stop();
-      return;
+      if (!node) break;
+      const already = skipBy.get(node);
+      if (already && already.has(err)) break;
+      if (!already) skipBy.set(node, new Set());
+      skipBy.get(node).add(err);
+      pageNodes.add(node);
+      if (i === 31) hitCap = true;
     }
+    if (pageNodes.size) rebaselineSnapshots(root, spec, snapshots, pageNodes);
+    const dt = typeof performance !== "undefined" ? performance.now() - t0 : 0;
+    if (dt > runtimeStats.tickMsMax) runtimeStats.tickMsMax = dt;
+    if (hitCap && !stopped) schedule([], "cap");
     startObserving();
   };
 
-  const schedule = (records) => {
+  const schedule = (records, reason) => {
     if (stopped) return;
     queued = queued.concat(records || []);
-    if (backstopsPaused) return;
+    if (reason) queuedReason = reason;
     const now = Date.now();
+    if (!deferStartedAt) deferStartedAt = now;
+    if (backstopsPaused) return;
     if (!burstStart) burstStart = now;
     if (timer) clearTimeout(timer);
     const elapsed = now - burstStart;
@@ -1857,8 +2660,10 @@ function installMutationGuard(root, spec, snapshots, undos) {
       timer = null;
       burstStart = 0;
       const batch = queued;
+      const why = queuedReason;
       queued = [];
-      run(batch);
+      queuedReason = "mutation";
+      run(batch, why);
     }, delay);
   };
   const flushQueued = () => {
@@ -1868,18 +2673,36 @@ function installMutationGuard(root, spec, snapshots, undos) {
     burstStart = 0;
     if (queued.length === 0) return;
     const batch = queued;
+    const why = queuedReason;
     queued = [];
-    run(batch);
+    queuedReason = "mutation";
+    run(batch, why);
   };
-  const kick = () => {
+  const kick = (reason) => {
     if (stopped || backstopsPaused) return;
-    schedule([]);
+    if (reason === "interval" || reason === "resize" || reason === "visibility") {
+      if (reason === "interval") intervalN += 1;
+      const fp = pageFingerprint(doc, root, spec);
+      const force = reason === "interval" && intervalN % 10 === 0;
+      if (!force && fp === lastFp) {
+        runtimeStats.ticksSkipped += 1;
+        return;
+      }
+      lastFp = fp;
+    }
+    schedule([], reason || "interval");
   };
   guardFlushers.push(flushQueued);
   guardKickers.push(kick);
 
-  const observer = new MutationObserver((records) => schedule(records));
-  const onMedia = () => schedule([]);
+  const observer = new MutationObserver((records) => {
+    mutationSeq += 1;
+    schedule(records, "mutation");
+  });
+  const onMedia = () => {
+    cssomGen += 1;
+    schedule([], "media");
+  };
 
   const startObserving = () => {
     if (stopped) return;
@@ -1901,6 +2724,9 @@ function installMutationGuard(root, spec, snapshots, undos) {
   const stop = () => {
     stopped = true;
     if (timer) clearTimeout(timer);
+    if (view && typeof view.removeEventListener === "function") {
+      view.removeEventListener("scroll", onScroll, true);
+    }
     observer.disconnect();
     const fi = guardFlushers.indexOf(flushQueued);
     if (fi >= 0) guardFlushers.splice(fi, 1);
@@ -1915,27 +2741,33 @@ function installMutationGuard(root, spec, snapshots, undos) {
       }
     }
     removeGuard(stop);
+    if (activeGuards.length === 0) {
+      releaseKeyWatch();
+      uninstallPrototypePatches();
+    }
   };
 
+  installClickWatch();
+  ensureKeyWatch();
   ensureCssomWatch();
   startObserving();
   return stop;
 }
 
 function finishApply(scope, spec, snapshots, undos, opsStatus) {
-  const contrastErr = specContrastError(scope, spec, "apply");
+  const contrastErr = withRectCache(() => specContrastError(scope, spec, "apply"));
   if (contrastErr) {
-    undoAll(undos);
+    hardUndoAll(scope, spec, undos);
     return { ok: false, error: contrastErr, ops: opsStatus };
   }
   const monoErr = monotonicityViolation(scope, snapshots);
   if (monoErr) {
-    undoAll(undos);
+    hardUndoAll(scope, spec, undos);
     return { ok: false, error: monoErr, ops: opsStatus };
   }
-  const coverErr = overlayCoverageViolation(scope, spec, snapshots, null, "apply");
+  const coverErr = withRectCache(() => overlayCoverageViolation(scope, spec, snapshots, null, "apply"));
   if (coverErr) {
-    undoAll(undos);
+    hardUndoAll(scope, spec, undos);
     return { ok: false, error: coverErr, ops: opsStatus };
   }
   const existing = guardsBySpecId.get(spec.id);
@@ -1970,7 +2802,7 @@ export function setTestBackstopsPaused(paused) {
   if (!backstopsPaused) {
     flushPendingBackstops();
     for (const flush of [...guardFlushers]) flush();
-    kickAllGuards();
+    kickAllGuards("flush");
   }
   return true;
 }
@@ -1983,6 +2815,8 @@ export function applyPatchSpec(input, root) {
     if (!parsed.ok) return { ok: false, error: parsed.error, ops: opsStatus };
     const scope = root ?? (typeof document === "undefined" ? null : document);
     if (!scope) return { ok: false, error: "no document", ops: opsStatus };
+    ensureKeyWatch();
+    installClickWatch();
     const collected = collectWatchElements(scope, parsed.spec);
     if (collected.error) return { ok: false, error: collected.error, ops: opsStatus };
     const snapshots = attachOverlayHits(
@@ -1996,11 +2830,11 @@ export function applyPatchSpec(input, root) {
         const op = parsed.spec.ops[i];
         const result = applyOp(scope, op, i);
         if (result.status === "miss") {
-          undoAll(undos);
+          hardUndoAll(scope, parsed.spec, undos);
           return { ok: false, error: result.error, ops: opsStatus };
         }
         if (result.status === "applied") {
-          undos.push(result.undo);
+          undos.push({ undo: result.undo, redo: result.redo });
           opsStatus.push({ op: op.op, status: "applied" });
         } else {
           opsStatus.push({ op: op.op, status: "noop" });
@@ -2018,7 +2852,7 @@ export function applyPatchSpec(input, root) {
       }
       return finishApply(scope, parsed.spec, snapshots, undos, opsStatus);
     } catch (err) {
-      undoAll(undos);
+      hardUndoAll(scope, parsed.spec, undos);
       return {
         ok: false,
         error: err instanceof Error ? err.message : String(err),
@@ -2039,6 +2873,7 @@ if (typeof window !== "undefined") {
     applyPatchSpec,
     validatePatchSpec,
     setTestBackstopsPaused,
+    getRuntimeStats,
   };
   Object.defineProperty(window.LiftRuntime, "resetRuntimeGuards", {
     enumerable: true,

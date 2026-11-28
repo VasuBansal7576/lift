@@ -75,6 +75,27 @@ function sh(bin: string, args: string[], opts?: { cwd?: string; timeoutMs?: numb
   });
 }
 
+async function killStrayChrome(): Promise<void> {
+  const listed = await sh("ps", ["-eo", "pid,args"]);
+  for (const line of listed.stdout.split("\n")) {
+    if (!line.includes("lift-chrome-") && !line.includes("remote-debugging-port=")) continue;
+    if (!line.includes("chrome")) continue;
+    const pid = Number(line.trim().split(/\s+/)[0]);
+    if (pid > 1 && pid !== process.pid) {
+      try {
+        process.kill(pid, "SIGKILL");
+      } catch {
+        /* already gone */
+      }
+    }
+  }
+  await sh("xdotool", ["search", "--class", "Google-chrome", "windowkill"]).catch(() => ({
+    code: 0,
+    stdout: "",
+    stderr: "",
+  }));
+}
+
 async function killStrayFfmpeg(outFile: string): Promise<void> {
   const needle = outFile.split("/").pop() ?? outFile;
   const listed = await sh("ps", ["-eo", "pid,args"]);
@@ -231,9 +252,9 @@ sleep 180
 set -uo pipefail
 cd ${JSON.stringify(REPO_ROOT)}
 export TERM=xterm-256color
-export COLUMNS=220
+export COLUMNS=88
 export LINES=52
-stty cols 220 rows 52 2>/dev/null || true
+stty cols 88 rows 52 2>/dev/null || true
 ${body}
 `,
     { mode: 0o700 },
@@ -436,7 +457,7 @@ async function startChromeFromTerminal(
     { mode: 0o700 },
   );
   await clickFocusTerminal(title);
-  await xdotoolType("bash /tmp/lift-open-chrome.sh", 70);
+  await xdotoolType("bash /tmp/lift-open-chrome.sh", 120);
   await sleep(200);
   await sh("xdotool", ["key", "--clearmodifiers", "Return"]);
   const deadline = Date.now() + 20_000;
@@ -928,6 +949,7 @@ async function downProofStack(): Promise<void> {
 }
 
 async function hideDock(): Promise<void> {
+  await killStrayChrome();
   await unmapWindowsNamed("plank");
   await unmapWindowsNamed("Plank");
 }
@@ -1600,7 +1622,6 @@ async function recordT3Up(): Promise<void> {
     }
     if (!existsSync("/tmp/lift-proof-up.done")) throw new Error("proof compose up did not finish");
     await abortIfServerKeyLeaked();
-    await sleep(3000);
     chrome = await startChromeFromTerminal("t3-selfhost-up", "right");
     const chromePid = chrome.child.pid;
     if (!chromePid) throw new Error("chrome pid missing");

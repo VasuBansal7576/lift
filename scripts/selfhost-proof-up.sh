@@ -63,10 +63,10 @@ poll() {
     local code http_code
     code=$(curl -sS -o /tmp/lift-proof-health.body -w '%{http_code} dns=%{time_namelookup}s connect=%{time_connect}s ttfb=%{time_starttransfer}s total=%{time_total}s' "${ORIGIN}/health/liveness/" 2>/dev/null || echo '000 dns=0s connect=0s ttfb=0s total=0s')
     http_code="${code%% *}"
-    local filled=$((i % 48 + 8))
+    local filled=$((i % 28 + 4))
     local bar
-    bar=$(printf '%*s' "$filled" | tr ' ' '#')$(printf '%*s' $((56 - filled)) | tr ' ' '.')
-    printf '\rhealth-poll %d liveness HTTP %s %s %s' "$i" "$code" "${ORIGIN}/health/liveness/" "$bar"
+    bar=$(printf '%*s' "$filled" | tr ' ' '#')$(printf '%*s' $((32 - filled)) | tr ' ' '.')
+    printf '\r%-80s' "health-poll ${i} HTTP ${http_code} ${bar}"
     if [ "$http_code" = "200" ]; then
       printf '\n'
       echo "body: $(tr -d '\n' </tmp/lift-proof-health.body)"

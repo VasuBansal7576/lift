@@ -28,3 +28,7 @@ recordings/t1-t2/playwright/
 .DS_Store
 .vite/
 blob-report/
+.wrangler/
+edge/.dev.vars
+edge/.wrangler/
+tests/e2e/.dev.vars

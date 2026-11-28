@@ -1,0 +1,34 @@
+Script started on 2026-11-27 14:17:43+00:00 [COMMAND="bash -lc " set -e echo \"=== Lift edge setup (no secrets) ===\" echo echo \"1. Self-hosted Flagsmith (scratch dir, image 2.295.2)\" sudo docker compose -f /tmp/flagsmith-lift/docker-compose.yml ps --format \"table {{.Name}}\t{{.Status}}\t{{.Image}}\" echo echo \"2. Validate and put the checkout treatment spec into local KV\" cd /agent/repos/lift npm run edge:put-spec -- --validate-only runtime/checkout-treatment.json echo echo \"3. Origin tree is unchanged (zero-code)\" git status --short sites/checkout runtime/checkout-treatment.json git diff --stat sites/checkout echo echo \"4. Worker is serving bootstrap + HTML through wrangler dev\" curl -sS -o /dev/null -D - http://127.0.0.1:8787/__lift/bootstrap.js | head -n 8 echo curl -sS -o /dev/null -D - http://127.0.0.1:8787/checkout/ | rg -i \"HTTP/|content-type|cache-control|server-timing\" echo echo \"=== setup complete ===\" "" <not executed on terminal>]
+=== Lift edge setup (no secrets) ===
+
+1. Self-hosted Flagsmith (scratch dir, image 2.295.2)
+^@NAME                                        STATUS                    IMAGE
+flagsmith-lift-flagsmith-1                  Up 13 minutes (healthy)   docker.flagsmith.com/flagsmith/flagsmith:2.295.2
+flagsmith-lift-flagsmith-task-processor-1   Up 13 minutes (healthy)   docker.flagsmith.com/flagsmith/flagsmith:2.295.2
+flagsmith_postgres                          Up 17 minutes (healthy)   postgres:15.5-alpine
+
+2. Validate and put the checkout treatment spec into local KV
+
+> lift@0.1.0 edge:put-spec
+> tsx edge/put-spec.ts --validate-only runtime/checkout-treatment.json
+
+valid spec id=checkout-treatment-v0 ops=13
+
+3. Origin tree is unchanged (zero-code)
+
+4. Worker is serving bootstrap + HTML through wrangler dev
+HTTP/1.1 200 OK
+Content-Length: 2424
+Content-Type: text/javascript; charset=utf-8
+Cache-Control: no-store
+Server-Timing: liftcpu;dur=0.00
+
+
+HTTP/1.1 200 OK
+Content-Type: text/html; charset=utf-8
+Cache-Control: private, no-store, no-cache, must-revalidate
+Server-Timing: liftcpu;dur=2.00
+
+=== setup complete ===
+
+Script done on 2026-11-27 14:17:44+00:00 [COMMAND_EXIT_CODE="0"]

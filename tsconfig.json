@@ -10,7 +10,8 @@
     "resolveJsonModule": true,
     "allowImportingTsExtensions": true,
     "noEmit": true,
-    "types": ["node"]
+    "types": ["node"],
+    "allowJs": true
   },
   "include": [
     "agent/**/*.ts",
@@ -18,6 +19,7 @@
     "tests/**/*.ts",
     "shared/**/*.ts",
     "scripts/**/*.ts",
+    "edge/**/*.ts",
     "orchestrator/**/*.ts"
   ]
 }

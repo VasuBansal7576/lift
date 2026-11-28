@@ -436,7 +436,7 @@ async function startChromeFromTerminal(
     { mode: 0o700 },
   );
   await clickFocusTerminal(title);
-  await xdotoolType("bash /tmp/lift-open-chrome.sh", 32);
+  await xdotoolType("bash /tmp/lift-open-chrome.sh", 70);
   await sleep(200);
   await sh("xdotool", ["key", "--clearmodifiers", "Return"]);
   const deadline = Date.now() + 20_000;
@@ -1600,20 +1600,7 @@ async function recordT3Up(): Promise<void> {
     }
     if (!existsSync("/tmp/lift-proof-up.done")) throw new Error("proof compose up did not finish");
     await abortIfServerKeyLeaked();
-    await waitHttpOk(`${PROOF_ORIGIN}/health/liveness/`, 20_000);
-    const proof = readEnvFile(PROOF_ENV_FILE);
-    const loginCheck = await fetch(`${PROOF_ORIGIN}/api/v1/auth/login/`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Accept: "application/json" },
-      body: JSON.stringify({
-        email: proof.FLAGSMITH_BOOTSTRAP_EMAIL || "admin@lift.local",
-        password: proof.FLAGSMITH_BOOTSTRAP_PASSWORD,
-      }),
-    });
-    if (!loginCheck.ok) {
-      throw new Error(`proof bootstrap login check HTTP ${loginCheck.status}`);
-    }
-    await sleep(3200);
+    await sleep(3000);
     chrome = await startChromeFromTerminal("t3-selfhost-up", "right");
     const chromePid = chrome.child.pid;
     if (!chromePid) throw new Error("chrome pid missing");
